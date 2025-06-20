@@ -11,9 +11,6 @@ use rocket::serde::{json::Json, Deserialize, Serialize};
 use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
-use sentry::ClientOptions;
-use tracing_subscriber;
-use serial_test::serial;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct UpdateBeaconRequest {
@@ -105,7 +102,7 @@ async fn update_beacon(request: Json<UpdateBeaconRequest>) -> Json<ApiResponse<S
     let provider = match Provider::<Http>::try_from(rpc_url) {
         Ok(p) => p,
         Err(e) => {
-            let msg = format!("Failed to create provider: {}", e);
+            let msg = format!("Failed to create provider: {e}");
             sentry::capture_message(&msg, sentry::Level::Error);
             return Json(ApiResponse {
                 success: false,
@@ -167,7 +164,7 @@ async fn update_beacon(request: Json<UpdateBeaconRequest>) -> Json<ApiResponse<S
             })
         }
         Err(e) => {
-            let msg = format!("Failed to update beacon: {}", e);
+            let msg = format!("Failed to update beacon: {e}");
             sentry::capture_message(&msg, sentry::Level::Error);
             Json(ApiResponse {
                 success: false,
@@ -187,7 +184,7 @@ fn rocket() -> rocket::Rocket<rocket::Build> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), rocket::Error> {
+async fn main() -> Result<(), Box<rocket::Error>> {
     let dsn = std::env::var("SENTRY_DSN").ok().and_then(|s| s.parse().ok());
     let _sentry = sentry::init(sentry::ClientOptions {
         dsn,
@@ -195,7 +192,7 @@ async fn main() -> Result<(), rocket::Error> {
         ..Default::default()
     });
     tracing_subscriber::fmt::init();
-    rocket().launch().await.map(|_| ())
+    rocket().launch().await.map(|_| ()).map_err(Box::new)
 }
 
 #[cfg(test)]

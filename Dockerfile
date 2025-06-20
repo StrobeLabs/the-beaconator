@@ -1,20 +1,25 @@
-FROM rustlang/rust:nightly
-
-ARG PORT
-ARG RPC_URL
-ARG PRIVATE_KEY
-ARG SENTRY_DSN
-ARG ENV
-
-ENV ROCKET_ADDRESS=0.0.0.0
-ENV ENV=$ENV
-ENV RPC_URL=$RPC_URL
-ENV PRIVATE_KEY=$PRIVATE_KEY
-ENV SENTRY_DSN=$SENTRY_DSN
+# Build stage
+FROM rustlang/rust:nightly as builder
 
 WORKDIR /app
 COPY . .
 
 RUN cargo build --release
 
-CMD ROCKET_PORT=$PORT ./target/release/rocket
+# Runtime stage
+FROM debian:bullseye-slim
+
+WORKDIR /app
+COPY --from=builder /app/target/release/the-beaconator /app/the-beaconator
+
+# Set environment variables for Rocket
+ENV ROCKET_ADDRESS=0.0.0.0
+ENV ROCKET_PORT=8000
+ENV RPC_URL=""
+ENV PRIVATE_KEY=""
+ENV SENTRY_DSN=""
+ENV ENV="production"
+
+EXPOSE 8000
+
+CMD ["./the-beaconator"]
