@@ -1,0 +1,14 @@
+[debug]
+port = 8000
+workers = 1
+keep_alive = 5
+log_level = "debug"
+
+[release]
+port = 8000
+workers = 4
+keep_alive = 5
+log_level = "normal"
+
+[global]
+address = "127.0.0.1" 
