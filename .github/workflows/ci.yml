@@ -22,4 +22,22 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
       - name: Test
-        run: cargo test --all -- --nocapture 
+        run: cargo test --all -- --nocapture
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build Docker image
+        run: docker build -t the-beaconator .
+      - name: Test Docker image
+        run: |
+          docker run --rm -d --name test-beaconator -p 8000:8000 \
+            -e RPC_URL=https://mainnet.base.org \
+            -e PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
+            the-beaconator
+          sleep 10
+          curl -f http://localhost:8000/ || exit 1
+          docker stop test-beaconator 

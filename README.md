@@ -46,6 +46,25 @@ cargo run
 
 The server will start on `http://localhost:8000`
 
+### Docker Deployment
+
+The project includes a Dockerfile optimized for Railway deployment with proper caching.
+
+#### Local Docker Build
+```bash
+docker build -t the-beaconator .
+docker run -p 8000:8000 -e RPC_URL=your_rpc_url -e PRIVATE_KEY=your_private_key the-beaconator
+```
+
+#### Railway Deployment
+1. Connect your GitHub repository to Railway
+2. Railway will automatically detect the Dockerfile and use it for deployment
+3. Set the environment variables in Railway dashboard:
+   - `RPC_URL`: Your Base chain RPC URL
+   - `PRIVATE_KEY`: Your wallet private key (without 0x prefix)
+   - `ROCKET_ADDRESS`: Set to `0.0.0.0` (already configured in Dockerfile)
+4. Deploy and Railway will generate a public URL
+
 ## Environment Variables
 
 Create a `.env` file in the project root with the following variables:

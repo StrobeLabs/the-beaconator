@@ -1,0 +1,10 @@
+target/
+.git/
+.gitignore
+README.md
+.env
+.env.example
+.railway/
+node_modules/
+*.log
+.DS_Store 
