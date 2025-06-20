@@ -12,6 +12,7 @@ use rocket::{Request, request::FromRequest, request::Outcome, http::Status, Stat
 use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
+use tracing;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct UpdateBeaconRequest {
@@ -100,11 +101,13 @@ const BEACON_ABI: &str = r#"[
 
 #[get("/")]
 fn index() -> &'static str {
+    tracing::info!("Received request: GET /");
     "the Beaconator. A half-pound* of fresh beef, American cheese, 6 pieces of crispy Applewood smoked bacon, ketchup, and mayo. Carnivores rejoice!"
 }
 
 #[post("/create_beacon", data = "<_request>")]
 async fn create_beacon(_request: Json<CreateBeaconRequest>, _token: ApiToken) -> Json<ApiResponse<String>> {
+    tracing::info!("Received request: POST /create_beacon");
     // TODO: Implement beacon creation
     Json(ApiResponse {
         success: false,
@@ -115,6 +118,7 @@ async fn create_beacon(_request: Json<CreateBeaconRequest>, _token: ApiToken) ->
 
 #[post("/register_beacon", data = "<_request>")]
 async fn register_beacon(_request: Json<RegisterBeaconRequest>, _token: ApiToken) -> Json<ApiResponse<String>> {
+    tracing::info!("Received request: POST /register_beacon");
     // TODO: Implement beacon registration
     Json(ApiResponse {
         success: false,
@@ -129,6 +133,7 @@ async fn update_beacon(
     _token: ApiToken,
     state: &State<AppState>
 ) -> Json<ApiResponse<String>> {
+    tracing::info!("Received request: POST /update_beacon for beacon {}", request.beacon_address);
     let _guard = sentry::Hub::current().push_scope();
     sentry::configure_scope(|scope| {
         scope.set_tag("endpoint", "/update_beacon");
@@ -232,14 +237,20 @@ fn rocket() -> rocket::Rocket<rocket::Build> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<rocket::Error>> {
+    tracing_subscriber::fmt::init();
+    tracing::info!("Starting the Beaconator server...");
     let dsn = std::env::var("SENTRY_DSN").ok().and_then(|s| s.parse().ok());
     let _sentry = sentry::init(sentry::ClientOptions {
         dsn,
         release: sentry::release_name!(),
         ..Default::default()
     });
-    tracing_subscriber::fmt::init();
-    rocket().launch().await.map(|_| ()).map_err(Box::new)
+    let result = rocket().launch().await;
+    match &result {
+        Ok(_) => tracing::info!("Rocket server shut down cleanly."),
+        Err(e) => tracing::error!("Rocket server failed: {e}"),
+    }
+    result.map(|_| ()).map_err(Box::new)
 }
 
 #[cfg(test)]

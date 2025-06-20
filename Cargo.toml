@@ -13,6 +13,7 @@ tokio = { version = "1.0", features = ["full"] }
 ethers = { version = "2.0", features = ["ws", "rustls"] }
 dotenvy = "0.15.7"
 sentry = { version = "0.32", features = ["anyhow", "tracing"] }
+tracing = "0.1"
 tracing-subscriber = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
