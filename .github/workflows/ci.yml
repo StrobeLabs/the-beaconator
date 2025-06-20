@@ -37,6 +37,9 @@ jobs:
           docker run --rm -d --name test-beaconator -p 8000:8000 \
             -e RPC_URL=https://mainnet.base.org \
             -e PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
+            -e SENTRY_DSN=https://test@test.ingest.sentry.io/test \
+            -e ENV=test \
+            -e BEACONATOR_ACCESS_TOKEN=test_token_123 \
             the-beaconator
           sleep 10
           curl -f http://localhost:8000/ || exit 1

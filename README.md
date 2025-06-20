@@ -60,10 +60,16 @@ docker run -p 8000:8000 -e RPC_URL=your_rpc_url -e PRIVATE_KEY=your_private_key 
 1. Connect your GitHub repository to Railway
 2. Railway will automatically detect the Dockerfile and use it for deployment
 3. Set the environment variables in Railway dashboard:
-   - `RPC_URL`: Your Base chain RPC URL
+   - `RPC_URL`: Your Base chain RPC URL (e.g., `https://mainnet.base.org`)
    - `PRIVATE_KEY`: Your wallet private key (without 0x prefix)
+   - `SENTRY_DSN`: Your Sentry DSN for error tracking (optional)
+   - `ENV`: Environment name (e.g., `production`, `staging`)
+   - `BEACONATOR_ACCESS_TOKEN`: Your API access token for authentication
    - `ROCKET_ADDRESS`: Set to `0.0.0.0` (already configured in Dockerfile)
+   - `ROCKET_PORT`: Set to `8000` (already configured in Dockerfile)
 4. Deploy and Railway will generate a public URL
+
+**Note:** The Dockerfile is configured to consume these environment variables from Railway's environment configuration. The application will automatically use the values you set in the Railway dashboard.
 
 ## Environment Variables
 
@@ -92,6 +98,11 @@ Welcome page with available endpoints information.
 #### `POST /update_beacon`
 Update beacon data with a zero-knowledge proof.
 
+**Headers:**
+```
+Authorization: Bearer <your_api_token>
+```
+
 **Request Body:**
 ```json
 {
@@ -108,6 +119,48 @@ Update beacon data with a zero-knowledge proof.
   "data": "Transaction hash: 0x...",
   "message": "Beacon updated successfully"
 }
+```
+
+#### `POST /create_beacon`
+Create a new beacon (not yet implemented).
+
+**Headers:**
+```
+Authorization: Bearer <your_api_token>
+```
+
+**Request Body:**
+```json
+{
+  // TODO: Define beacon creation parameters
+}
+```
+
+#### `POST /register_beacon`
+Register an existing beacon (not yet implemented).
+
+**Headers:**
+```
+Authorization: Bearer <your_api_token>
+```
+
+**Request Body:**
+```json
+{
+  // TODO: Define beacon registration parameters
+}
+```
+
+## Authentication
+
+All API endpoints (except the index page) require authentication using a Bearer token. Set the `BEACONATOR_ACCESS_TOKEN` environment variable in Railway to enable API access.
+
+**Example:**
+```bash
+curl -H "Authorization: Bearer your_api_token_here" \
+     -H "Content-Type: application/json" \
+     -d '{"beacon_address":"0x...","value":42,"proof":[...]}' \
+     http://localhost:8000/update_beacon
 ```
 
 This project is open source and available under the [GPL-3.0 License](LICENSE).
