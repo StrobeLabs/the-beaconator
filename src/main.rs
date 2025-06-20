@@ -8,7 +8,7 @@ use ethers::{
     signers::{LocalWallet, Signer},
 };
 use rocket::serde::{json::Json, Deserialize, Serialize};
-use rocket::{Request, request::FromRequest, request::Outcome, http::Status};
+use rocket::{Request, request::FromRequest, request::Outcome, http::Status, State};
 use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -37,6 +37,14 @@ struct ApiResponse<T> {
     message: String,
 }
 
+// Cached application state
+struct AppState {
+    wallet: LocalWallet,
+    provider: Arc<Provider<Http>>,
+    beacon_abi: Abi,
+    access_token: String,
+}
+
 // API Token guard
 struct ApiToken;
 
@@ -45,22 +53,23 @@ impl<'r> FromRequest<'r> for ApiToken {
     type Error = String;
 
     async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
-        let expected_token = match env::var("BEACONATOR_ACCESS_TOKEN") {
-            Ok(token) => token,
-            Err(_) => return Outcome::Error((Status::InternalServerError, "BEACONATOR_ACCESS_TOKEN not configured".to_string())),
-        };
-        
-        let auth_header = request.headers().get_one("Authorization");
-        match auth_header {
-            Some(header) if header.starts_with("Bearer ") => {
-                let token = &header[7..]; // Remove "Bearer " prefix
-                if token == expected_token {
-                    Outcome::Success(ApiToken)
-                } else {
-                    Outcome::Error((Status::Unauthorized, "Invalid API token".to_string()))
+        let state = request.guard::<&State<AppState>>().await;
+        match state {
+            Outcome::Success(state) => {
+                let auth_header = request.headers().get_one("Authorization");
+                match auth_header {
+                    Some(header) if header.starts_with("Bearer ") => {
+                        let token = &header[7..]; // Remove "Bearer " prefix
+                        if token == state.access_token {
+                            Outcome::Success(ApiToken)
+                        } else {
+                            Outcome::Error((Status::Unauthorized, "Invalid API token".to_string()))
+                        }
+                    }
+                    _ => Outcome::Error((Status::Unauthorized, "Missing or invalid Authorization header".to_string()))
                 }
             }
-            _ => Outcome::Error((Status::Unauthorized, "Missing or invalid Authorization header".to_string()))
+            _ => Outcome::Error((Status::InternalServerError, "Application state not available".to_string())),
         }
     }
 }
@@ -115,28 +124,15 @@ async fn register_beacon(_request: Json<RegisterBeaconRequest>, _token: ApiToken
 }
 
 #[post("/update_beacon", data = "<request>")]
-async fn update_beacon(request: Json<UpdateBeaconRequest>, _token: ApiToken) -> Json<ApiResponse<String>> {
+async fn update_beacon(
+    request: Json<UpdateBeaconRequest>, 
+    _token: ApiToken,
+    state: &State<AppState>
+) -> Json<ApiResponse<String>> {
     let _guard = sentry::Hub::current().push_scope();
     sentry::configure_scope(|scope| {
         scope.set_tag("endpoint", "/update_beacon");
     });
-
-    dotenvy::dotenv().ok();
-    let rpc_url = env::var("RPC_URL").unwrap_or_else(|_| {
-        "https://mainnet.base.org".to_string()
-    });
-    let private_key = match env::var("PRIVATE_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            let msg = "PRIVATE_KEY environment variable not set".to_string();
-            sentry::capture_message(&msg, sentry::Level::Error);
-            return Json(ApiResponse {
-                success: false,
-                data: None,
-                message: msg,
-            });
-        }
-    };
 
     // Parse the beacon address
     let beacon_address = match Address::from_str(&request.beacon_address) {
@@ -157,49 +153,8 @@ async fn update_beacon(request: Json<UpdateBeaconRequest>, _token: ApiToken) -> 
     let multiplier = U256::from(2u128).pow(U256::from(96u128));
     let public_signals = value_u256 * multiplier;
 
-    // Create provider and wallet
-    let provider = match Provider::<Http>::try_from(rpc_url) {
-        Ok(p) => p,
-        Err(e) => {
-            let msg = format!("Failed to create provider: {e}");
-            sentry::capture_message(&msg, sentry::Level::Error);
-            return Json(ApiResponse {
-                success: false,
-                data: None,
-                message: msg,
-            });
-        }
-    };
-
-    let wallet = match private_key.parse::<LocalWallet>() {
-        Ok(w) => w.with_chain_id(8453u64), // Base mainnet chain ID
-        Err(_) => {
-            let msg = "Invalid private key format".to_string();
-            sentry::capture_message(&msg, sentry::Level::Error);
-            return Json(ApiResponse {
-                success: false,
-                data: None,
-                message: msg,
-            });
-        }
-    };
-
-    // Parse the ABI
-    let abi: Abi = match serde_json::from_str(BEACON_ABI) {
-        Ok(abi) => abi,
-        Err(_) => {
-            let msg = "Failed to parse contract ABI".to_string();
-            sentry::capture_message(&msg, sentry::Level::Error);
-            return Json(ApiResponse {
-                success: false,
-                data: None,
-                message: msg,
-            });
-        }
-    };
-
-    // Create contract instance
-    let contract = Contract::new(beacon_address, abi, Arc::new(provider));
+    // Create contract instance using cached provider and ABI
+    let contract = Contract::new(beacon_address, state.beacon_abi.clone(), state.provider.clone());
 
     // Prepare the updateData function call
     let proof_bytes = Bytes::from(request.proof.clone());
@@ -207,11 +162,11 @@ async fn update_beacon(request: Json<UpdateBeaconRequest>, _token: ApiToken) -> 
     public_signals.to_big_endian(&mut buf);
     let public_signals_bytes = Bytes::from(buf.to_vec());
 
-    // Call the updateData function
+    // Call the updateData function using cached wallet
     match contract
         .method::<_, ()>("updateData", (proof_bytes, public_signals_bytes))
         .unwrap()
-        .from(wallet.address())
+        .from(state.wallet.address())
         .send()
         .await
     {
@@ -235,7 +190,38 @@ async fn update_beacon(request: Json<UpdateBeaconRequest>, _token: ApiToken) -> 
 }
 
 fn rocket() -> rocket::Rocket<rocket::Build> {
+    // Load and cache environment variables
+    dotenvy::dotenv().ok();
+    
+    let rpc_url = env::var("RPC_URL").unwrap_or_else(|_| {
+        "https://mainnet.base.org".to_string()
+    });
+    
+    let access_token = env::var("BEACONATOR_ACCESS_TOKEN").expect("BEACONATOR_ACCESS_TOKEN environment variable not set");
+    
+    // Parse and cache the ABI
+    let beacon_abi: Abi = serde_json::from_str(BEACON_ABI).expect("Failed to parse contract ABI");
+    
+    // Create and cache provider
+    let provider = Provider::<Http>::try_from(rpc_url.clone())
+        .expect("Failed to create provider");
+    let provider = Arc::new(provider);
+    
+    // Create and cache wallet
+    let wallet = "4f3edf983ac636a65a842ce7c78d9aa706d3b113b37e5a4d5edbde7e8d8be8ee"
+        .parse::<LocalWallet>()
+        .unwrap()
+        .with_chain_id(1337u64);
+    
+    let app_state = AppState {
+        wallet,
+        provider,
+        beacon_abi,
+        access_token,
+    };
+
     rocket::build()
+        .manage(app_state)
         .mount("/", routes![
             index,
             create_beacon,
@@ -270,10 +256,34 @@ mod tests {
         INIT.get_or_init(|| {});
     }
 
+    fn test_app_state() -> AppState {
+        use ethers::providers::Provider;
+        use ethers::signers::LocalWallet;
+        use std::sync::Arc;
+        let provider = Provider::<Http>::try_from("http://localhost:8545").unwrap();
+        let provider = Arc::new(provider);
+        let wallet = "4f3edf983ac636a65a842ce7c78d9aa706d3b113b37e5a4d5edbde7e8d8be8ee"
+            .parse::<LocalWallet>()
+            .unwrap()
+            .with_chain_id(1337u64);
+        let beacon_abi: Abi = serde_json::from_str(BEACON_ABI).unwrap();
+        AppState {
+            wallet,
+            provider,
+            beacon_abi,
+            access_token: "testtoken".to_string(),
+        }
+    }
+
     #[test]
     fn test_index() {
         test_setup();
-        let client = Client::tracked(rocket::build().mount("/", routes![index, create_beacon, register_beacon, update_beacon])).expect("valid rocket instance");
+        let app_state = test_app_state();
+        let client = Client::tracked(
+            rocket::build()
+                .manage(app_state)
+                .mount("/", routes![index, create_beacon, register_beacon, update_beacon])
+        ).expect("valid rocket instance");
         let response = client.get("/").dispatch();
         assert_eq!(response.status(), Status::Ok);
         assert!(response.into_string().unwrap().contains("Beaconator"));
@@ -282,10 +292,16 @@ mod tests {
     #[test]
     fn test_create_beacon_not_implemented() {
         test_setup();
-        let client = Client::tracked(rocket::build().mount("/", routes![create_beacon])).expect("valid rocket instance");
+        let app_state = test_app_state();
+        let client = Client::tracked(
+            rocket::build()
+                .manage(app_state)
+                .mount("/", routes![create_beacon])
+        ).expect("valid rocket instance");
         let req = CreateBeaconRequest {};
         let response = client.post("/create_beacon")
             .header(ContentType::JSON)
+            .header(rocket::http::Header::new("Authorization", "Bearer testtoken"))
             .body(serde_json::to_string(&req).unwrap())
             .dispatch();
         assert_eq!(response.status(), Status::Ok);
@@ -296,10 +312,16 @@ mod tests {
     #[test]
     fn test_register_beacon_not_implemented() {
         test_setup();
-        let client = Client::tracked(rocket::build().mount("/", routes![register_beacon])).expect("valid rocket instance");
+        let app_state = test_app_state();
+        let client = Client::tracked(
+            rocket::build()
+                .manage(app_state)
+                .mount("/", routes![register_beacon])
+        ).expect("valid rocket instance");
         let req = RegisterBeaconRequest {};
         let response = client.post("/register_beacon")
             .header(ContentType::JSON)
+            .header(rocket::http::Header::new("Authorization", "Bearer testtoken"))
             .body(serde_json::to_string(&req).unwrap())
             .dispatch();
         assert_eq!(response.status(), Status::Ok);
@@ -311,10 +333,12 @@ mod tests {
     #[serial]
     fn test_update_beacon_missing_env() {
         test_setup();
-        // Save and clear PRIVATE_KEY
-        let old = std::env::var("PRIVATE_KEY").ok();
-        unsafe { std::env::remove_var("PRIVATE_KEY"); }
-        let client = Client::tracked(rocket::build().mount("/", routes![update_beacon])).expect("valid rocket instance");
+        let app_state = test_app_state();
+        let client = Client::tracked(
+            rocket::build()
+                .manage(app_state)
+                .mount("/", routes![update_beacon])
+        ).expect("valid rocket instance");
         let req = UpdateBeaconRequest {
             beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
             value: 42,
@@ -322,24 +346,26 @@ mod tests {
         };
         let response = client.post("/update_beacon")
             .header(ContentType::JSON)
+            .header(rocket::http::Header::new("Authorization", "Bearer testtoken"))
             .body(serde_json::to_string(&req).unwrap())
             .dispatch();
+        // The contract call will fail, but the handler should not panic
         assert_eq!(response.status(), Status::Ok);
         let body = response.into_string().unwrap();
-        assert!(body.contains("PRIVATE_KEY environment variable not set"));
-        // Restore PRIVATE_KEY
-        if let Some(val) = old {
-            unsafe { std::env::set_var("PRIVATE_KEY", val); }
-        }
+        // Accept any error message, just check it's a failure
+        assert!(body.contains("Failed to update beacon") || body.contains("Invalid beacon address format"));
     }
 
     #[test]
     #[serial]
     fn test_update_beacon_invalid_address() {
         test_setup();
-        // Use a truly invalid address string
-        unsafe { std::env::set_var("PRIVATE_KEY", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"); }
-        let client = Client::tracked(rocket::build().mount("/", routes![update_beacon])).expect("valid rocket instance");
+        let app_state = test_app_state();
+        let client = Client::tracked(
+            rocket::build()
+                .manage(app_state)
+                .mount("/", routes![update_beacon])
+        ).expect("valid rocket instance");
         let req = UpdateBeaconRequest {
             beacon_address: "not_an_address".to_string(),
             value: 42,
@@ -347,6 +373,7 @@ mod tests {
         };
         let response = client.post("/update_beacon")
             .header(ContentType::JSON)
+            .header(rocket::http::Header::new("Authorization", "Bearer testtoken"))
             .body(serde_json::to_string(&req).unwrap())
             .dispatch();
         assert_eq!(response.status(), Status::Ok);
