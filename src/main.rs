@@ -132,7 +132,7 @@ async fn update_beacon(
     request: Json<UpdateBeaconRequest>, 
     _token: ApiToken,
     state: &State<AppState>
-) -> Json<ApiResponse<String>> {
+) -> Result<Json<ApiResponse<String>>, Status> {
     tracing::info!("Received request: POST /update_beacon for beacon {}", request.beacon_address);
     let _guard = sentry::Hub::current().push_scope();
     sentry::configure_scope(|scope| {
@@ -142,14 +142,11 @@ async fn update_beacon(
     // Parse the beacon address
     let beacon_address = match Address::from_str(&request.beacon_address) {
         Ok(addr) => addr,
-        Err(_) => {
-            let msg = "Invalid beacon address format".to_string();
+        Err(e) => {
+            let msg = format!("Invalid beacon address format: {}", e);
+            tracing::error!("{}", msg);
             sentry::capture_message(&msg, sentry::Level::Error);
-            return Json(ApiResponse {
-                success: false,
-                data: None,
-                message: msg,
-            });
+            return Err(Status::BadRequest);
         }
     };
 
@@ -167,6 +164,19 @@ async fn update_beacon(
     public_signals.to_big_endian(&mut buf);
     let public_signals_bytes = Bytes::from(buf.to_vec());
 
+    // Log transaction details before sending
+    tracing::info!(
+        "Sending transaction to beacon {} with wallet address {} on chain ID {}",
+        beacon_address,
+        state.wallet.address(),
+        state.wallet.chain_id()
+    );
+    tracing::debug!(
+        "Transaction details: proof_bytes length: {}, public_signals: {}",
+        proof_bytes.len(),
+        public_signals
+    );
+
     // Call the updateData function using cached wallet
     match contract
         .method::<_, ()>("updateData", (proof_bytes, public_signals_bytes))
@@ -176,20 +186,62 @@ async fn update_beacon(
         .await
     {
         Ok(tx) => {
-            Json(ApiResponse {
-                success: true,
-                data: Some(format!("Transaction hash: {:?}", tx.tx_hash())),
-                message: "Beacon updated successfully".to_string(),
-            })
+            let tx_hash = tx.tx_hash();
+            tracing::info!("Transaction sent successfully: {:#x}", tx_hash);
+            
+            // Wait for confirmation and log the result
+            match tx.await {
+                Ok(receipt) => {
+                    if let Some(receipt) = receipt {
+                        tracing::info!(
+                            "Transaction confirmed: {:#x}, block: {:?}, gas used: {:?}",
+                            tx_hash,
+                            receipt.block_number,
+                            receipt.gas_used
+                        );
+                        Ok(Json(ApiResponse {
+                            success: true,
+                            data: Some(format!("Transaction hash: {:#x}", tx_hash)),
+                            message: "Beacon updated successfully".to_string(),
+                        }))
+                    } else {
+                        tracing::warn!("Transaction was sent but no receipt received: {:#x}", tx_hash);
+                        Ok(Json(ApiResponse {
+                            success: true,
+                            data: Some(format!("Transaction hash: {:#x}", tx_hash)),
+                            message: "Transaction sent but confirmation pending".to_string(),
+                        }))
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("Transaction failed during confirmation: {:#x}, error: {}", tx_hash, e);
+                    tracing::error!("{}", msg);
+                    sentry::capture_message(&msg, sentry::Level::Error);
+                    Err(Status::InternalServerError)
+                }
+            }
         }
         Err(e) => {
-            let msg = format!("Failed to update beacon: {e}");
-            sentry::capture_message(&msg, sentry::Level::Error);
-            Json(ApiResponse {
-                success: false,
-                data: None,
-                message: msg,
-            })
+            let error_msg = e.to_string();
+            tracing::error!("Failed to send transaction: {}", error_msg);
+            
+            // Check for specific error types and return appropriate status codes
+            if error_msg.contains("unknown account") || error_msg.contains("insufficient funds") {
+                let msg = format!("Account error: {}", error_msg);
+                tracing::error!("{}", msg);
+                sentry::capture_message(&msg, sentry::Level::Error);
+                Err(Status::Unauthorized)
+            } else if error_msg.contains("nonce") {
+                let msg = format!("Nonce error: {}", error_msg);
+                tracing::error!("{}", msg);
+                sentry::capture_message(&msg, sentry::Level::Error);
+                Err(Status::Conflict)
+            } else {
+                let msg = format!("Transaction error: {}", error_msg);
+                tracing::error!("{}", msg);
+                sentry::capture_message(&msg, sentry::Level::Error);
+                Err(Status::InternalServerError)
+            }
         }
     }
 }
@@ -371,11 +423,8 @@ mod tests {
             .header(rocket::http::Header::new("Authorization", "Bearer testtoken"))
             .body(serde_json::to_string(&req).unwrap())
             .dispatch();
-        // The contract call will fail, but the handler should not panic
-        assert_eq!(response.status(), Status::Ok);
-        let body = response.into_string().unwrap();
-        // Accept any error message, just check it's a failure
-        assert!(body.contains("Failed to update beacon") || body.contains("Invalid beacon address format"));
+        // The contract call will fail with 500 Internal Server Error
+        assert_eq!(response.status(), Status::InternalServerError);
     }
 
     #[test]
@@ -398,8 +447,7 @@ mod tests {
             .header(rocket::http::Header::new("Authorization", "Bearer testtoken"))
             .body(serde_json::to_string(&req).unwrap())
             .dispatch();
-        assert_eq!(response.status(), Status::Ok);
-        let body = response.into_string().unwrap();
-        assert!(body.contains("Invalid beacon address format"));
+        // Invalid address should return 400 Bad Request
+        assert_eq!(response.status(), Status::BadRequest);
     }
 } 
