@@ -213,10 +213,20 @@ fn rocket() -> rocket::Rocket<rocket::Build> {
     let provider = Arc::new(provider);
     
     // Create and cache wallet
-    let wallet = "4f3edf983ac636a65a842ce7c78d9aa706d3b113b37e5a4d5edbde7e8d8be8ee"
+    let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY environment variable not set");
+    let env_type = env::var("ENV").unwrap_or_else(|_| "mainnet".to_string());
+    let chain_id = match env_type.to_lowercase().as_str() {
+        "testnet" => 84532u64, // Base Sepolia testnet
+        "mainnet" => 8453u64,  // Base mainnet
+        _ => {
+            tracing::warn!("Unknown ENV value '{}', defaulting to mainnet", env_type);
+            8453u64 // Default to mainnet
+        }
+    };
+    let wallet = private_key
         .parse::<LocalWallet>()
-        .unwrap()
-        .with_chain_id(1337u64);
+        .expect("Failed to parse private key")
+        .with_chain_id(chain_id);
     
     let app_state = AppState {
         wallet,
@@ -273,10 +283,14 @@ mod tests {
         use std::sync::Arc;
         let provider = Provider::<Http>::try_from("http://localhost:8545").unwrap();
         let provider = Arc::new(provider);
-        let wallet = "4f3edf983ac636a65a842ce7c78d9aa706d3b113b37e5a4d5edbde7e8d8be8ee"
+        
+        // Use test private key and default to testnet for tests
+        let test_private_key = "4f3edf983ac636a65a842ce7c78d9aa706d3b113b37e5a4d5edbde7e8d8be8ee";
+        let chain_id = 84532u64; // Base Sepolia testnet for tests
+        let wallet = test_private_key
             .parse::<LocalWallet>()
             .unwrap()
-            .with_chain_id(1337u64);
+            .with_chain_id(chain_id);
         let beacon_abi: Abi = serde_json::from_str(BEACON_ABI).unwrap();
         AppState {
             wallet,
