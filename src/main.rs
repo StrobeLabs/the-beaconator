@@ -4,8 +4,9 @@ use ethers::{
     abi::Abi,
     contract::Contract,
     core::types::{Address, U256, Bytes},
-    providers::{Http, Provider},
+    providers::{Http, Provider, Middleware},
     signers::{LocalWallet, Signer},
+    utils,
 };
 use rocket::serde::{json::Json, Deserialize, Serialize};
 use rocket::{Request, request::FromRequest, request::Outcome, http::Status, State};
@@ -178,12 +179,17 @@ async fn update_beacon(
     );
 
     // Call the updateData function using cached wallet
-    match contract
+    let contract_call = contract
         .method::<_, ()>("updateData", (proof_bytes, public_signals_bytes))
         .unwrap()
-        .from(state.wallet.address())
-        .send()
-        .await
+        .from(state.wallet.address());
+    
+    tracing::debug!("Contract call prepared:");
+    tracing::debug!("  - From address: {:?}", state.wallet.address());
+    tracing::debug!("  - To contract: {:?}", beacon_address);
+    tracing::debug!("  - Function: updateData");
+    
+    match contract_call.send().await
     {
         Ok(tx) => {
             let tx_hash = tx.tx_hash();
@@ -226,11 +232,16 @@ async fn update_beacon(
             tracing::error!("Failed to send transaction: {}", error_msg);
             
             // Check for specific error types and return appropriate status codes
-            if error_msg.contains("unknown account") || error_msg.contains("insufficient funds") {
-                let msg = format!("Account error: {}", error_msg);
+            if error_msg.contains("unknown account") {
+                let msg = format!("Server account configuration error: {}", error_msg);
                 tracing::error!("{}", msg);
                 sentry::capture_message(&msg, sentry::Level::Error);
-                Err(Status::Unauthorized)
+                Err(Status::InternalServerError)
+            } else if error_msg.contains("insufficient funds") {
+                let msg = format!("Insufficient funds error: {}", error_msg);
+                tracing::error!("{}", msg);
+                sentry::capture_message(&msg, sentry::Level::Error);
+                Err(Status::InternalServerError)
             } else if error_msg.contains("nonce") {
                 let msg = format!("Nonce error: {}", error_msg);
                 tracing::error!("{}", msg);
@@ -246,7 +257,7 @@ async fn update_beacon(
     }
 }
 
-fn rocket() -> rocket::Rocket<rocket::Build> {
+async fn rocket() -> rocket::Rocket<rocket::Build> {
     // Load and cache environment variables
     dotenvy::dotenv().ok();
     
@@ -272,10 +283,39 @@ fn rocket() -> rocket::Rocket<rocket::Build> {
         "mainnet" => 8453u64,  // Base mainnet
         _ => panic!("Invalid ENV value '{}'. Must be either 'mainnet' or 'testnet'", env_type)
     };
+    
+    // Parse the wallet and log details for debugging
     let wallet = private_key
         .parse::<LocalWallet>()
         .expect("Failed to parse private key")
         .with_chain_id(chain_id);
+    
+    // Log wallet configuration for debugging
+    tracing::info!("Wallet configured:");
+    tracing::info!("  - Address: {:?}", wallet.address());
+    tracing::info!("  - Chain ID: {}", wallet.chain_id());
+    tracing::info!("  - ENV: {}", env_type);
+    tracing::info!("  - RPC URL: {}", rpc_url);
+    
+    // Check wallet balance and nonce for debugging
+    let wallet_address = wallet.address();
+    match provider.get_balance(wallet_address, None).await {
+        Ok(balance) => {
+            tracing::info!("Wallet balance: {} ETH", utils::format_ether(balance));
+        }
+        Err(e) => {
+            tracing::warn!("Failed to get wallet balance: {}", e);
+        }
+    }
+    
+    match provider.get_transaction_count(wallet_address, None).await {
+        Ok(nonce) => {
+            tracing::info!("Wallet nonce: {}", nonce);
+        }
+        Err(e) => {
+            tracing::warn!("Failed to get wallet nonce: {}", e);
+        }
+    }
     
     let app_state = AppState {
         wallet,
@@ -304,7 +344,7 @@ async fn main() -> Result<(), Box<rocket::Error>> {
         release: sentry::release_name!(),
         ..Default::default()
     });
-    let result = rocket().launch().await;
+    let result = rocket().await.launch().await;
     match &result {
         Ok(_) => tracing::info!("Rocket server shut down cleanly."),
         Err(e) => tracing::error!("Rocket server failed: {e}"),
