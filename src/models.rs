@@ -1,10 +1,10 @@
-use rocket::serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use ethers::{
     abi::Abi,
     providers::{Http, Provider},
     signers::LocalWallet,
 };
+use rocket::serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateBeaconRequest {
@@ -36,4 +36,4 @@ pub struct AppState {
     pub provider: Arc<Provider<Http>>,
     pub beacon_abi: Abi,
     pub access_token: String,
-} 
+}

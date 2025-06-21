@@ -31,17 +31,28 @@ cp env.example .env
 
 3. Build the project:
 ```bash
-cargo build
+make build
+# or for release build: make build-release
 ```
 
 4. Run tests:
 ```bash
-cargo test
+make test
 ```
 
 5. Run the server:
 ```bash
-cargo run
+make dev
+```
+
+### Development Commands
+
+The project includes a Makefile with useful development commands:
+
+```bash
+make help           # Show all available commands
+make quality        # Run all quality checks (format, lint, test)
+make lint           # Run clippy linter with strict warnings
 ```
 
 The server will start on `http://localhost:8000`

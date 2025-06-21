@@ -1,5 +1,5 @@
-use rocket::{Request, request::FromRequest, request::Outcome, http::Status, State};
 use crate::models::AppState;
+use rocket::{Request, State, http::Status, request::FromRequest, request::Outcome};
 
 // API Token guard
 pub struct ApiToken;
@@ -22,10 +22,16 @@ impl<'r> FromRequest<'r> for ApiToken {
                             Outcome::Error((Status::Unauthorized, "Invalid API token".to_string()))
                         }
                     }
-                    _ => Outcome::Error((Status::Unauthorized, "Missing or invalid Authorization header".to_string()))
+                    _ => Outcome::Error((
+                        Status::Unauthorized,
+                        "Missing or invalid Authorization header".to_string(),
+                    )),
                 }
             }
-            _ => Outcome::Error((Status::InternalServerError, "Application state not available".to_string())),
+            _ => Outcome::Error((
+                Status::InternalServerError,
+                "Application state not available".to_string(),
+            )),
         }
     }
-} 
+}
