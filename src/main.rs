@@ -214,14 +214,11 @@ fn rocket() -> rocket::Rocket<rocket::Build> {
     
     // Create and cache wallet
     let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY environment variable not set");
-    let env_type = env::var("ENV").unwrap_or_else(|_| "mainnet".to_string());
+    let env_type = env::var("ENV").expect("ENV environment variable not set");
     let chain_id = match env_type.to_lowercase().as_str() {
         "testnet" => 84532u64, // Base Sepolia testnet
         "mainnet" => 8453u64,  // Base mainnet
-        _ => {
-            tracing::warn!("Unknown ENV value '{}', defaulting to mainnet", env_type);
-            8453u64 // Default to mainnet
-        }
+        _ => panic!("Invalid ENV value '{}'. Must be either 'mainnet' or 'testnet'", env_type)
     };
     let wallet = private_key
         .parse::<LocalWallet>()
