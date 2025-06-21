@@ -4,6 +4,7 @@ use ethers::{
     abi::Abi,
     contract::Contract,
     core::types::{Address, U256, Bytes},
+    middleware::SignerMiddleware,
     providers::{Http, Provider, Middleware},
     signers::{LocalWallet, Signer},
     utils,
@@ -156,8 +157,9 @@ async fn update_beacon(
     let multiplier = U256::from(2u128).pow(U256::from(96u128));
     let public_signals = value_u256 * multiplier;
 
-    // Create contract instance using cached provider and ABI
-    let contract = Contract::new(beacon_address, state.beacon_abi.clone(), state.provider.clone());
+    // Create contract instance with signing capability
+    let signer_middleware = Arc::new(SignerMiddleware::new(state.provider.clone(), state.wallet.clone()));
+    let contract = Contract::new(beacon_address, state.beacon_abi.clone(), signer_middleware);
 
     // Prepare the updateData function call
     let proof_bytes = Bytes::from(request.proof.clone());
@@ -178,16 +180,16 @@ async fn update_beacon(
         public_signals
     );
 
-    // Call the updateData function using cached wallet
+    // Call the updateData function using signing-enabled contract
     let contract_call = contract
         .method::<_, ()>("updateData", (proof_bytes, public_signals_bytes))
-        .unwrap()
-        .from(state.wallet.address());
+        .unwrap();
     
     tracing::debug!("Contract call prepared:");
     tracing::debug!("  - From address: {:?}", state.wallet.address());
     tracing::debug!("  - To contract: {:?}", beacon_address);
     tracing::debug!("  - Function: updateData");
+    tracing::debug!("  - Using SignerMiddleware: true");
     
     match contract_call.send().await
     {
