@@ -108,8 +108,9 @@ pub async fn create_rocket() -> Rocket<Build> {
         "/",
         rocket::routes![
             routes::index,
+            routes::all_beacons,
             routes::create_beacon,
-            routes::register_beacon,
+            routes::deploy_perp_for_beacon,
             routes::update_beacon
         ],
     )

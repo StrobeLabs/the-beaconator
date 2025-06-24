@@ -12,13 +12,24 @@ use tracing;
 
 use crate::guards::ApiToken;
 use crate::models::{
-    ApiResponse, AppState, CreateBeaconRequest, RegisterBeaconRequest, UpdateBeaconRequest,
+    ApiResponse, AppState, CreateBeaconRequest, DeployPerpForBeaconRequest, UpdateBeaconRequest,
 };
 
 #[get("/")]
 pub fn index() -> &'static str {
     tracing::info!("Received request: GET /");
     "the Beaconator. A half-pound* of fresh beef, American cheese, 6 pieces of crispy Applewood smoked bacon, ketchup, and mayo. Carnivores rejoice!"
+}
+
+#[get("/all_beacons")]
+pub fn all_beacons(_token: ApiToken) -> Json<ApiResponse<Vec<String>>> {
+    tracing::info!("Received request: GET /all_beacons");
+    // TODO: Implement fetching all beacons
+    Json(ApiResponse {
+        success: false,
+        data: None,
+        message: "all_beacons endpoint not yet implemented".to_string(),
+    })
 }
 
 #[post("/create_beacon", data = "<_request>")]
@@ -35,17 +46,17 @@ pub async fn create_beacon(
     })
 }
 
-#[post("/register_beacon", data = "<_request>")]
-pub async fn register_beacon(
-    _request: Json<RegisterBeaconRequest>,
+#[post("/deploy_perp_for_beacon", data = "<_request>")]
+pub async fn deploy_perp_for_beacon(
+    _request: Json<DeployPerpForBeaconRequest>,
     _token: ApiToken,
 ) -> Json<ApiResponse<String>> {
-    tracing::info!("Received request: POST /register_beacon");
-    // TODO: Implement beacon registration
+    tracing::info!("Received request: POST /deploy_perp_for_beacon");
+    // TODO: Implement perpetual deployment for beacon
     Json(ApiResponse {
         success: false,
         data: None,
-        message: "register_beacon endpoint not yet implemented".to_string(),
+        message: "deploy_perp_for_beacon endpoint not yet implemented".to_string(),
     })
 }
 
@@ -233,6 +244,28 @@ mod tests {
     }
 
     #[test]
+    fn test_all_beacons_not_implemented() {
+        let app_state = create_test_app_state();
+        let client = Client::tracked(
+            rocket::build()
+                .manage(app_state)
+                .mount("/", rocket::routes![all_beacons]),
+        )
+        .expect("valid rocket instance");
+
+        let response = client
+            .get("/all_beacons")
+            .header(rocket::http::Header::new(
+                "Authorization",
+                "Bearer testtoken",
+            ))
+            .dispatch();
+        assert_eq!(response.status(), Status::Ok);
+        let body = response.into_string().unwrap();
+        assert!(body.contains("not yet implemented"));
+    }
+
+    #[test]
     fn test_create_beacon_not_implemented() {
         let app_state = create_test_app_state();
         let client = Client::tracked(
@@ -259,18 +292,18 @@ mod tests {
     }
 
     #[test]
-    fn test_register_beacon_not_implemented() {
+    fn test_deploy_perp_for_beacon_not_implemented() {
         let app_state = create_test_app_state();
         let client = Client::tracked(
             rocket::build()
                 .manage(app_state)
-                .mount("/", rocket::routes![register_beacon]),
+                .mount("/", rocket::routes![deploy_perp_for_beacon]),
         )
         .expect("valid rocket instance");
 
-        let req = RegisterBeaconRequest {};
+        let req = DeployPerpForBeaconRequest {};
         let response = client
-            .post("/register_beacon")
+            .post("/deploy_perp_for_beacon")
             .header(ContentType::JSON)
             .header(rocket::http::Header::new(
                 "Authorization",

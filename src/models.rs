@@ -19,8 +19,8 @@ pub struct CreateBeaconRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct RegisterBeaconRequest {
-    // TODO: Implement beacon registration parameters
+pub struct DeployPerpForBeaconRequest {
+    // TODO: Implement perpetual deployment parameters
 }
 
 #[derive(Debug, Serialize, Deserialize)]
