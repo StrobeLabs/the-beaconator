@@ -92,6 +92,16 @@ RPC_URL=https://mainnet.base.org
 
 # Private key for the wallet that will pay for gas (without 0x prefix)
 PRIVATE_KEY=your_private_key_here_without_0x_prefix
+
+# Contract addresses (replace with actual deployed contract addresses)
+BEACON_FACTORY_ADDRESS=0x1234567890123456789012345678901234567890
+PERPCITY_REGISTRY_ADDRESS=0x3456789012345678901234567890123456789012
+
+# API access token for authentication
+BEACONATOR_ACCESS_TOKEN=your_api_token_here
+
+# Environment type (mainnet, testnet, or localnet)
+ENV=testnet
 ```
 
 ## API Endpoints
@@ -132,6 +142,23 @@ Authorization: Bearer <your_api_token>
 }
 ```
 
+#### `GET /all_beacons`
+List all registered beacons (not yet implemented).
+
+**Headers:**
+```
+Authorization: Bearer <your_api_token>
+```
+
+**Response:**
+```json
+{
+  "success": false,
+  "data": null,
+  "message": "all_beacons endpoint not yet implemented"
+}
+```
+
 #### `POST /create_beacon`
 Create a new beacon (not yet implemented).
 
@@ -160,6 +187,34 @@ Authorization: Bearer <your_api_token>
 {
   // TODO: Define beacon registration parameters
 }
+```
+
+#### `POST /create_perpcity_beacon`
+Create a new beacon and register it with the Perpcity registry. The beacon is created with the authenticated wallet as the owner.
+
+**Headers:**
+```
+Authorization: Bearer <your_api_token>
+```
+
+**Request Body:**
+No request body required.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": "Beacon address: 0x...",
+  "message": "Perpcity beacon created and registered successfully"
+}
+```
+
+#### `POST /deploy_perp_for_beacon`
+Deploy a perpetual for a beacon (not yet implemented).
+
+**Headers:**
+```
+Authorization: Bearer <your_api_token>
 ```
 
 ## Authentication

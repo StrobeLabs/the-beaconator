@@ -3,6 +3,7 @@ use ethers::{
     core::types::{Address, Bytes, U256},
     middleware::SignerMiddleware,
     signers::Signer,
+    types::H256,
 };
 use rocket::serde::json::Json;
 use rocket::{State, get, http::Status, post};
@@ -12,8 +13,123 @@ use tracing;
 
 use crate::guards::ApiToken;
 use crate::models::{
-    ApiResponse, AppState, CreateBeaconRequest, DeployPerpForBeaconRequest, UpdateBeaconRequest,
+    ApiResponse, AppState, CreateBeaconRequest, DeployPerpForBeaconRequest, RegisterBeaconRequest,
+    UpdateBeaconRequest,
 };
+
+// Helper function to create a beacon via the factory contract
+async fn create_beacon_via_factory(
+    state: &AppState,
+    owner_address: Address,
+    factory_address: Address,
+) -> Result<Address, String> {
+    tracing::info!(
+        "Creating beacon via factory {} for owner {}",
+        factory_address,
+        owner_address
+    );
+
+    let signer_middleware = Arc::new(SignerMiddleware::new(
+        state.provider.clone(),
+        state.wallet.clone(),
+    ));
+
+    let factory_contract = Contract::new(
+        factory_address,
+        state.beacon_factory_abi.clone(),
+        signer_middleware,
+    );
+
+    // Call createBeacon function
+    let contract_call = factory_contract
+        .method::<_, Address>("createBeacon", owner_address)
+        .map_err(|e| format!("Failed to prepare createBeacon call: {e}"))?;
+
+    tracing::debug!("Sending createBeacon transaction...");
+    let pending_tx = contract_call
+        .send()
+        .await
+        .map_err(|e| format!("Failed to send createBeacon transaction: {e}"))?;
+
+    let tx_hash = pending_tx.tx_hash();
+    tracing::info!("CreateBeacon transaction sent: {:#x}", tx_hash);
+
+    // Wait for confirmation
+    let receipt = pending_tx
+        .await
+        .map_err(|e| format!("CreateBeacon transaction failed: {e}"))?
+        .ok_or("No receipt received for createBeacon transaction")?;
+
+    tracing::info!(
+        "CreateBeacon transaction confirmed: {:#x}, block: {:?}, gas used: {:?}",
+        tx_hash,
+        receipt.block_number,
+        receipt.gas_used
+    );
+
+    // Parse the return value from logs or use eth_call to get the beacon address
+    // For simplicity, we'll use the return value from the method call
+    let beacon_address = contract_call
+        .call()
+        .await
+        .map_err(|e| format!("Failed to get beacon address from createBeacon: {e}"))?;
+
+    tracing::info!("Beacon created at address: {}", beacon_address);
+    Ok(beacon_address)
+}
+
+// Helper function to register a beacon with a registry
+async fn register_beacon_with_registry(
+    state: &AppState,
+    beacon_address: Address,
+    registry_address: Address,
+) -> Result<H256, String> {
+    tracing::info!(
+        "Registering beacon {} with registry {}",
+        beacon_address,
+        registry_address
+    );
+
+    let signer_middleware = Arc::new(SignerMiddleware::new(
+        state.provider.clone(),
+        state.wallet.clone(),
+    ));
+
+    let registry_contract = Contract::new(
+        registry_address,
+        state.beacon_registry_abi.clone(),
+        signer_middleware,
+    );
+
+    // Call registerBeacon function
+    let contract_call = registry_contract
+        .method::<_, ()>("registerBeacon", beacon_address)
+        .map_err(|e| format!("Failed to prepare registerBeacon call: {e}"))?;
+
+    tracing::debug!("Sending registerBeacon transaction...");
+    let pending_tx = contract_call
+        .send()
+        .await
+        .map_err(|e| format!("Failed to send registerBeacon transaction: {e}"))?;
+
+    let tx_hash = pending_tx.tx_hash();
+    tracing::info!("RegisterBeacon transaction sent: {:#x}", tx_hash);
+
+    // Wait for confirmation
+    let receipt = pending_tx
+        .await
+        .map_err(|e| format!("RegisterBeacon transaction failed: {e}"))?
+        .ok_or("No receipt received for registerBeacon transaction")?;
+
+    tracing::info!(
+        "RegisterBeacon transaction confirmed: {:#x}, block: {:?}, gas used: {:?}",
+        tx_hash,
+        receipt.block_number,
+        receipt.gas_used
+    );
+
+    Ok(tx_hash)
+}
 
 #[get("/")]
 pub fn index() -> &'static str {
@@ -38,12 +154,77 @@ pub async fn create_beacon(
     _token: ApiToken,
 ) -> Json<ApiResponse<String>> {
     tracing::info!("Received request: POST /create_beacon");
-    // TODO: Implement beacon creation
     Json(ApiResponse {
         success: false,
         data: None,
         message: "create_beacon endpoint not yet implemented".to_string(),
     })
+}
+
+#[post("/register_beacon", data = "<_request>")]
+pub async fn register_beacon(
+    _request: Json<RegisterBeaconRequest>,
+    _token: ApiToken,
+) -> Json<ApiResponse<String>> {
+    tracing::info!("Received request: POST /register_beacon");
+    // TODO: Implement beacon registration
+    Json(ApiResponse {
+        success: false,
+        data: None,
+        message: "register_beacon endpoint not yet implemented".to_string(),
+    })
+}
+
+#[post("/create_perpcity_beacon")]
+pub async fn create_perpcity_beacon(
+    _token: ApiToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<String>>, Status> {
+    tracing::info!("Received request: POST /create_perpcity_beacon");
+    let _guard = sentry::Hub::current().push_scope();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("endpoint", "/create_perpcity_beacon");
+    });
+
+    // Step 1: Deploy the beacon contract by calling createBeacon with wallet address as owner
+    let owner_address = state.wallet.address();
+    let beacon_address =
+        match create_beacon_via_factory(state, owner_address, state.beacon_factory_address).await {
+            Ok(address) => address,
+            Err(e) => {
+                let msg = format!("Failed to create beacon: {e}");
+                tracing::error!("{}", msg);
+                sentry::capture_message(&msg, sentry::Level::Error);
+                return Err(Status::InternalServerError);
+            }
+        };
+
+    // Step 2: Register the beacon contract with the perpcity registry
+    let registration_tx_hash =
+        match register_beacon_with_registry(state, beacon_address, state.perpcity_registry_address)
+            .await
+        {
+            Ok(tx_hash) => tx_hash,
+            Err(e) => {
+                let msg = format!("Failed to register beacon with perpcity registry: {e}");
+                tracing::error!("{}", msg);
+                sentry::capture_message(&msg, sentry::Level::Error);
+                return Err(Status::InternalServerError);
+            }
+        };
+
+    // Step 3: Return success with beacon address
+    tracing::info!(
+        "Successfully created and registered perpcity beacon: {} (registration tx: {:#x})",
+        beacon_address,
+        registration_tx_hash
+    );
+
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some(format!("Beacon address: {beacon_address}")),
+        message: "Perpcity beacon created and registered successfully".to_string(),
+    }))
 }
 
 #[post("/deploy_perp_for_beacon", data = "<_request>")]
@@ -202,18 +383,22 @@ pub async fn update_beacon(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::BEACON_ABI;
     use ethers::{
         abi::Abi,
+        core::types::Address,
         providers::{Http, Provider},
         signers::{LocalWallet, Signer},
     };
     use rocket::http::{ContentType, Status};
     use rocket::local::blocking::Client;
     use serial_test::serial;
+    use std::str::FromStr;
     use std::sync::Arc;
 
     fn create_test_app_state() -> AppState {
+        use crate::{BEACON_ABI, BEACON_FACTORY_ABI, BEACON_REGISTRY_ABI};
+        use std::str::FromStr;
+
         let provider = Provider::<Http>::try_from("http://localhost:8545").unwrap();
         let provider = Arc::new(provider);
 
@@ -224,11 +409,25 @@ mod tests {
             .parse::<LocalWallet>()
             .unwrap()
             .with_chain_id(chain_id);
+
         let beacon_abi: Abi = serde_json::from_str(BEACON_ABI).unwrap();
+        let beacon_factory_abi: Abi = serde_json::from_str(BEACON_FACTORY_ABI).unwrap();
+        let beacon_registry_abi: Abi = serde_json::from_str(BEACON_REGISTRY_ABI).unwrap();
+
+        // Use dummy addresses for tests
+        let beacon_factory_address =
+            Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
+        let perpcity_registry_address =
+            Address::from_str("0x3456789012345678901234567890123456789012").unwrap();
+
         AppState {
             wallet,
             provider,
             beacon_abi,
+            beacon_factory_abi,
+            beacon_registry_abi,
+            beacon_factory_address,
+            perpcity_registry_address,
             access_token: "testtoken".to_string(),
         }
     }
@@ -289,6 +488,270 @@ mod tests {
         assert_eq!(response.status(), Status::Ok);
         let body = response.into_string().unwrap();
         assert!(body.contains("not yet implemented"));
+    }
+
+    #[test]
+    fn test_register_beacon_not_implemented() {
+        let app_state = create_test_app_state();
+        let client = Client::tracked(
+            rocket::build()
+                .manage(app_state)
+                .mount("/", rocket::routes![register_beacon]),
+        )
+        .expect("valid rocket instance");
+
+        let req = RegisterBeaconRequest {};
+        let response = client
+            .post("/register_beacon")
+            .header(ContentType::JSON)
+            .header(rocket::http::Header::new(
+                "Authorization",
+                "Bearer testtoken",
+            ))
+            .body(serde_json::to_string(&req).unwrap())
+            .dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+        let body = response.into_string().unwrap();
+        assert!(body.contains("not yet implemented"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_create_perpcity_beacon_fails_without_network() {
+        let app_state = create_test_app_state();
+        let client = Client::tracked(
+            rocket::build()
+                .manage(app_state)
+                .mount("/", rocket::routes![create_perpcity_beacon]),
+        )
+        .expect("valid rocket instance");
+
+        let response = client
+            .post("/create_perpcity_beacon")
+            .header(rocket::http::Header::new(
+                "Authorization",
+                "Bearer testtoken",
+            ))
+            .dispatch();
+
+        // The contract call will fail with 500 Internal Server Error because we don't have a real network
+        assert_eq!(response.status(), Status::InternalServerError);
+    }
+
+    #[test]
+    fn test_create_perpcity_beacon_requires_auth() {
+        let app_state = create_test_app_state();
+        let client = Client::tracked(
+            rocket::build()
+                .manage(app_state)
+                .mount("/", rocket::routes![create_perpcity_beacon]),
+        )
+        .expect("valid rocket instance");
+
+        let response = client
+            .post("/create_perpcity_beacon")
+            // No Authorization header
+            .dispatch();
+
+        // Should fail with Unauthorized due to missing auth token
+        assert_eq!(response.status(), Status::Unauthorized);
+    }
+
+    #[test]
+    fn test_create_perpcity_beacon_invalid_auth() {
+        let app_state = create_test_app_state();
+        let client = Client::tracked(
+            rocket::build()
+                .manage(app_state)
+                .mount("/", rocket::routes![create_perpcity_beacon]),
+        )
+        .expect("valid rocket instance");
+
+        let response = client
+            .post("/create_perpcity_beacon")
+            .header(rocket::http::Header::new(
+                "Authorization",
+                "Bearer invalidtoken",
+            ))
+            .dispatch();
+
+        // Should fail with Unauthorized due to invalid auth token
+        assert_eq!(response.status(), Status::Unauthorized);
+    }
+
+    // Unit tests for helper functions
+    #[tokio::test]
+    #[serial]
+    async fn test_create_beacon_via_factory_helper() {
+        let app_state = create_test_app_state();
+        let owner_address = app_state.wallet.address();
+        let factory_address = app_state.beacon_factory_address;
+
+        // This will fail because we don't have a real network, but we can test the function exists and handles errors
+        let result = create_beacon_via_factory(&app_state, owner_address, factory_address).await;
+
+        // Should return an error since we're not connected to a real network
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err();
+        assert!(error_msg.contains("Failed to send createBeacon transaction"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_register_beacon_with_registry_helper() {
+        let app_state = create_test_app_state();
+        let beacon_address =
+            Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
+        let registry_address = app_state.perpcity_registry_address;
+
+        // This will fail because we don't have a real network, but we can test the function exists and handles errors
+        let result =
+            register_beacon_with_registry(&app_state, beacon_address, registry_address).await;
+
+        // Should return an error since we're not connected to a real network
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err();
+        assert!(error_msg.contains("Failed to send registerBeacon transaction"));
+    }
+
+    #[test]
+    fn test_app_state_has_required_contract_info() {
+        let app_state = create_test_app_state();
+
+        // Verify all required contract addresses are set
+        assert_ne!(app_state.beacon_factory_address, Address::zero());
+        assert_ne!(app_state.perpcity_registry_address, Address::zero());
+
+        // Verify all addresses are different (no duplicates)
+        assert_ne!(
+            app_state.beacon_factory_address,
+            app_state.perpcity_registry_address
+        );
+
+        // Verify ABIs are loaded and have content
+        assert!(!app_state.beacon_abi.functions.is_empty());
+        assert!(!app_state.beacon_factory_abi.functions.is_empty());
+        assert!(!app_state.beacon_registry_abi.functions.is_empty());
+
+        // Verify specific functions exist in ABIs
+        assert!(app_state.beacon_abi.function("updateData").is_ok());
+        assert!(
+            app_state
+                .beacon_factory_abi
+                .function("createBeacon")
+                .is_ok()
+        );
+        assert!(
+            app_state
+                .beacon_registry_abi
+                .function("registerBeacon")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_all_routes_exist_and_require_auth() {
+        let app_state = create_test_app_state();
+        let client = Client::tracked(rocket::build().manage(app_state).mount(
+            "/",
+            rocket::routes![
+                index,
+                all_beacons,
+                create_beacon,
+                register_beacon,
+                create_perpcity_beacon,
+                deploy_perp_for_beacon,
+                update_beacon
+            ],
+        ))
+        .expect("valid rocket instance");
+
+        // Test index (no auth required)
+        let response = client.get("/").dispatch();
+        assert_eq!(response.status(), Status::Ok);
+
+        // Test all authenticated routes without auth token (should fail)
+        let endpoints = vec![
+            "/all_beacons",
+            "/create_beacon",
+            "/register_beacon",
+            "/create_perpcity_beacon",
+            "/deploy_perp_for_beacon",
+            "/update_beacon",
+        ];
+
+        for endpoint in endpoints {
+            let response = if endpoint == "/all_beacons" {
+                client.get(endpoint).dispatch()
+            } else {
+                client
+                    .post(endpoint)
+                    .header(ContentType::JSON)
+                    .body("{}")
+                    .dispatch()
+            };
+            assert_eq!(
+                response.status(),
+                Status::Unauthorized,
+                "Endpoint {} should require authentication",
+                endpoint
+            );
+        }
+    }
+
+    #[test]
+    fn test_create_perpcity_beacon_with_valid_auth() {
+        let app_state = create_test_app_state();
+        let client = Client::tracked(
+            rocket::build()
+                .manage(app_state)
+                .mount("/", rocket::routes![create_perpcity_beacon]),
+        )
+        .expect("valid rocket instance");
+
+        // Test with valid auth token (no body required)
+        let response = client
+            .post("/create_perpcity_beacon")
+            .header(rocket::http::Header::new(
+                "Authorization",
+                "Bearer testtoken",
+            ))
+            .dispatch();
+
+        // Should fail with 500 due to network, not due to malformed request
+        assert_eq!(response.status(), Status::InternalServerError);
+    }
+
+    #[test]
+    fn test_helper_functions_exist_and_are_callable() {
+        // This test ensures our helper functions exist and have the correct signatures
+        // We test them indirectly through the route tests, but this validates the function signatures
+        let app_state = create_test_app_state();
+        let owner_address = app_state.wallet.address();
+        let beacon_address =
+            Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
+
+        // Test that we can call the functions (though they'll fail without network)
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        // Test create_beacon_via_factory signature
+        let create_result = rt.block_on(async {
+            create_beacon_via_factory(&app_state, owner_address, app_state.beacon_factory_address)
+                .await
+        });
+        assert!(create_result.is_err());
+
+        // Test register_beacon_with_registry signature
+        let register_result = rt.block_on(async {
+            register_beacon_with_registry(
+                &app_state,
+                beacon_address,
+                app_state.perpcity_registry_address,
+            )
+            .await
+        });
+        assert!(register_result.is_err());
     }
 
     #[test]
