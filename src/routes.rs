@@ -67,15 +67,64 @@ async fn create_beacon_via_factory(
         receipt.gas_used
     );
 
-    // Parse the return value from logs or use eth_call to get the beacon address
-    // For simplicity, we'll use the return value from the method call
-    let beacon_address = contract_call
-        .call()
-        .await
-        .map_err(|e| format!("Failed to get beacon address from createBeacon: {e}"))?;
+    // Parse the BeaconCreated event from the transaction receipt
+    let beacon_address = parse_beacon_created_event(&receipt, factory_address)?;
 
     tracing::info!("Beacon created at address: {}", beacon_address);
     Ok(beacon_address)
+}
+
+// Helper function to parse the BeaconCreated event from transaction receipt
+fn parse_beacon_created_event(
+    receipt: &ethers::types::TransactionReceipt,
+    factory_address: Address,
+) -> Result<Address, String> {
+    use ethers::abi::{Event, EventParam, ParamType};
+
+    // Define the BeaconCreated event signature: BeaconCreated(address beacon)
+    let beacon_created_event = Event {
+        name: "BeaconCreated".to_string(),
+        inputs: vec![EventParam {
+            name: "beacon".to_string(),
+            kind: ParamType::Address,
+            indexed: false,
+        }],
+        anonymous: false,
+    };
+
+    // Calculate the event signature hash
+    let event_signature = beacon_created_event.signature();
+
+    // Look for the BeaconCreated event in the logs
+    for log in &receipt.logs {
+        // Check if this log is from our factory contract and matches our event signature
+        if log.address == factory_address
+            && !log.topics.is_empty()
+            && log.topics[0] == event_signature
+        {
+            // Parse the event data to extract the beacon address
+            match beacon_created_event.parse_log(ethers::abi::RawLog {
+                topics: log.topics.clone(),
+                data: log.data.to_vec(),
+            }) {
+                Ok(parsed_log) => {
+                    // Get the beacon address from the first parameter
+                    if let Some(token) = parsed_log.params.first()
+                        && let Some(address) = token.value.clone().into_address()
+                    {
+                        return Ok(address);
+                    }
+                    return Err("Failed to extract address from BeaconCreated event".to_string());
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to parse BeaconCreated event: {}", e);
+                    continue;
+                }
+            }
+        }
+    }
+
+    Err("BeaconCreated event not found in transaction receipt".to_string())
 }
 
 // Helper function to register a beacon with a registry
