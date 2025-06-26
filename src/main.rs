@@ -1,16 +1,15 @@
 #[macro_use] extern crate rocket;
 
-use ethers::{
-    abi::Abi,
-    contract::Contract,
-    core::types::{Address, U256, Bytes},
-    providers::{Http, Provider},
-    signers::{LocalWallet, Signer},
+use alloy::{
+    primitives::{Address, U256, Bytes},
+    providers::ProviderBuilder,
+    signers::{local::PrivateKeySigner, Signer},
+    sol,
 };
 use rocket::serde::{json::Json, Deserialize, Serialize};
 use rocket::{Request, request::FromRequest, request::Outcome, http::Status, State};
 use std::env;
-use std::str::FromStr;
+
 use std::sync::Arc;
 use tracing;
 
@@ -38,11 +37,25 @@ struct ApiResponse<T> {
     message: String,
 }
 
-// Cached application state
+// Cached application state  
 struct AppState {
-    wallet: LocalWallet,
-    provider: Arc<Provider<Http>>,
-    beacon_abi: Abi,
+    wallet: PrivateKeySigner,
+    provider: Arc<alloy::providers::fillers::FillProvider<
+        alloy::providers::fillers::JoinFill<
+            alloy::providers::Identity,
+            alloy::providers::fillers::JoinFill<
+                alloy::providers::fillers::GasFiller,
+                alloy::providers::fillers::JoinFill<
+                    alloy::providers::fillers::BlobGasFiller,
+                    alloy::providers::fillers::JoinFill<
+                        alloy::providers::fillers::NonceFiller,
+                        alloy::providers::fillers::ChainIdFiller,
+                    >,
+                >,
+            >,
+        >,
+        alloy::providers::RootProvider,
+    >>,
     access_token: String,
 }
 
@@ -75,29 +88,14 @@ impl<'r> FromRequest<'r> for ApiToken {
     }
 }
 
-// IBeacon interface ABI
-const BEACON_ABI: &str = r#"[
-    {
-        "inputs": [],
-        "name": "getData",
-        "outputs": [
-            {"name": "data", "type": "uint256"},
-            {"name": "timestamp", "type": "uint256"}
-        ],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
-        "inputs": [
-            {"name": "proof", "type": "bytes"},
-            {"name": "publicSignals", "type": "bytes"}
-        ],
-        "name": "updateData",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
+// IBeacon interface using alloy's sol! macro
+sol! {
+    #[sol(rpc)]
+    interface IBeacon {
+        function getData() external view returns (uint256 data, uint256 timestamp);
+        function updateData(bytes memory proof, bytes memory publicSignals) external;
     }
-]"#;
+}
 
 #[get("/")]
 fn index() -> &'static str {
@@ -140,7 +138,7 @@ async fn update_beacon(
     });
 
     // Parse the beacon address
-    let beacon_address = match Address::from_str(&request.beacon_address) {
+    let beacon_address = match request.beacon_address.parse::<Address>() {
         Ok(addr) => addr,
         Err(_) => {
             let msg = "Invalid beacon address format".to_string();
@@ -158,19 +156,16 @@ async fn update_beacon(
     let multiplier = U256::from(2u128).pow(U256::from(96u128));
     let public_signals = value_u256 * multiplier;
 
-    // Create contract instance using cached provider and ABI
-    let contract = Contract::new(beacon_address, state.beacon_abi.clone(), state.provider.clone());
+    // Create contract instance using alloy's sol! generated interface
+    let contract = IBeacon::new(beacon_address, state.provider.as_ref());
 
     // Prepare the updateData function call
     let proof_bytes = Bytes::from(request.proof.clone());
-    let mut buf = [0u8; 32];
-    public_signals.to_big_endian(&mut buf);
-    let public_signals_bytes = Bytes::from(buf.to_vec());
+    let public_signals_bytes = Bytes::from(public_signals.to_be_bytes::<32>().to_vec());
 
     // Call the updateData function using cached wallet
     match contract
-        .method::<_, ()>("updateData", (proof_bytes, public_signals_bytes))
-        .unwrap()
+        .updateData(proof_bytes, public_signals_bytes)
         .from(state.wallet.address())
         .send()
         .await
@@ -204,24 +199,20 @@ fn rocket() -> rocket::Rocket<rocket::Build> {
     
     let access_token = env::var("BEACONATOR_ACCESS_TOKEN").expect("BEACONATOR_ACCESS_TOKEN environment variable not set");
     
-    // Parse and cache the ABI
-    let beacon_abi: Abi = serde_json::from_str(BEACON_ABI).expect("Failed to parse contract ABI");
-    
-    // Create and cache provider
-    let provider = Provider::<Http>::try_from(rpc_url.clone())
-        .expect("Failed to create provider");
+    // Create and cache provider using alloy
+    let provider = ProviderBuilder::new()
+        .connect_http(rpc_url.parse().expect("Invalid RPC URL"));
     let provider = Arc::new(provider);
     
-    // Create and cache wallet
+    // Create and cache wallet using alloy
     let wallet = "4f3edf983ac636a65a842ce7c78d9aa706d3b113b37e5a4d5edbde7e8d8be8ee"
-        .parse::<LocalWallet>()
+        .parse::<PrivateKeySigner>()
         .unwrap()
-        .with_chain_id(1337u64);
+        .with_chain_id(Some(1337u64));
     
     let app_state = AppState {
         wallet,
         provider,
-        beacon_abi,
         access_token,
     };
 
@@ -268,20 +259,19 @@ mod tests {
     }
 
     fn test_app_state() -> AppState {
-        use ethers::providers::Provider;
-        use ethers::signers::LocalWallet;
+        use alloy::providers::ProviderBuilder;
+        use alloy::signers::local::PrivateKeySigner;
         use std::sync::Arc;
-        let provider = Provider::<Http>::try_from("http://localhost:8545").unwrap();
+        let provider = ProviderBuilder::new()
+            .connect_http("http://localhost:8545".parse().unwrap());
         let provider = Arc::new(provider);
         let wallet = "4f3edf983ac636a65a842ce7c78d9aa706d3b113b37e5a4d5edbde7e8d8be8ee"
-            .parse::<LocalWallet>()
+            .parse::<PrivateKeySigner>()
             .unwrap()
-            .with_chain_id(1337u64);
-        let beacon_abi: Abi = serde_json::from_str(BEACON_ABI).unwrap();
+            .with_chain_id(Some(1337u64));
         AppState {
             wallet,
             provider,
-            beacon_abi,
             access_token: "testtoken".to_string(),
         }
     }
