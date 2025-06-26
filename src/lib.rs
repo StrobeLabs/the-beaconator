@@ -1,11 +1,13 @@
 use ethers::{
     abi::Abi,
+    core::types::Address,
     providers::{Http, Middleware, Provider},
     signers::{LocalWallet, Signer},
     utils,
 };
 use rocket::{Build, Rocket};
 use std::env;
+use std::str::FromStr;
 use std::sync::Arc;
 
 pub mod guards;
@@ -38,6 +40,52 @@ pub const BEACON_ABI: &str = r#"[
     }
 ]"#;
 
+pub const BEACON_FACTORY_ABI: &str = r#"[
+    {
+        "inputs": [
+            {"internalType": "address", "name": "owner", "type": "address"}
+        ],
+        "name": "createBeacon",
+        "outputs": [
+            {"internalType": "address", "name": "", "type": "address"}
+        ],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    }
+]"#;
+
+pub const BEACON_REGISTRY_ABI: &str = r#"[
+    {
+        "inputs": [
+            {"internalType": "address", "name": "beacon", "type": "address"}
+        ],
+        "name": "registerBeacon",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"internalType": "address", "name": "beacon", "type": "address"}
+        ],
+        "name": "unregisterBeacon",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"internalType": "address", "name": "", "type": "address"}
+        ],
+        "name": "beacons",
+        "outputs": [
+            {"internalType": "bool", "name": "", "type": "bool"}
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]"#;
+
 pub async fn create_rocket() -> Rocket<Build> {
     // Load and cache environment variables
     dotenvy::dotenv().ok();
@@ -47,8 +95,25 @@ pub async fn create_rocket() -> Rocket<Build> {
     let access_token = env::var("BEACONATOR_ACCESS_TOKEN")
         .expect("BEACONATOR_ACCESS_TOKEN environment variable not set");
 
-    // Parse and cache the ABI
-    let beacon_abi: Abi = serde_json::from_str(BEACON_ABI).expect("Failed to parse contract ABI");
+    // Parse and cache the ABIs
+    let beacon_abi: Abi = serde_json::from_str(BEACON_ABI).expect("Failed to parse beacon ABI");
+    let beacon_factory_abi: Abi =
+        serde_json::from_str(BEACON_FACTORY_ABI).expect("Failed to parse beacon factory ABI");
+    let beacon_registry_abi: Abi =
+        serde_json::from_str(BEACON_REGISTRY_ABI).expect("Failed to parse beacon registry ABI");
+
+    // Load contract addresses
+    let beacon_factory_address = Address::from_str(
+        &env::var("BEACON_FACTORY_ADDRESS")
+            .expect("BEACON_FACTORY_ADDRESS environment variable not set"),
+    )
+    .expect("Failed to parse beacon factory address");
+
+    let perpcity_registry_address = Address::from_str(
+        &env::var("PERPCITY_REGISTRY_ADDRESS")
+            .expect("PERPCITY_REGISTRY_ADDRESS environment variable not set"),
+    )
+    .expect("Failed to parse perpcity registry address");
 
     // Create and cache provider
     let provider = Provider::<Http>::try_from(rpc_url.clone()).expect("Failed to create provider");
@@ -59,9 +124,12 @@ pub async fn create_rocket() -> Rocket<Build> {
     let env_type = env::var("ENV").expect("ENV environment variable not set");
 
     let chain_id = match env_type.to_lowercase().as_str() {
-        "testnet" => 84532u64, // Base Sepolia testnet
-        "mainnet" => 8453u64,  // Base mainnet
-        _ => panic!("Invalid ENV value '{env_type}'. Must be either 'mainnet' or 'testnet'"),
+        "testnet" => 84532u64,  // Base Sepolia testnet
+        "mainnet" => 8453u64,   // Base mainnet
+        "localnet" => 84532u64, // Use testnet chain ID for local development/CI
+        _ => panic!(
+            "Invalid ENV value '{env_type}'. Must be either 'mainnet', 'testnet', or 'localnet'"
+        ),
     };
 
     // Parse the wallet and log details for debugging
@@ -101,6 +169,10 @@ pub async fn create_rocket() -> Rocket<Build> {
         wallet,
         provider,
         beacon_abi,
+        beacon_factory_abi,
+        beacon_registry_abi,
+        beacon_factory_address,
+        perpcity_registry_address,
         access_token,
     };
 
@@ -110,6 +182,8 @@ pub async fn create_rocket() -> Rocket<Build> {
             routes::index,
             routes::all_beacons,
             routes::create_beacon,
+            routes::register_beacon,
+            routes::create_perpcity_beacon,
             routes::deploy_perp_for_beacon,
             routes::update_beacon
         ],

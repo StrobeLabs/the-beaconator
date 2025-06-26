@@ -1,5 +1,6 @@
 use ethers::{
     abi::Abi,
+    core::types::Address,
     providers::{Http, Provider},
     signers::LocalWallet,
 };
@@ -19,6 +20,11 @@ pub struct CreateBeaconRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct RegisterBeaconRequest {
+    // TODO: Implement beacon registration parameters
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DeployPerpForBeaconRequest {
     // TODO: Implement perpetual deployment parameters
 }
@@ -35,5 +41,9 @@ pub struct AppState {
     pub wallet: LocalWallet,
     pub provider: Arc<Provider<Http>>,
     pub beacon_abi: Abi,
+    pub beacon_factory_abi: Abi,
+    pub beacon_registry_abi: Abi,
+    pub beacon_factory_address: Address,
+    pub perpcity_registry_address: Address,
     pub access_token: String,
 }
