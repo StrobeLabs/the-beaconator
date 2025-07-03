@@ -209,6 +209,42 @@ No request body required.
 }
 ```
 
+#### `POST /batch_create_perpcity_beacon`
+Create multiple beacons in a batch and register them with the Perpcity registry. This is more efficient than calling the individual endpoint multiple times. Each beacon is created with the authenticated wallet as the owner.
+
+**Headers:**
+```
+Authorization: Bearer <your_api_token>
+```
+
+**Request Body:**
+```json
+{
+  "count": 5
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    "0x1111111111111111111111111111111111111111",
+    "0x2222222222222222222222222222222222222222",
+    "0x3333333333333333333333333333333333333333",
+    "0x4444444444444444444444444444444444444444",
+    "0x5555555555555555555555555555555555555555"
+  ],
+  "message": "Successfully created and registered 5 Perpcity beacons"
+}
+```
+
+**Validation:**
+- `count` must be between 1 and 100 (inclusive)
+- Invalid counts will return `400 Bad Request`
+
+**Note:** This endpoint creates beacons sequentially for transaction reliability. Each beacon creation and registration is performed as separate transactions to ensure proper error handling and event parsing.
+
 #### `POST /deploy_perp_for_beacon`
 Deploy a perpetual for a beacon (not yet implemented).
 

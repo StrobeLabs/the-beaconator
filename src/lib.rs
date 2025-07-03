@@ -1,9 +1,9 @@
-use ethers::{
-    abi::Abi,
-    core::types::Address,
-    providers::{Http, Middleware, Provider},
-    signers::{LocalWallet, Signer},
-    utils,
+use alloy::{
+    json_abi::JsonAbi,
+    network::EthereumWallet,
+    primitives::{Address, utils::format_ether},
+    providers::{Provider, ProviderBuilder, WalletProvider},
+    signers::{Signer, local::PrivateKeySigner},
 };
 use rocket::{Build, Rocket};
 use std::env;
@@ -15,6 +15,28 @@ pub mod models;
 pub mod routes;
 
 use crate::models::AppState;
+
+// Let Rust infer the complex provider type
+pub type AlloyProvider = alloy::providers::fillers::FillProvider<
+    alloy::providers::fillers::JoinFill<
+        alloy::providers::fillers::JoinFill<
+            alloy::providers::Identity,
+            alloy::providers::fillers::JoinFill<
+                alloy::providers::fillers::GasFiller,
+                alloy::providers::fillers::JoinFill<
+                    alloy::providers::fillers::BlobGasFiller,
+                    alloy::providers::fillers::JoinFill<
+                        alloy::providers::fillers::NonceFiller,
+                        alloy::providers::fillers::ChainIdFiller,
+                    >,
+                >,
+            >,
+        >,
+        alloy::providers::fillers::WalletFiller<alloy::network::EthereumWallet>,
+    >,
+    alloy::providers::RootProvider<alloy::network::Ethereum>,
+    alloy::network::Ethereum,
+>;
 
 // IBeacon interface ABI
 pub const BEACON_ABI: &str = r#"[
@@ -96,10 +118,10 @@ pub async fn create_rocket() -> Rocket<Build> {
         .expect("BEACONATOR_ACCESS_TOKEN environment variable not set");
 
     // Parse and cache the ABIs
-    let beacon_abi: Abi = serde_json::from_str(BEACON_ABI).expect("Failed to parse beacon ABI");
-    let beacon_factory_abi: Abi =
+    let beacon_abi: JsonAbi = serde_json::from_str(BEACON_ABI).expect("Failed to parse beacon ABI");
+    let beacon_factory_abi: JsonAbi =
         serde_json::from_str(BEACON_FACTORY_ABI).expect("Failed to parse beacon factory ABI");
-    let beacon_registry_abi: Abi =
+    let beacon_registry_abi: JsonAbi =
         serde_json::from_str(BEACON_REGISTRY_ABI).expect("Failed to parse beacon registry ABI");
 
     // Load contract addresses
@@ -115,12 +137,7 @@ pub async fn create_rocket() -> Rocket<Build> {
     )
     .expect("Failed to parse perpcity registry address");
 
-    // Create and cache provider
-    let provider = Provider::<Http>::try_from(rpc_url.clone()).expect("Failed to create provider");
-    let provider = Arc::new(provider);
-
-    // Create and cache wallet
-    let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY environment variable not set");
+    // Get environment configuration
     let env_type = env::var("ENV").expect("ENV environment variable not set");
 
     let chain_id = match env_type.to_lowercase().as_str() {
@@ -132,31 +149,39 @@ pub async fn create_rocket() -> Rocket<Build> {
         ),
     };
 
-    // Parse the wallet and log details for debugging
-    let wallet = private_key
-        .parse::<LocalWallet>()
+    // Parse the wallet and create EthereumWallet
+    let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY environment variable not set");
+    let signer = private_key
+        .parse::<PrivateKeySigner>()
         .expect("Failed to parse private key")
-        .with_chain_id(chain_id);
+        .with_chain_id(Some(chain_id));
+
+    let wallet = EthereumWallet::from(signer);
+
+    // Create provider with wallet using modern Alloy patterns
+    let provider_impl = ProviderBuilder::new()
+        .wallet(wallet)
+        .connect_http(rpc_url.parse().expect("Invalid RPC URL"));
 
     // Log wallet configuration for debugging
+    let wallet_address = provider_impl.default_signer_address();
     tracing::info!("Wallet configured:");
-    tracing::info!("  - Address: {:?}", wallet.address());
-    tracing::info!("  - Chain ID: {}", wallet.chain_id());
+    tracing::info!("  - Address: {:?}", wallet_address);
+    tracing::info!("  - Chain ID: {:?}", chain_id);
     tracing::info!("  - ENV: {}", env_type);
     tracing::info!("  - RPC URL: {}", rpc_url);
 
     // Check wallet balance and nonce for debugging
-    let wallet_address = wallet.address();
-    match provider.get_balance(wallet_address, None).await {
+    match provider_impl.get_balance(wallet_address).await {
         Ok(balance) => {
-            tracing::info!("Wallet balance: {} ETH", utils::format_ether(balance));
+            tracing::info!("Wallet balance: {} ETH", format_ether(balance));
         }
         Err(e) => {
             tracing::warn!("Failed to get wallet balance: {}", e);
         }
     }
 
-    match provider.get_transaction_count(wallet_address, None).await {
+    match provider_impl.get_transaction_count(wallet_address).await {
         Ok(nonce) => {
             tracing::info!("Wallet nonce: {}", nonce);
         }
@@ -165,9 +190,11 @@ pub async fn create_rocket() -> Rocket<Build> {
         }
     }
 
+    let provider = Arc::new(provider_impl);
+
     let app_state = AppState {
-        wallet,
         provider,
+        wallet_address,
         beacon_abi,
         beacon_factory_abi,
         beacon_registry_abi,
@@ -184,6 +211,7 @@ pub async fn create_rocket() -> Rocket<Build> {
             routes::create_beacon,
             routes::register_beacon,
             routes::create_perpcity_beacon,
+            routes::batch_create_perpcity_beacon,
             routes::deploy_perp_for_beacon,
             routes::update_beacon
         ],
