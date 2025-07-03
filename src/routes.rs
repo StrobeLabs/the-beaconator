@@ -581,16 +581,6 @@ mod tests {
         assert!(response.message.contains("not yet implemented"));
     }
 
-    #[test]
-    fn test_batch_create_perpcity_beacon_validation() {
-        // Test count validation logic - corrected boolean logic
-        assert!(0 == 0 || 0 > 100); // 0 should be invalid (true || false = true)
-        assert!(101 == 0 || 101 > 100); // 101 should be invalid (false || true = true)
-        assert!(!(50 == 0 || 50 > 100)); // 50 should be valid (!(false || false) = true)
-        assert!(!(1 == 0 || 1 > 100)); // 1 should be valid (!(false || false) = true)
-        assert!(!(100 == 0 || 100 > 100)); // 100 should be valid (!(false || false) = true)
-    }
-
     #[tokio::test]
     async fn test_batch_create_perpcity_beacon_invalid_count() {
         use crate::guards::ApiToken;
