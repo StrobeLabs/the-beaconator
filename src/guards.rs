@@ -2,7 +2,7 @@ use crate::models::AppState;
 use rocket::{Request, State, http::Status, request::FromRequest, request::Outcome};
 
 // API Token guard
-pub struct ApiToken;
+pub struct ApiToken(pub String);
 
 #[rocket::async_trait]
 impl<'r> FromRequest<'r> for ApiToken {
@@ -17,7 +17,7 @@ impl<'r> FromRequest<'r> for ApiToken {
                     Some(header) if header.starts_with("Bearer ") => {
                         let token = &header[7..]; // Remove "Bearer " prefix
                         if token == state.access_token {
-                            Outcome::Success(ApiToken)
+                            Outcome::Success(ApiToken(token.to_string()))
                         } else {
                             Outcome::Error((Status::Unauthorized, "Invalid API token".to_string()))
                         }

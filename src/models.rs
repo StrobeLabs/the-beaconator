@@ -1,32 +1,18 @@
-use ethers::{
-    abi::Abi,
-    core::types::Address,
-    providers::{Http, Provider},
-    signers::LocalWallet,
-};
-use rocket::serde::{Deserialize, Serialize};
+use alloy::{json_abi::JsonAbi, primitives::Address};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct UpdateBeaconRequest {
-    pub beacon_address: String,
-    pub value: i64,
-    pub proof: Vec<u8>,
-}
+use crate::AlloyProvider;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreateBeaconRequest {
-    // TODO: Implement beacon creation parameters
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct RegisterBeaconRequest {
-    // TODO: Implement beacon registration parameters
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DeployPerpForBeaconRequest {
-    // TODO: Implement perpetual deployment parameters
+pub struct AppState {
+    pub provider: Arc<AlloyProvider>,
+    pub wallet_address: Address,
+    pub beacon_abi: JsonAbi,
+    pub beacon_factory_abi: JsonAbi,
+    pub beacon_registry_abi: JsonAbi,
+    pub beacon_factory_address: Address,
+    pub perpcity_registry_address: Address,
+    pub access_token: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,14 +22,40 @@ pub struct ApiResponse<T> {
     pub message: String,
 }
 
-// Cached application state
-pub struct AppState {
-    pub wallet: LocalWallet,
-    pub provider: Arc<Provider<Http>>,
-    pub beacon_abi: Abi,
-    pub beacon_factory_abi: Abi,
-    pub beacon_registry_abi: Abi,
-    pub beacon_factory_address: Address,
-    pub perpcity_registry_address: Address,
-    pub access_token: String,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateBeaconRequest {
+    pub beacon_address: String,
+    pub value: u64,
+    pub proof: Vec<u8>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateBeaconRequest {
+    // TODO: Define the fields needed for creating a beacon
+    pub placeholder: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RegisterBeaconRequest {
+    // TODO: Define the fields needed for registering a beacon
+    pub placeholder: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeployPerpForBeaconRequest {
+    // TODO: Define the fields needed for deploying a perp for a beacon
+    pub placeholder: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchCreatePerpcityBeaconRequest {
+    pub count: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchCreatePerpcityBeaconResponse {
+    pub created_count: u32,
+    pub beacon_addresses: Vec<String>,
+    pub failed_count: u32,
+    pub errors: Vec<String>,
 }
