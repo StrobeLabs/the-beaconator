@@ -1,0 +1,86 @@
+{
+  "project": {
+    "name": "The Beaconator",
+    "description": "Rust web service for managing Ethereum beacon contracts on Base network",
+    "version": "0.1.0",
+    "status": "production-ready"
+  },
+  "tech_stack": {
+    "framework": "Rocket 0.5.0",
+    "blockchain": "Alloy 1.0.17",
+    "network": "Base mainnet/testnet",
+    "security": "Bearer token authentication",
+    "monitoring": "Sentry integration + structured logging"
+  },
+  "api_endpoints": {
+    "create_perpcity_beacon": {
+      "method": "POST",
+      "path": "/create_perpcity_beacon",
+      "description": "Create single beacon",
+      "status": "working"
+    },
+    "batch_create_perpcity_beacon": {
+      "method": "POST", 
+      "path": "/batch_create_perpcity_beacon",
+      "description": "Batch create beacons (1-100 limit)",
+      "status": "production-ready",
+      "features": [
+        "Partial failure handling",
+        "Detailed error reporting",
+        "Comprehensive response with success/failure counts",
+        "Input validation",
+        "Full test coverage"
+      ]
+    },
+    "update_beacon": {
+      "method": "POST",
+      "path": "/update_beacon", 
+      "description": "Update beacon with ZK proof",
+      "status": "working"
+    }
+  },
+  "development": {
+    "commands": {
+      "dev": "make dev",
+      "test": "make test",
+      "quality": "make quality",
+      "build": "make build"
+    },
+    "test_status": "15/15 tests passing",
+    "quality_checks": [
+      "Clippy linting clean",
+      "Code formatting applied",
+      "All tests passing"
+    ]
+  },
+  "environment": {
+    "required_variables": [
+      "RPC_URL",
+      "ENV",
+      "BEACONATOR_ACCESS_TOKEN", 
+      "PRIVATE_KEY",
+      "BEACON_FACTORY_ADDRESS",
+      "PERPCITY_REGISTRY_ADDRESS"
+    ],
+    "network_types": ["mainnet", "testnet", "localnet"]
+  },
+  "architecture": {
+    "app_state": "Arc'd provider + wallet address + contract addresses + ABIs",
+    "contract_instantiation": "Uses sol! macro with concrete provider types",
+    "error_handling": "Comprehensive error propagation with Sentry integration",
+    "provider_type": "AlloyProvider (concrete type for sol! macro compatibility)"
+  },
+  "alloy_patterns": {
+    "provider_builder": "ProviderBuilder::new().wallet(wallet).connect_http(rpc_url)",
+    "wallet_integration": "EthereumWallet::from(signer)",
+    "contract_interface": "sol! macro for type-safe contract interactions",
+    "provider_dereference": "&*state.provider for sol! contracts"
+  },
+  "notes": [
+    "Alloy uses complex nested generic types for providers",
+    "Use concrete types instead of trait objects for sol! macro compatibility", 
+    "Store wallet address separately in AppState for easy access",
+    "Always handle provider errors gracefully",
+    "Follow modern Alloy patterns with ProviderBuilder"
+  ]
+}
