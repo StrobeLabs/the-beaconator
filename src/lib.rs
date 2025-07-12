@@ -50,28 +50,28 @@ fn load_abi(name: &str) -> JsonAbi {
 /// Load perp configuration from environment variables with fallback to defaults
 fn load_perp_config() -> PerpConfig {
     let default_config = PerpConfig::default();
-    
+
     let parse_env_or_default = |key: &str, default: u128| -> u128 {
         env::var(key)
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(default)
     };
-    
+
     let parse_env_or_default_i32 = |key: &str, default: i32| -> i32 {
         env::var(key)
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(default)
     };
-    
+
     let parse_env_or_default_i128 = |key: &str, default: i128| -> i128 {
         env::var(key)
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(default)
     };
-    
+
     let parse_env_or_default_u32 = |key: &str, default: u32| -> u32 {
         env::var(key)
             .ok()
@@ -80,21 +80,63 @@ fn load_perp_config() -> PerpConfig {
     };
 
     PerpConfig {
-        trading_fee_bps: parse_env_or_default_u32("PERP_TRADING_FEE_BPS", default_config.trading_fee_bps),
-        trading_fee_creator_split_x96: parse_env_or_default("PERP_TRADING_FEE_CREATOR_SPLIT_X96", default_config.trading_fee_creator_split_x96),
-        min_margin_usdc: parse_env_or_default("PERP_MIN_MARGIN_USDC", default_config.min_margin_usdc),
-        max_margin_usdc: parse_env_or_default("PERP_MAX_MARGIN_USDC", default_config.max_margin_usdc),
-        min_opening_leverage_x96: parse_env_or_default("PERP_MIN_OPENING_LEVERAGE_X96", default_config.min_opening_leverage_x96),
-        max_opening_leverage_x96: parse_env_or_default("PERP_MAX_OPENING_LEVERAGE_X96", default_config.max_opening_leverage_x96),
-        liquidation_leverage_x96: parse_env_or_default("PERP_LIQUIDATION_LEVERAGE_X96", default_config.liquidation_leverage_x96),
-        liquidation_fee_x96: parse_env_or_default("PERP_LIQUIDATION_FEE_X96", default_config.liquidation_fee_x96),
-        liquidation_fee_split_x96: parse_env_or_default("PERP_LIQUIDATION_FEE_SPLIT_X96", default_config.liquidation_fee_split_x96),
-        funding_interval_seconds: parse_env_or_default_i128("PERP_FUNDING_INTERVAL_SECONDS", default_config.funding_interval_seconds),
+        trading_fee_bps: parse_env_or_default_u32(
+            "PERP_TRADING_FEE_BPS",
+            default_config.trading_fee_bps,
+        ),
+        trading_fee_creator_split_x96: parse_env_or_default(
+            "PERP_TRADING_FEE_CREATOR_SPLIT_X96",
+            default_config.trading_fee_creator_split_x96,
+        ),
+        min_margin_usdc: parse_env_or_default(
+            "PERP_MIN_MARGIN_USDC",
+            default_config.min_margin_usdc,
+        ),
+        max_margin_usdc: parse_env_or_default(
+            "PERP_MAX_MARGIN_USDC",
+            default_config.max_margin_usdc,
+        ),
+        min_opening_leverage_x96: parse_env_or_default(
+            "PERP_MIN_OPENING_LEVERAGE_X96",
+            default_config.min_opening_leverage_x96,
+        ),
+        max_opening_leverage_x96: parse_env_or_default(
+            "PERP_MAX_OPENING_LEVERAGE_X96",
+            default_config.max_opening_leverage_x96,
+        ),
+        liquidation_leverage_x96: parse_env_or_default(
+            "PERP_LIQUIDATION_LEVERAGE_X96",
+            default_config.liquidation_leverage_x96,
+        ),
+        liquidation_fee_x96: parse_env_or_default(
+            "PERP_LIQUIDATION_FEE_X96",
+            default_config.liquidation_fee_x96,
+        ),
+        liquidation_fee_split_x96: parse_env_or_default(
+            "PERP_LIQUIDATION_FEE_SPLIT_X96",
+            default_config.liquidation_fee_split_x96,
+        ),
+        funding_interval_seconds: parse_env_or_default_i128(
+            "PERP_FUNDING_INTERVAL_SECONDS",
+            default_config.funding_interval_seconds,
+        ),
         tick_spacing: parse_env_or_default_i32("PERP_TICK_SPACING", default_config.tick_spacing),
-        starting_sqrt_price_x96: parse_env_or_default("PERP_STARTING_SQRT_PRICE_X96", default_config.starting_sqrt_price_x96),
-        default_tick_lower: parse_env_or_default_i32("PERP_DEFAULT_TICK_LOWER", default_config.default_tick_lower),
-        default_tick_upper: parse_env_or_default_i32("PERP_DEFAULT_TICK_UPPER", default_config.default_tick_upper),
-        liquidity_scaling_factor: parse_env_or_default("PERP_LIQUIDITY_SCALING_FACTOR", default_config.liquidity_scaling_factor),
+        starting_sqrt_price_x96: parse_env_or_default(
+            "PERP_STARTING_SQRT_PRICE_X96",
+            default_config.starting_sqrt_price_x96,
+        ),
+        default_tick_lower: parse_env_or_default_i32(
+            "PERP_DEFAULT_TICK_LOWER",
+            default_config.default_tick_lower,
+        ),
+        default_tick_upper: parse_env_or_default_i32(
+            "PERP_DEFAULT_TICK_UPPER",
+            default_config.default_tick_upper,
+        ),
+        liquidity_scaling_factor: parse_env_or_default(
+            "PERP_LIQUIDITY_SCALING_FACTOR",
+            default_config.liquidity_scaling_factor,
+        ),
     }
 }
 
@@ -133,13 +175,24 @@ pub async fn create_rocket() -> Rocket<Build> {
 
     // Load perp configuration
     let perp_config = load_perp_config();
-    
+
     // Log loaded configuration for debugging
     tracing::info!("Perp configuration loaded:");
-    tracing::info!("  - Trading fee: {}bps ({}%)", perp_config.trading_fee_bps, perp_config.trading_fee_bps as f64 / 100.0);
-    tracing::info!("  - Max margin: {} USDC", perp_config.max_margin_usdc as f64 / 1_000_000.0);
+    tracing::info!(
+        "  - Trading fee: {}bps ({}%)",
+        perp_config.trading_fee_bps,
+        perp_config.trading_fee_bps as f64 / 100.0
+    );
+    tracing::info!(
+        "  - Max margin: {} USDC",
+        perp_config.max_margin_usdc as f64 / 1_000_000.0
+    );
     tracing::info!("  - Tick spacing: {}", perp_config.tick_spacing);
-    tracing::info!("  - Funding interval: {}s ({}h)", perp_config.funding_interval_seconds, perp_config.funding_interval_seconds / 3600);
+    tracing::info!(
+        "  - Funding interval: {}s ({}h)",
+        perp_config.funding_interval_seconds,
+        perp_config.funding_interval_seconds / 3600
+    );
 
     // Get environment configuration
     let env_type = env::var("ENV").expect("ENV environment variable not set");

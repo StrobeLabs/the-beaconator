@@ -25,7 +25,7 @@ fn parse_maker_position_opened_event(
             // Try to decode as MakerPositionOpened event
             if let Ok(decoded_log) = log.log_decode::<IPerpHook::MakerPositionOpened>() {
                 let event_data = decoded_log.inner.data;
-                
+
                 // Verify this is the event for our perp ID
                 if event_data.perpId == expected_perp_id {
                     return Ok(event_data.makerPosId);
@@ -46,7 +46,7 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
 
     // Use configuration from AppState instead of hardcoded values
     let config = &state.perp_config;
-    
+
     let trading_fee = Uint::<24, 1>::from(config.trading_fee_bps);
     let trading_fee_creator_split_x96 = config.trading_fee_creator_split_x96;
     let min_margin = config.min_margin_usdc;
@@ -78,8 +78,12 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
         startingSqrtPriceX96: starting_sqrt_price_x96,
     };
 
-    tracing::debug!("Sending createPerp transaction with config: trading_fee={}bps, max_margin={} USDC, tick_spacing={}", 
-                   config.trading_fee_bps, config.max_margin_usdc as f64 / 1_000_000.0, config.tick_spacing);
+    tracing::debug!(
+        "Sending createPerp transaction with config: trading_fee={}bps, max_margin={} USDC, tick_spacing={}",
+        config.trading_fee_bps,
+        config.max_margin_usdc as f64 / 1_000_000.0,
+        config.tick_spacing
+    );
 
     // Send the transaction and wait for receipt
     let receipt = contract
@@ -116,9 +120,9 @@ async fn deposit_liquidity_for_perp(
 
     // Use configuration from AppState instead of hardcoded values
     let config = &state.perp_config;
-    
+
     let tick_spacing = config.tick_spacing;
-    
+
     // Use configured tick range for liquidity positions
     let tick_lower = config.default_tick_lower;
     let tick_upper = config.default_tick_upper;
@@ -139,8 +143,12 @@ async fn deposit_liquidity_for_perp(
             .map_err(|e| format!("Invalid tick upper: {e}"))?,
     };
 
-    tracing::debug!("Sending openMakerPosition transaction with config: tick_range=[{}, {}], liquidity_factor={}", 
-                   tick_lower, tick_upper, config.liquidity_scaling_factor);
+    tracing::debug!(
+        "Sending openMakerPosition transaction with config: tick_range=[{}, {}], liquidity_factor={}",
+        tick_lower,
+        tick_upper,
+        config.liquidity_scaling_factor
+    );
 
     // Send the transaction and wait for receipt
     let receipt = contract
@@ -158,7 +166,8 @@ async fn deposit_liquidity_for_perp(
     );
 
     // Parse the maker position ID from the MakerPositionOpened event
-    let maker_pos_id = parse_maker_position_opened_event(&receipt, state.perp_hook_address, perp_id)?;
+    let maker_pos_id =
+        parse_maker_position_opened_event(&receipt, state.perp_hook_address, perp_id)?;
 
     tracing::info!(
         "Parsed maker position ID {} from MakerPositionOpened event",
@@ -341,7 +350,7 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             tracing::info!("{}", message);
             Ok(Json(ApiResponse {
                 success: true,
-                data: Some(format!("Maker position ID: {}", maker_pos_id)),
+                data: Some(format!("Maker position ID: {maker_pos_id}")),
                 message: message.to_string(),
             }))
         }
@@ -510,7 +519,8 @@ mod tests {
 
         // Test invalid margin amount (not a number)
         let request = Json(DepositLiquidityForPerpRequest {
-            perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234".to_string(),
+            perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                .to_string(),
             margin_amount_usdc: "not_a_number".to_string(),
         });
 
@@ -531,13 +541,17 @@ mod tests {
 
         // Test zero margin amount (should be valid but will fail at network level)
         let request = Json(DepositLiquidityForPerpRequest {
-            perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234".to_string(),
+            perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                .to_string(),
             margin_amount_usdc: "0".to_string(),
         });
 
         let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), rocket::http::Status::InternalServerError);
+        assert_eq!(
+            result.unwrap_err(),
+            rocket::http::Status::InternalServerError
+        );
     }
 
     #[tokio::test]
@@ -593,7 +607,8 @@ mod tests {
         // Test mixed valid and invalid requests
         let deposits = vec![
             DepositLiquidityForPerpRequest {
-                perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234".to_string(),
+                perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                    .to_string(),
                 margin_amount_usdc: "500000000".to_string(),
             },
             DepositLiquidityForPerpRequest {
@@ -601,7 +616,8 @@ mod tests {
                 margin_amount_usdc: "1000000000".to_string(),
             },
             DepositLiquidityForPerpRequest {
-                perp_id: "0x5678901234567890123456789012345678901234567890123456789012345678".to_string(),
+                perp_id: "0x5678901234567890123456789012345678901234567890123456789012345678"
+                    .to_string(),
                 margin_amount_usdc: "not_a_number".to_string(), // Invalid
             },
         ];
@@ -612,19 +628,21 @@ mod tests {
 
         let result = batch_deposit_liquidity_for_perps(request, token, &state).await;
         assert!(result.is_ok());
-        
+
         let response = result.unwrap().into_inner();
         assert!(!response.success); // Should be false since no successful deposits
         assert!(response.data.is_some());
-        
+
         let batch_data = response.data.unwrap();
         assert_eq!(batch_data.deposited_count, 0);
         assert_eq!(batch_data.failed_count, 3);
         assert_eq!(batch_data.errors.len(), 3);
-        
+
         // Check that error messages are meaningful
-        assert!(batch_data.errors[0].contains("Failed to send transaction") || 
-                batch_data.errors[0].contains("Failed to get receipt"));
+        assert!(
+            batch_data.errors[0].contains("Failed to send transaction")
+                || batch_data.errors[0].contains("Failed to get receipt")
+        );
         assert!(batch_data.errors[1].contains("Failed to parse perp ID"));
         assert!(batch_data.errors[2].contains("Failed to parse margin amount"));
     }
@@ -651,22 +669,26 @@ mod tests {
 
         let result = batch_deploy_perps_for_beacons(request, token, &state).await;
         assert!(result.is_ok());
-        
+
         let response = result.unwrap().into_inner();
         assert!(!response.success); // Should be false since no successful deployments
         assert!(response.data.is_some());
-        
+
         let batch_data = response.data.unwrap();
         assert_eq!(batch_data.deployed_count, 0);
         assert_eq!(batch_data.failed_count, 4);
         assert_eq!(batch_data.errors.len(), 4);
-        
+
         // Check that error messages are meaningful
-        assert!(batch_data.errors[0].contains("Failed to send transaction") || 
-                batch_data.errors[0].contains("Failed to get receipt"));
+        assert!(
+            batch_data.errors[0].contains("Failed to send transaction")
+                || batch_data.errors[0].contains("Failed to get receipt")
+        );
         assert!(batch_data.errors[1].contains("Failed to parse beacon address"));
-        assert!(batch_data.errors[2].contains("Failed to send transaction") || 
-                batch_data.errors[2].contains("Failed to get receipt"));
+        assert!(
+            batch_data.errors[2].contains("Failed to send transaction")
+                || batch_data.errors[2].contains("Failed to get receipt")
+        );
         assert!(batch_data.errors[3].contains("Failed to parse beacon address"));
     }
 
@@ -739,11 +761,11 @@ mod tests {
         // Test U256 conversions and string formatting
         let large_position_id = U256::from(18446744073709551615u64); // Max u64
         let position_id_string = large_position_id.to_string();
-        
+
         // Should be able to convert back
         let parsed_back = U256::from_str(&position_id_string).unwrap();
         assert_eq!(large_position_id, parsed_back);
-        
+
         // Test very large number
         let very_large = U256::from_str("123456789012345678901234567890").unwrap();
         let very_large_string = very_large.to_string();
@@ -756,14 +778,14 @@ mod tests {
         let tick_spacing = 30i32;
         let tick_lower = -23030i32;
         let tick_upper = 23030i32;
-        
+
         // Test rounding to nearest tick spacing
         let rounded_lower = (tick_lower / tick_spacing) * tick_spacing;
         let rounded_upper = (tick_upper / tick_spacing) * tick_spacing;
-        
+
         assert_eq!(rounded_lower, -23010); // -23030 rounds to -23010 (integer division)
-        assert_eq!(rounded_upper, 23010);  // 23030 rounds to 23010 (integer division)
-        
+        assert_eq!(rounded_upper, 23010); // 23030 rounds to 23010 (integer division)
+
         // Test edge cases
         let edge_case = -23029i32;
         let rounded_edge = (edge_case / tick_spacing) * tick_spacing;
@@ -775,15 +797,15 @@ mod tests {
         // Test liquidity scaling calculation
         let margin_500_usdc = 500_000_000u128; // 500 USDC in 6 decimals
         let expected_liquidity = margin_500_usdc * 400_000_000_000_000u128;
-        
+
         // Should scale to 18 decimals properly
         assert_eq!(expected_liquidity, 200_000_000_000_000_000_000_000u128);
-        
+
         // Test edge cases
         let min_margin = 1u128;
         let min_liquidity = min_margin * 400_000_000_000_000u128;
         assert_eq!(min_liquidity, 400_000_000_000_000u128);
-        
+
         // Test large margin
         let large_margin = 1_000_000_000u128; // 1000 USDC
         let large_liquidity = large_margin * 400_000_000_000_000u128;
@@ -796,17 +818,17 @@ mod tests {
         let valid_perp_id = "0x1234567890123456789012345678901234567890123456789012345678901234";
         let parsed = FixedBytes::<32>::from_str(valid_perp_id);
         assert!(parsed.is_ok());
-        
+
         // Test without 0x prefix
         let no_prefix = "1234567890123456789012345678901234567890123456789012345678901234";
         let parsed_no_prefix = FixedBytes::<32>::from_str(no_prefix);
         assert!(parsed_no_prefix.is_ok());
-        
+
         // Test invalid length
         let too_short = "0x12345678901234567890123456789012345678901234567890123456789012";
         let parsed_short = FixedBytes::<32>::from_str(too_short);
         assert!(parsed_short.is_err());
-        
+
         // Test invalid characters
         let invalid_chars = "0x123456789012345678901234567890123456789012345678901234567890123g";
         let parsed_invalid = FixedBytes::<32>::from_str(invalid_chars);
@@ -817,7 +839,7 @@ mod tests {
     async fn test_deploy_perp_for_beacon_with_anvil() {
         use crate::guards::ApiToken;
         use crate::models::DeployPerpForBeaconRequest;
-        use crate::routes::test_utils::{create_test_app_state, TestUtils};
+        use crate::routes::test_utils::{TestUtils, create_test_app_state};
         use rocket::State;
 
         let token = ApiToken("test_token".to_string());
@@ -827,7 +849,7 @@ mod tests {
         // Test that we can connect to the blockchain
         let block_number = TestUtils::get_block_number(&app_state.provider).await;
         assert!(block_number.is_ok());
-        
+
         // Test that the deployer account has funds
         let balance = TestUtils::get_balance(&app_state.provider, app_state.wallet_address).await;
         assert!(balance.is_ok());
@@ -845,7 +867,7 @@ mod tests {
         // We just test that we get a deterministic response (either success or failure)
         // The important thing is that we have a real blockchain connection
         assert!(result.is_ok() || result.is_err());
-        
+
         println!("Deploy perp result: {:?}", result);
     }
 
@@ -853,7 +875,7 @@ mod tests {
     async fn test_deposit_liquidity_with_anvil() {
         use crate::guards::ApiToken;
         use crate::models::DepositLiquidityForPerpRequest;
-        use crate::routes::test_utils::{create_test_app_state_with_account, TestUtils};
+        use crate::routes::test_utils::{TestUtils, create_test_app_state_with_account};
         use rocket::State;
 
         let token = ApiToken("test_token".to_string());
@@ -868,7 +890,8 @@ mod tests {
         assert!(balance > U256::ZERO);
 
         let request = Json(DepositLiquidityForPerpRequest {
-            perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234".to_string(),
+            perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                .to_string(),
             margin_amount_usdc: "500000000".to_string(),
         });
 
@@ -876,38 +899,42 @@ mod tests {
         // The important thing is we have a real blockchain connection with proper multi-account setup
         let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
         assert!(result.is_ok() || result.is_err());
-        
+
         println!("Deposit liquidity result: {:?}", result);
         println!("Using account: {}", app_state.wallet_address);
     }
 
     #[tokio::test]
     async fn test_integration_blockchain_utilities() {
-        use crate::routes::test_utils::{create_test_app_state, TestUtils, mock_contract_deployment};
+        use crate::routes::test_utils::{
+            TestUtils, create_test_app_state, mock_contract_deployment,
+        };
 
         let app_state = create_test_app_state().await;
-        
+
         // Test blockchain utilities
         let block_number = TestUtils::get_block_number(&app_state.provider).await;
         assert!(block_number.is_ok());
         println!("Current block number: {}", block_number.unwrap());
-        
+
         // Test balance checking
         let balance = TestUtils::get_balance(&app_state.provider, app_state.wallet_address).await;
         assert!(balance.is_ok());
         println!("Account balance: {} ETH", balance.unwrap());
-        
+
         // Test contract deployment mocking
         let deployment = mock_contract_deployment("PerpHook").await;
         assert_ne!(deployment.address, Address::ZERO);
         println!("Mock deployment result: {:?}", deployment);
-        
+
         // Test that ABIs are loaded correctly
         assert!(!app_state.beacon_abi.functions.is_empty());
         assert!(!app_state.perp_hook_abi.functions.is_empty());
-        println!("Loaded ABIs: Beacon has {} functions, PerpHook has {} functions", 
-                 app_state.beacon_abi.functions.len(), 
-                 app_state.perp_hook_abi.functions.len());
+        println!(
+            "Loaded ABIs: Beacon has {} functions, PerpHook has {} functions",
+            app_state.beacon_abi.functions.len(),
+            app_state.perp_hook_abi.functions.len()
+        );
     }
 
     #[tokio::test]

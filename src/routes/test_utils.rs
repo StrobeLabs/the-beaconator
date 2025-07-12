@@ -21,13 +21,13 @@ use crate::routes::test_utils::{create_test_app_state, TestUtils};
 #[tokio::test]
 async fn test_example() {
     let app_state = create_test_app_state().await;
-    
+
     // App state now has:
     // - Real blockchain connection via Anvil
     // - Funded test account
     // - Actual contract ABIs loaded
     // - Deterministic contract addresses
-    
+
     // Test blockchain connection
     let block_number = TestUtils::get_block_number(&app_state.provider).await;
     assert!(block_number.is_ok());
@@ -43,7 +43,7 @@ use crate::routes::test_utils::create_test_app_state_with_account;
 async fn test_with_different_account() {
     // Use account index 1 instead of 0
     let app_state = create_test_app_state_with_account(1).await;
-    
+
     // This account has different address but same balance
     assert_ne!(app_state.wallet_address, Address::ZERO);
 }
@@ -57,14 +57,14 @@ use crate::routes::test_utils::TestUtils;
 #[tokio::test]
 async fn test_blockchain_operations() {
     let app_state = create_test_app_state().await;
-    
+
     // Check balance
     let balance = TestUtils::get_balance(&app_state.provider, app_state.wallet_address).await?;
     assert!(balance > U256::ZERO);
-    
+
     // Get block number
     let block_number = TestUtils::get_block_number(&app_state.provider).await?;
-    
+
     // Time manipulation (for contract testing)
     TestUtils::fast_forward_time(&app_state.provider, 3600).await?; // 1 hour
     TestUtils::mine_blocks(&app_state.provider, 10).await?;
@@ -92,7 +92,7 @@ use crate::routes::test_utils::TestCleanup;
 #[tokio::test]
 async fn test_with_cleanup() {
     // Test logic here...
-    
+
     // Clean up after test
     TestCleanup::reset_anvil().await?;
 }
@@ -132,7 +132,7 @@ use alloy::{
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, U256},
     providers::{Provider, ProviderBuilder},
-    signers::{local::PrivateKeySigner, Signer},
+    signers::{Signer, local::PrivateKeySigner},
 };
 use once_cell::sync::Lazy;
 use std::str::FromStr;
@@ -213,11 +213,14 @@ impl AnvilManager {
     /// Get or create the shared Anvil instance
     pub async fn get_or_create() -> Arc<AnvilConfig> {
         static ANVIL_CONFIG: OnceCell<Arc<AnvilConfig>> = OnceCell::const_new();
-        
-        ANVIL_CONFIG.get_or_init(|| async {
-            let config = AnvilConfig::new();
-            Arc::new(config)
-        }).await.clone()
+
+        ANVIL_CONFIG
+            .get_or_init(|| async {
+                let config = AnvilConfig::new();
+                Arc::new(config)
+            })
+            .await
+            .clone()
     }
 
     /// Shutdown the Anvil instance (for cleanup)
@@ -258,7 +261,7 @@ impl TestDeployment {
         let provider = Arc::new(
             ProviderBuilder::new()
                 .wallet(wallet)
-                .connect_http(anvil.rpc_url.parse()?)
+                .connect_http(anvil.rpc_url.parse()?),
         );
 
         // For testing, we'll use mock addresses for now
@@ -286,9 +289,10 @@ impl TestDeployment {
 pub async fn create_test_app_state() -> AppState {
     // Get or create Anvil instance
     let anvil = AnvilManager::get_or_create().await;
-    
+
     // Deploy test contracts
-    let deployment = TestDeployment::deploy(&anvil).await
+    let deployment = TestDeployment::deploy(&anvil)
+        .await
         .expect("Failed to deploy test contracts");
 
     // Load real ABIs from test fixtures
@@ -315,16 +319,17 @@ pub async fn create_test_app_state() -> AppState {
 /// Create a test AppState with a specific account
 pub async fn create_test_app_state_with_account(account_index: usize) -> AppState {
     let anvil = AnvilManager::get_or_create().await;
-    
+
     let signer = anvil.get_signer(account_index);
     let wallet = EthereumWallet::from(signer);
     let provider = Arc::new(
         ProviderBuilder::new()
             .wallet(wallet)
-            .connect_http(anvil.rpc_url.parse().expect("Invalid RPC URL"))
+            .connect_http(anvil.rpc_url.parse().expect("Invalid RPC URL")),
     );
 
-    let deployment = TestDeployment::deploy(&anvil).await
+    let deployment = TestDeployment::deploy(&anvil)
+        .await
         .expect("Failed to deploy test contracts");
 
     AppState {
@@ -348,20 +353,29 @@ pub struct TestUtils;
 
 impl TestUtils {
     /// Get the current block number
-    pub async fn get_block_number(provider: &crate::AlloyProvider) -> Result<u64, Box<dyn std::error::Error>> {
+    pub async fn get_block_number(
+        provider: &crate::AlloyProvider,
+    ) -> Result<u64, Box<dyn std::error::Error>> {
         let block_number = provider.get_block_number().await?;
         Ok(block_number)
     }
 
     /// Get account balance
-    pub async fn get_balance(provider: &crate::AlloyProvider, address: Address) -> Result<U256, Box<dyn std::error::Error>> {
+    pub async fn get_balance(
+        provider: &crate::AlloyProvider,
+        address: Address,
+    ) -> Result<U256, Box<dyn std::error::Error>> {
         let balance = provider.get_balance(address).await?;
         Ok(balance)
     }
 
     /// Fund an account with ETH (for testing)
     #[allow(dead_code)]
-    pub async fn fund_account(_provider: &crate::AlloyProvider, to: Address, amount: U256) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn fund_account(
+        _provider: &crate::AlloyProvider,
+        to: Address,
+        amount: U256,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // In a real implementation, this would use anvil_setBalance RPC call
         // For now, we'll skip this since accounts are pre-funded
         tracing::info!("Funding account {} with {} ETH", to, amount);
@@ -370,7 +384,10 @@ impl TestUtils {
 
     /// Fast forward blockchain time (for testing time-dependent contracts)
     #[allow(dead_code)]
-    pub async fn fast_forward_time(_provider: &crate::AlloyProvider, seconds: u64) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn fast_forward_time(
+        _provider: &crate::AlloyProvider,
+        seconds: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // In a real implementation, this would use anvil_increaseTime RPC call
         tracing::info!("Fast forwarding time by {} seconds", seconds);
         Ok(())
@@ -378,7 +395,10 @@ impl TestUtils {
 
     /// Mine blocks (for testing block-dependent contracts)
     #[allow(dead_code)]
-    pub async fn mine_blocks(_provider: &crate::AlloyProvider, blocks: u64) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn mine_blocks(
+        _provider: &crate::AlloyProvider,
+        blocks: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // In a real implementation, this would use anvil_mine RPC call
         tracing::info!("Mining {} blocks", blocks);
         Ok(())
@@ -422,14 +442,17 @@ pub async fn mock_contract_deployment(name: &str) -> ContractDeploymentResult {
     let address = match name {
         "Beacon" => Address::from_str("0x5FbDB2315678afecb367f032d93F642f64180aa3").unwrap(),
         "BeaconFactory" => Address::from_str("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512").unwrap(),
-        "BeaconRegistry" => Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0").unwrap(),
+        "BeaconRegistry" => {
+            Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0").unwrap()
+        }
         "PerpHook" => Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9").unwrap(),
         _ => Address::from_str("0x0000000000000000000000000000000000000000").unwrap(),
     };
 
     ContractDeploymentResult {
         address,
-        transaction_hash: "0x1234567890123456789012345678901234567890123456789012345678901234".to_string(),
+        transaction_hash: "0x1234567890123456789012345678901234567890123456789012345678901234"
+            .to_string(),
         block_number: 1,
         gas_used: 1000000,
     }
@@ -472,7 +495,7 @@ mod tests {
         let anvil = AnvilManager::get_or_create().await;
         assert_eq!(anvil.chain_id, 31337);
         assert!(!anvil.accounts.is_empty());
-        
+
         // Test that we can create signers
         let signer = anvil.deployer_signer();
         assert_ne!(signer.address(), Address::ZERO);
@@ -482,7 +505,7 @@ mod tests {
     async fn test_abi_loading() {
         let beacon_abi = load_test_abi("Beacon");
         assert!(!beacon_abi.functions.is_empty());
-        
+
         let perp_hook_abi = load_test_abi("PerpHook");
         assert!(!perp_hook_abi.functions.is_empty());
     }
@@ -500,7 +523,7 @@ mod tests {
         let anvil = AnvilManager::get_or_create().await;
         let deployment = TestDeployment::deploy(&anvil).await;
         assert!(deployment.is_ok());
-        
+
         let deployment = deployment.unwrap();
         assert_ne!(deployment.beacon_factory, Address::ZERO);
         assert_ne!(deployment.beacon_registry, Address::ZERO);
@@ -510,11 +533,11 @@ mod tests {
     #[tokio::test]
     async fn test_blockchain_utilities() {
         let app_state = create_test_app_state().await;
-        
+
         // Test block number
         let block_number = TestUtils::get_block_number(&app_state.provider).await;
         assert!(block_number.is_ok());
-        
+
         // Test balance
         let balance = TestUtils::get_balance(&app_state.provider, app_state.wallet_address).await;
         assert!(balance.is_ok());

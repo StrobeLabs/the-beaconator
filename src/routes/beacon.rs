@@ -401,7 +401,7 @@ mod tests {
         let app_state = create_simple_test_app_state();
         let state = State::from(&app_state);
 
-        let result = create_perpcity_beacon(token, &state).await;
+        let result = create_perpcity_beacon(token, state).await;
         // We expect this to fail since we don't have a real network connection
         assert!(result.is_err());
     }
@@ -409,7 +409,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_beacon_via_factory_helper() {
         use crate::routes::test_utils::create_simple_test_app_state;
-        
+
         let app_state = create_simple_test_app_state();
         let owner_address =
             Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
@@ -423,7 +423,7 @@ mod tests {
     #[tokio::test]
     async fn test_register_beacon_with_registry_helper() {
         use crate::routes::test_utils::create_simple_test_app_state;
-        
+
         let app_state = create_simple_test_app_state();
         let beacon_address =
             Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
@@ -491,9 +491,9 @@ mod tests {
     #[test]
     fn test_app_state_has_required_contract_info() {
         use crate::routes::test_utils::create_simple_test_app_state;
-        
+
         let app_state = create_simple_test_app_state();
-        
+
         // Test that all required contract addresses are set
         assert_ne!(
             app_state.beacon_factory_address,
@@ -534,7 +534,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_perpcity_beacon_with_anvil_integration() {
         use crate::guards::ApiToken;
-        use crate::routes::test_utils::{create_test_app_state, TestUtils};
+        use crate::routes::test_utils::{TestUtils, create_test_app_state};
         use rocket::State;
 
         let token = ApiToken("test_token".to_string());
@@ -544,7 +544,7 @@ mod tests {
         // Test that we can connect to the blockchain
         let block_number = TestUtils::get_block_number(&app_state.provider).await;
         assert!(block_number.is_ok());
-        
+
         // Test that the deployer account has funds
         let balance = TestUtils::get_balance(&app_state.provider, app_state.wallet_address).await;
         assert!(balance.is_ok());
@@ -554,7 +554,10 @@ mod tests {
         // Test the endpoint - this will fail because we don't have actual contracts deployed
         let result = create_perpcity_beacon(token, &state).await;
         assert!(result.is_err());
-        // The error should be InternalServerError (contract call failed) 
-        assert_eq!(result.unwrap_err(), rocket::http::Status::InternalServerError);
+        // The error should be InternalServerError (contract call failed)
+        assert_eq!(
+            result.unwrap_err(),
+            rocket::http::Status::InternalServerError
+        );
     }
 }

@@ -110,15 +110,24 @@ impl ApiEndpoints {
     pub fn get_summary() -> ApiSummary {
         let endpoints = Self::get_all();
         let total = endpoints.len();
-        let working = endpoints.iter().filter(|e| matches!(e.status, EndpointStatus::Working)).count();
-        let not_implemented = endpoints.iter().filter(|e| matches!(e.status, EndpointStatus::NotImplemented)).count();
-        let deprecated = endpoints.iter().filter(|e| matches!(e.status, EndpointStatus::Deprecated)).count();
+        let working = endpoints
+            .iter()
+            .filter(|e| matches!(e.status, EndpointStatus::Working))
+            .count();
+        let not_implemented = endpoints
+            .iter()
+            .filter(|e| matches!(e.status, EndpointStatus::NotImplemented))
+            .count();
+        let deprecated = endpoints
+            .iter()
+            .filter(|e| matches!(e.status, EndpointStatus::Deprecated))
+            .count();
 
         ApiSummary {
             total_endpoints: total,
             working_endpoints: working,
-            not_implemented: not_implemented,
-            deprecated: deprecated,
+            not_implemented,
+            deprecated,
             endpoints,
         }
     }
@@ -171,21 +180,21 @@ pub struct PerpConfig {
 impl Default for PerpConfig {
     fn default() -> Self {
         Self {
-            trading_fee_bps: 5000,                                  // 0.5%
-            trading_fee_creator_split_x96: 3951369912303465813,     // 5% of Q96
-            min_margin_usdc: 0,                                     // No minimum
-            max_margin_usdc: 1_000_000_000,                         // 1000 USDC (6 decimals)
-            min_opening_leverage_x96: 0,                            // No minimum
+            trading_fee_bps: 5000,                                    // 0.5%
+            trading_fee_creator_split_x96: 3951369912303465813,       // 5% of Q96
+            min_margin_usdc: 0,                                       // No minimum
+            max_margin_usdc: 1_000_000_000,                           // 1000 USDC (6 decimals)
+            min_opening_leverage_x96: 0,                              // No minimum
             max_opening_leverage_x96: 790273926286361721684336819027, // 10x in Q96
             liquidation_leverage_x96: 790273926286361721684336819027, // 10x in Q96
-            liquidation_fee_x96: 790273926286361721684336819,       // 1% of Q96
+            liquidation_fee_x96: 790273926286361721684336819,         // 1% of Q96
             liquidation_fee_split_x96: 39513699123034658136834084095, // 50% of Q96
-            funding_interval_seconds: 86400,                        // 1 day
-            tick_spacing: 30,                                       // Standard tick spacing
-            starting_sqrt_price_x96: 560227709747861419891227623424, // sqrt(50) * 2^96
-            default_tick_lower: -23030,                             // Approx sqrt(0.1) price
-            default_tick_upper: 23030,                              // Approx sqrt(10) price
-            liquidity_scaling_factor: 400_000_000_000_000,          // Scale USDC to 18 decimals
+            funding_interval_seconds: 86400,                          // 1 day
+            tick_spacing: 30,                                         // Standard tick spacing
+            starting_sqrt_price_x96: 560227709747861419891227623424,  // sqrt(50) * 2^96
+            default_tick_lower: -23030,                               // Approx sqrt(0.1) price
+            default_tick_upper: 23030,                                // Approx sqrt(10) price
+            liquidity_scaling_factor: 400_000_000_000_000,            // Scale USDC to 18 decimals
         }
     }
 }

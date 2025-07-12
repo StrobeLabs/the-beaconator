@@ -3,20 +3,18 @@ use rocket::serde::json::Json;
 use tracing;
 
 use crate::guards::ApiToken;
-use crate::models::{ApiResponse, ApiEndpoints};
+use crate::models::{ApiEndpoints, ApiResponse};
 
 #[get("/")]
 pub fn index() -> Json<ApiResponse<crate::models::ApiSummary>> {
     tracing::info!("Received request: GET /");
-    
+
     let api_summary = ApiEndpoints::get_summary();
     let message = format!(
-        "Welcome to The Beaconator! {} total endpoints available ({} working, {} not implemented)", 
-        api_summary.total_endpoints, 
-        api_summary.working_endpoints, 
-        api_summary.not_implemented
+        "Welcome to The Beaconator! {} total endpoints available ({} working, {} not implemented)",
+        api_summary.total_endpoints, api_summary.working_endpoints, api_summary.not_implemented
     );
-    
+
     Json(ApiResponse {
         success: true,
         data: Some(api_summary),
@@ -43,10 +41,10 @@ mod tests {
     fn test_index() {
         let result = index();
         let response = result.into_inner();
-        
+
         assert!(response.success);
         assert!(response.data.is_some());
-        
+
         let api_summary = response.data.unwrap();
         assert!(api_summary.total_endpoints > 0);
         assert!(response.message.contains("Beaconator"));
@@ -57,20 +55,20 @@ mod tests {
     fn test_index_detailed_output() {
         let result = index();
         let response = result.into_inner();
-        
+
         // Print the actual JSON output
         println!("API Response:");
         println!("{}", serde_json::to_string_pretty(&response).unwrap());
-        
+
         assert!(response.success);
         assert!(response.data.is_some());
-        
+
         let api_summary = response.data.unwrap();
         assert!(api_summary.total_endpoints >= 11); // We defined 11 endpoints
         assert!(api_summary.working_endpoints > 0);
         assert!(api_summary.not_implemented > 0);
         assert_eq!(api_summary.endpoints.len(), api_summary.total_endpoints);
-        
+
         // Verify that the endpoints have the expected structure
         let first_endpoint = &api_summary.endpoints[0];
         assert_eq!(first_endpoint.method, "GET");
