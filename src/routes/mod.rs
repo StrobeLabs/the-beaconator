@@ -53,5 +53,29 @@ sol! {
 
         function createPerp(CreatePerpParams memory params) external returns (bytes32 perpId);
         event PerpCreated(bytes32 perpId, address beacon, uint256 markPriceX96);
+
+        struct OpenMakerPositionParams {
+            uint128 margin;
+            uint128 liquidity;
+            int24 tickLower;
+            int24 tickUpper;
+        }
+
+        struct MakerInfo {
+            address holder;
+            int24 tickLower;
+            int24 tickUpper;
+            uint160 sqrtPriceLowerX96;
+            uint160 sqrtPriceUpperX96;
+            uint128 margin;
+            uint128 liquidity;
+            uint128 perpsBorrowed;
+            uint128 usdBorrowed;
+            int128 entryTwPremiumX96;
+            int128 entryTwPremiumDivBySqrtPriceX96;
+        }
+
+        function openMakerPosition(bytes32 perpId, OpenMakerPositionParams memory params) external returns (uint256 makerPosId);
+        event MakerPositionOpened(bytes32 perpId, uint256 makerPosId, MakerInfo makerPos, uint256 markPriceX96);
     }
 }

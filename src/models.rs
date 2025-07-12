@@ -73,3 +73,22 @@ pub struct BatchDeployPerpsForBeaconsResponse {
     pub failed_count: u32,
     pub errors: Vec<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DepositLiquidityForPerpRequest {
+    pub perp_id: String,            // PoolId as hex string
+    pub margin_amount_usdc: String, // USDC amount in 6 decimals (e.g., "500000000" for 500 USDC)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchDepositLiquidityForPerpsRequest {
+    pub liquidity_deposits: Vec<DepositLiquidityForPerpRequest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchDepositLiquidityForPerpsResponse {
+    pub deposited_count: u32,
+    pub maker_position_ids: Vec<String>, // Maker position IDs as strings
+    pub failed_count: u32,
+    pub errors: Vec<String>,
+}

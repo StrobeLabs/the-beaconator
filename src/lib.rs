@@ -159,6 +159,8 @@ pub async fn create_rocket() -> Rocket<Build> {
             routes::batch_create_perpcity_beacon,
             routes::deploy_perp_for_beacon_endpoint,
             routes::batch_deploy_perps_for_beacons,
+            routes::deposit_liquidity_for_perp_endpoint,
+            routes::batch_deposit_liquidity_for_perps,
             routes::update_beacon
         ],
     )
