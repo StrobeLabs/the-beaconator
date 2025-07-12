@@ -1,166 +1,116 @@
-# The Beaconator - Claude Code Session Notes
+# CLAUDE.md
 
-## Migration Completed: ethers-rs → Alloy 1.0.1
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Status**: ✅ **COMPLETE** - All tests passing, compilation successful, code formatted and linted.
+# The Beaconator
 
-### What We Accomplished
+**The Beaconator** is a Rust web service that manages Ethereum beacon contracts and perpetual deployments on Base network. It provides RESTful APIs for creating beacons, deploying perpetuals, and updating beacon data with zero-knowledge proofs.
 
-1. **Successfully migrated from ethers-rs to Alloy 1.0.1**
-   - Updated all imports and dependencies
-   - Rewrote contract interfaces using Alloy's modern `sol!` macro
-   - Fixed complex provider type issues with concrete types
-   - Maintained all existing API functionality
-
-2. **Resolved Complex Type Issues**
-   - Alloy uses very complex nested generic types for providers
-   - Had to use concrete type definitions instead of trait objects
-   - Fixed provider instantiation with proper wallet integration
-   - Updated AppState to store wallet address separately
-
-3. **Code Quality Improvements**
-   - All tests passing (11/11)
-   - Clippy linting clean 
-   - Code formatting applied
-   - Fixed deprecation warnings (allowed `on_http` for now)
-
-### Project Overview
-
-**The Beaconator** is a Rust web service that manages Ethereum beacon contracts on Base network.
-
-#### Tech Stack
+## Tech Stack
 - **Framework**: Rocket 0.5.0 (async web framework)
 - **Blockchain**: Alloy 1.0.1 (Ethereum library)
 - **Network**: Base mainnet/testnet support
 - **Security**: Bearer token authentication
 - **Monitoring**: Sentry integration + structured logging
 
-#### Key API Endpoints
-- `POST /create_perpcity_beacon` - Create single beacon ✅ Working
-- `POST /batch_create_perpcity_beacon` - Batch create beacons ✅ **Production-Ready**
-- `POST /update_beacon` - Update beacon with ZK proof ✅ Working
-- Several placeholder endpoints for future development
+## Development Commands
 
-**Batch Creation Features:**
-- ✅ Partial failure handling - continues on individual beacon failures
-- ✅ Detailed error reporting with per-beacon failure tracking
-- ✅ Comprehensive response with success/failure counts
-- ✅ Input validation (1-100 beacon limit)
-- ✅ Full test coverage (15/15 tests passing)
+Use the Makefile for all development tasks:
 
-#### Development Workflow
 ```bash
 make dev          # Start development server
 make test         # Run tests  
 make quality      # Full quality check (format + lint + test)
-make build        # Build project
+make lint         # Run clippy linter with strict warnings
+make fmt          # Format code with rustfmt
+make build        # Build project (debug)
+make build-release # Build project (release)
 ```
 
-### Key Learning: Alloy Provider Types
+## Architecture Overview
 
-Alloy uses extremely complex nested generic types for providers. The working type signature:
+### Core Components
 
-```rust
-pub type AlloyProvider = alloy::providers::fillers::FillProvider<
-    alloy::providers::fillers::JoinFill<
-        alloy::providers::fillers::JoinFill<
-            alloy::providers::Identity,
-            alloy::providers::fillers::JoinFill<
-                alloy::providers::fillers::GasFiller,
-                alloy::providers::fillers::JoinFill<
-                    alloy::providers::fillers::BlobGasFiller,
-                    alloy::providers::fillers::JoinFill<
-                        alloy::providers::fillers::NonceFiller,
-                        alloy::providers::fillers::ChainIdFiller,
-                    >,
-                >,
-            >,
-        >,
-        alloy::providers::fillers::WalletFiller<alloy::network::EthereumWallet>,
-    >,
-    alloy::providers::RootProvider<alloy::network::Ethereum>,
-    alloy::network::Ethereum,
->;
-```
+- **`src/lib.rs`**: Provider setup, ABI loading, and app initialization
+- **`src/models.rs`**: Request/response models and AppState definition
+- **`src/routes.rs`**: API endpoint implementations using sol! contract interfaces
+- **`src/guards.rs`**: Authentication guard for Bearer token validation
+- **`src/main.rs`**: Entry point that launches Rocket server
+- **`abis/`**: Contract ABI files loaded at runtime
 
-The `sol!` macro generates contract interfaces that require concrete provider types, not trait objects.
+### Key API Endpoints
 
-### Environment Configuration
+**Production-Ready:**
+- `POST /create_perpcity_beacon` - Create single beacon
+- `POST /batch_create_perpcity_beacon` - Batch create beacons (1-100 limit)
+- `POST /deploy_perp_for_beacon` - Deploy perp for single beacon  
+- `POST /batch_deploy_perps_for_beacons` - Batch deploy perps (1-10 limit)
+- `POST /update_beacon` - Update beacon with ZK proof
 
-Required environment variables:
+**Placeholder (not implemented):**
+- `GET /all_beacons`
+- `POST /create_beacon` 
+- `POST /register_beacon`
+
+### Alloy Provider Architecture
+
+**Critical:** Alloy uses complex nested generic types for providers. The project uses a concrete type definition (`AlloyProvider`) instead of trait objects because the `sol!` macro requires concrete types.
+
+Key patterns:
+- Provider setup in `src/lib.rs:50-90` using `ProviderBuilder::new().wallet(wallet).connect_http(url)`
+- Contract instantiation uses `&*state.provider` to dereference Arc
+- AppState stores wallet address separately for easy access
+
+## Environment Configuration
+
+Copy `env.example` to `.env` and configure:
+
 ```bash
-RPC_URL=https://mainnet.base.org           # or testnet URL
+RPC_URL=https://mainnet.base.org           # Base chain RPC URL
 ENV=mainnet|testnet|localnet               # Network type
 BEACONATOR_ACCESS_TOKEN=your_secret_token  # API authentication  
-PRIVATE_KEY=0x...                          # Wallet private key
-BEACON_FACTORY_ADDRESS=0x...               # Factory contract
-PERPCITY_REGISTRY_ADDRESS=0x...            # Registry contract
+PRIVATE_KEY=0x...                          # Wallet private key (without 0x)
+BEACON_FACTORY_ADDRESS=0x...               # Factory contract address
+PERPCITY_REGISTRY_ADDRESS=0x...            # Registry contract address  
+PERP_HOOK_ADDRESS=0x...                    # PerpHook contract address
 ```
 
-### Architecture Notes
+## Implementation Details
 
-- **AppState**: Contains Arc'd provider + wallet address + contract addresses + ABIs
-- **Contract Instantiation**: Uses `&*state.provider` to dereference Arc for sol! contracts
-- **Error Handling**: Comprehensive error propagation with Sentry integration
-- **Testing**: Mock providers with wallet for testing (network calls fail gracefully)
+### AppState Structure (`src/models.rs:7-18`)
+- Arc'd Alloy provider with wallet integration
+- Separate wallet address storage for easy access
+- Contract ABIs loaded from `abis/` directory at startup
+- All contract addresses and access token
 
-### Modern Alloy Patterns Applied ✅
+### Contract Interactions (`src/routes.rs`)
+- Uses Alloy's `sol!` macro for type-safe contract interfaces
+- Dereferences Arc provider with `&*state.provider` for contract calls
+- Comprehensive error handling with Sentry integration
+- Batch operations support partial failures
 
-**Updated to use Alloy's current best practices:**
+### Testing Strategy
+- Mock providers with wallets for consistent test setup
+- Uses `#[tokio::test]` for async tests
+- Network calls fail gracefully in test environment
+- Serial test execution with `#[serial]` for stateful tests
 
-1. **✅ Modern Provider Builder Pattern**:
-   ```rust
-   let provider_impl = ProviderBuilder::new()
-       .wallet(wallet)
-       .connect_http(rpc_url.parse().expect("Invalid RPC URL"));
-   ```
+## Alloy Best Practices
 
-2. **✅ Non-deprecated HTTP Connection**: 
-   - Replaced `on_http()` → `connect_http()`
-   - Follows Alloy v1.0+ recommended patterns
-
-3. **✅ Proper Wallet Integration**:
-   - Uses `EthereumWallet::from(signer)` 
-   - Integrates seamlessly with provider builder
-
-### Future Improvements
-
-1. Implement remaining placeholder endpoints
-2. Add more comprehensive integration tests with test network  
-3. Consider WebSocket connections for real-time updates
-
-### Key Files Modified
-- `src/lib.rs` - Provider setup and app initialization
-- `src/models.rs` - AppState structure with provider types
-- `src/routes.rs` - Contract interactions and API endpoints  
-- `src/guards.rs` - Authentication guard structure
-- `Cargo.toml` - Dependencies updated to Alloy
-
-**Migration Result**: Fully functional Alloy-based beacon management service with all original features maintained.
-
----
-
-## 📚 Best Practices for Other Engineers
-
-### 1. **Always Use Modern Alloy Patterns**
+### Modern Provider Pattern
 ```rust
-// ✅ CORRECT - Modern pattern
+// ✅ CORRECT - Current Alloy v1.0+ pattern
 let provider = ProviderBuilder::new()
     .wallet(wallet)
     .connect_http(url);
 
-// ❌ AVOID - Deprecated patterns  
+// ❌ AVOID - Deprecated pattern
 let provider = ProviderBuilder::new()
-    .wallet(wallet)
-    .on_http(url);     // Deprecated
+    .wallet(wallet)  
+    .on_http(url);     // Deprecated in v1.0+
 ```
 
-### 2. **Provider Type Handling**
-- Use concrete types instead of trait objects for `sol!` macro compatibility
-- Store wallet address separately in `AppState` for easy access
-- Always handle provider errors gracefully
-
-### 3. **Contract Interactions**
+### Contract Interface Pattern
 ```rust
 // ✅ CORRECT - Use sol! macro for type safety
 sol! {
@@ -169,16 +119,27 @@ sol! {
     }
 }
 
-// Use with provider dereference
+// Use with Arc provider dereference
 let contract = IBeacon::new(address, &*state.provider);
 ```
 
-### 4. **Error Handling Standards**
-- Always propagate errors with meaningful messages
-- Use Sentry integration for production error tracking
-- Include context in error messages for debugging
+### ABI Management
+- ABIs stored in `abis/` directory and loaded at runtime via `load_abi()` 
+- File-based approach preferred over embedded serde structs
+- Manual ABI modifications documented (e.g., createPerp function added to PerpHook.json)
 
-### 5. **Testing Practices**
-- Mock providers with wallets for consistent test setup
-- Use `#[tokio::test]` for async tests
-- Test both success and failure paths
+## Perp Deployment Configuration
+
+The perp deployment endpoints use hardcoded defaults from `DeployPerp.s.sol`:
+- Trading fee: 0.5% (5000 basis points)
+- Leverage range: 0-10x (min/max)
+- Liquidation leverage: 10x
+- Starting price: sqrt(50) * 2^96
+- Tick spacing: 30
+- Funding interval: 1 day (86400 seconds)
+
+## Error Handling Standards
+- All API endpoints return standardized `ApiResponse<T>` format
+- Sentry integration for production error tracking
+- Batch operations continue on individual failures with detailed error reporting
+- Network errors gracefully handled in test environment

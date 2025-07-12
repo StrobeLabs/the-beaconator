@@ -10,8 +10,10 @@ pub struct AppState {
     pub beacon_abi: JsonAbi,
     pub beacon_factory_abi: JsonAbi,
     pub beacon_registry_abi: JsonAbi,
+    pub perp_hook_abi: JsonAbi,
     pub beacon_factory_address: Address,
     pub perpcity_registry_address: Address,
+    pub perp_hook_address: Address,
     pub access_token: String,
 }
 
@@ -43,8 +45,7 @@ pub struct RegisterBeaconRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeployPerpForBeaconRequest {
-    // TODO: Define the fields needed for deploying a perp for a beacon
-    pub placeholder: String,
+    pub beacon_address: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -56,6 +57,19 @@ pub struct BatchCreatePerpcityBeaconRequest {
 pub struct BatchCreatePerpcityBeaconResponse {
     pub created_count: u32,
     pub beacon_addresses: Vec<String>,
+    pub failed_count: u32,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchDeployPerpsForBeaconsRequest {
+    pub beacon_addresses: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchDeployPerpsForBeaconsResponse {
+    pub deployed_count: u32,
+    pub perp_ids: Vec<String>, // PoolId as hex strings
     pub failed_count: u32,
     pub errors: Vec<String>,
 }

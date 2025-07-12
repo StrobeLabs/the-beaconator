@@ -38,75 +38,14 @@ pub type AlloyProvider = alloy::providers::fillers::FillProvider<
     alloy::network::Ethereum,
 >;
 
-// IBeacon interface ABI
-pub const BEACON_ABI: &str = r#"[
-    {
-        "inputs": [],
-        "name": "getData",
-        "outputs": [
-            {"name": "data", "type": "uint256"},
-            {"name": "timestamp", "type": "uint256"}
-        ],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
-        "inputs": [
-            {"name": "proof", "type": "bytes"},
-            {"name": "publicSignals", "type": "bytes"}
-        ],
-        "name": "updateData",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    }
-]"#;
-
-pub const BEACON_FACTORY_ABI: &str = r#"[
-    {
-        "inputs": [
-            {"internalType": "address", "name": "owner", "type": "address"}
-        ],
-        "name": "createBeacon",
-        "outputs": [
-            {"internalType": "address", "name": "", "type": "address"}
-        ],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    }
-]"#;
-
-pub const BEACON_REGISTRY_ABI: &str = r#"[
-    {
-        "inputs": [
-            {"internalType": "address", "name": "beacon", "type": "address"}
-        ],
-        "name": "registerBeacon",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
-        "inputs": [
-            {"internalType": "address", "name": "beacon", "type": "address"}
-        ],
-        "name": "unregisterBeacon",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
-        "inputs": [
-            {"internalType": "address", "name": "", "type": "address"}
-        ],
-        "name": "beacons",
-        "outputs": [
-            {"internalType": "bool", "name": "", "type": "bool"}
-        ],
-        "stateMutability": "view",
-        "type": "function"
-    }
-]"#;
+// Load ABIs from files
+fn load_abi(name: &str) -> JsonAbi {
+    let abi_path = format!("abis/{name}.json");
+    let abi_content = std::fs::read_to_string(&abi_path)
+        .unwrap_or_else(|_| panic!("Failed to read ABI file: {abi_path}"));
+    serde_json::from_str(&abi_content)
+        .unwrap_or_else(|_| panic!("Failed to parse ABI file: {abi_path}"))
+}
 
 pub async fn create_rocket() -> Rocket<Build> {
     // Load and cache environment variables
@@ -117,12 +56,11 @@ pub async fn create_rocket() -> Rocket<Build> {
     let access_token = env::var("BEACONATOR_ACCESS_TOKEN")
         .expect("BEACONATOR_ACCESS_TOKEN environment variable not set");
 
-    // Parse and cache the ABIs
-    let beacon_abi: JsonAbi = serde_json::from_str(BEACON_ABI).expect("Failed to parse beacon ABI");
-    let beacon_factory_abi: JsonAbi =
-        serde_json::from_str(BEACON_FACTORY_ABI).expect("Failed to parse beacon factory ABI");
-    let beacon_registry_abi: JsonAbi =
-        serde_json::from_str(BEACON_REGISTRY_ABI).expect("Failed to parse beacon registry ABI");
+    // Load ABIs from files
+    let beacon_abi = load_abi("Beacon");
+    let beacon_factory_abi = load_abi("BeaconFactory");
+    let beacon_registry_abi = load_abi("BeaconRegistry");
+    let perp_hook_abi = load_abi("PerpHook");
 
     // Load contract addresses
     let beacon_factory_address = Address::from_str(
@@ -136,6 +74,11 @@ pub async fn create_rocket() -> Rocket<Build> {
             .expect("PERPCITY_REGISTRY_ADDRESS environment variable not set"),
     )
     .expect("Failed to parse perpcity registry address");
+
+    let perp_hook_address = Address::from_str(
+        &env::var("PERP_HOOK_ADDRESS").expect("PERP_HOOK_ADDRESS environment variable not set"),
+    )
+    .expect("Failed to parse perp hook address");
 
     // Get environment configuration
     let env_type = env::var("ENV").expect("ENV environment variable not set");
@@ -198,8 +141,10 @@ pub async fn create_rocket() -> Rocket<Build> {
         beacon_abi,
         beacon_factory_abi,
         beacon_registry_abi,
+        perp_hook_abi,
         beacon_factory_address,
         perpcity_registry_address,
+        perp_hook_address,
         access_token,
     };
 
@@ -212,7 +157,8 @@ pub async fn create_rocket() -> Rocket<Build> {
             routes::register_beacon,
             routes::create_perpcity_beacon,
             routes::batch_create_perpcity_beacon,
-            routes::deploy_perp_for_beacon,
+            routes::deploy_perp_for_beacon_endpoint,
+            routes::batch_deploy_perps_for_beacons,
             routes::update_beacon
         ],
     )
