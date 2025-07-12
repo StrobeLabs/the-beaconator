@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Tech Stack
 - **Framework**: Rocket 0.5.0 (async web framework)
-- **Blockchain**: Alloy 1.0.1 (Ethereum library)
+- **Blockchain**: Alloy 1.0.17 (Ethereum library)
 - **Network**: Base mainnet/testnet support
 - **Security**: Bearer token authentication
 - **Monitoring**: Sentry integration + structured logging

@@ -57,10 +57,11 @@
     "required_variables": [
       "RPC_URL",
       "ENV",
-      "BEACONATOR_ACCESS_TOKEN", 
+      "BEACONATOR_ACCESS_TOKEN",
       "PRIVATE_KEY",
       "BEACON_FACTORY_ADDRESS",
-      "PERPCITY_REGISTRY_ADDRESS"
+      "PERPCITY_REGISTRY_ADDRESS",
+      "PERP_HOOK_ADDRESS"
     ],
     "network_types": ["mainnet", "testnet", "localnet"]
   },
