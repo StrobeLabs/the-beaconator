@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/
 WORKDIR /app
 # Copy the binary from builder stage
 COPY --from=builder /app/target/release/the-beaconator /app/the-beaconator
+# Copy the abis directory
+COPY --from=builder /app/abis /app/abis
 
 # Accept build arguments for environment variables
 ARG RPC_URL

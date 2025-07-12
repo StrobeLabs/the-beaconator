@@ -4,6 +4,192 @@ use std::sync::Arc;
 
 use crate::AlloyProvider;
 
+/// API endpoint information for documentation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndpointInfo {
+    pub method: String,
+    pub path: String,
+    pub description: String,
+    pub requires_auth: bool,
+    pub status: EndpointStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum EndpointStatus {
+    Working,
+    NotImplemented,
+    Deprecated,
+}
+
+/// Central registry of all API endpoints
+pub struct ApiEndpoints;
+
+impl ApiEndpoints {
+    pub fn get_all() -> Vec<EndpointInfo> {
+        vec![
+            EndpointInfo {
+                method: "GET".to_string(),
+                path: "/".to_string(),
+                description: "Welcome page with API documentation".to_string(),
+                requires_auth: false,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "GET".to_string(),
+                path: "/all_beacons".to_string(),
+                description: "List all registered beacons".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::NotImplemented,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/create_beacon".to_string(),
+                description: "Create a new beacon".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::NotImplemented,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/register_beacon".to_string(),
+                description: "Register an existing beacon".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::NotImplemented,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/create_perpcity_beacon".to_string(),
+                description: "Create and register a new Perpcity beacon".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/batch_create_perpcity_beacon".to_string(),
+                description: "Batch create multiple Perpcity beacons".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/deploy_perp_for_beacon".to_string(),
+                description: "Deploy a perpetual for a specific beacon".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/batch_deploy_perps_for_beacons".to_string(),
+                description: "Batch deploy perpetuals for multiple beacons".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/deposit_liquidity_for_perp".to_string(),
+                description: "Deposit liquidity for a specific perpetual".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/batch_deposit_liquidity_for_perps".to_string(),
+                description: "Batch deposit liquidity for multiple perpetuals".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/update_beacon".to_string(),
+                description: "Update beacon data with zero-knowledge proof".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+        ]
+    }
+
+    pub fn get_summary() -> ApiSummary {
+        let endpoints = Self::get_all();
+        let total = endpoints.len();
+        let working = endpoints.iter().filter(|e| matches!(e.status, EndpointStatus::Working)).count();
+        let not_implemented = endpoints.iter().filter(|e| matches!(e.status, EndpointStatus::NotImplemented)).count();
+        let deprecated = endpoints.iter().filter(|e| matches!(e.status, EndpointStatus::Deprecated)).count();
+
+        ApiSummary {
+            total_endpoints: total,
+            working_endpoints: working,
+            not_implemented: not_implemented,
+            deprecated: deprecated,
+            endpoints,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiSummary {
+    pub total_endpoints: usize,
+    pub working_endpoints: usize,
+    pub not_implemented: usize,
+    pub deprecated: usize,
+    pub endpoints: Vec<EndpointInfo>,
+}
+
+/// Configuration for perpetual contract parameters
+#[derive(Debug, Clone)]
+pub struct PerpConfig {
+    /// Trading fee in basis points (e.g., 5000 = 0.5%)
+    pub trading_fee_bps: u32,
+    /// Trading fee creator split in Q96 format (e.g., 5% = 3951369912303465813)
+    pub trading_fee_creator_split_x96: u128,
+    /// Minimum margin amount in USDC (6 decimals)
+    pub min_margin_usdc: u128,
+    /// Maximum margin amount in USDC (6 decimals, e.g., 1000 USDC = 1_000_000_000)
+    pub max_margin_usdc: u128,
+    /// Minimum opening leverage in Q96 format (0 = no minimum)
+    pub min_opening_leverage_x96: u128,
+    /// Maximum opening leverage in Q96 format (e.g., 10x = 790273926286361721684336819027)
+    pub max_opening_leverage_x96: u128,
+    /// Liquidation leverage threshold in Q96 format (e.g., 10x = 790273926286361721684336819027)
+    pub liquidation_leverage_x96: u128,
+    /// Liquidation fee percentage in Q96 format (e.g., 1% = 790273926286361721684336819)
+    pub liquidation_fee_x96: u128,
+    /// Liquidation fee split percentage in Q96 format (e.g., 50% = 39513699123034658136834084095)
+    pub liquidation_fee_split_x96: u128,
+    /// Funding interval in seconds (e.g., 86400 = 1 day)
+    pub funding_interval_seconds: i128,
+    /// Tick spacing for price ticks (e.g., 30)
+    pub tick_spacing: i32,
+    /// Starting square root price in Q96 format (e.g., sqrt(50) * 2^96 = 560227709747861419891227623424)
+    pub starting_sqrt_price_x96: u128,
+    /// Default tick range for liquidity positions - lower bound (e.g., -23030 ≈ sqrt(0.1) price)
+    pub default_tick_lower: i32,
+    /// Default tick range for liquidity positions - upper bound (e.g., 23030 ≈ sqrt(10) price)
+    pub default_tick_upper: i32,
+    /// Liquidity scaling factor (multiplier to convert USDC margin to 18-decimal liquidity)
+    pub liquidity_scaling_factor: u128,
+}
+
+impl Default for PerpConfig {
+    fn default() -> Self {
+        Self {
+            trading_fee_bps: 5000,                                  // 0.5%
+            trading_fee_creator_split_x96: 3951369912303465813,     // 5% of Q96
+            min_margin_usdc: 0,                                     // No minimum
+            max_margin_usdc: 1_000_000_000,                         // 1000 USDC (6 decimals)
+            min_opening_leverage_x96: 0,                            // No minimum
+            max_opening_leverage_x96: 790273926286361721684336819027, // 10x in Q96
+            liquidation_leverage_x96: 790273926286361721684336819027, // 10x in Q96
+            liquidation_fee_x96: 790273926286361721684336819,       // 1% of Q96
+            liquidation_fee_split_x96: 39513699123034658136834084095, // 50% of Q96
+            funding_interval_seconds: 86400,                        // 1 day
+            tick_spacing: 30,                                       // Standard tick spacing
+            starting_sqrt_price_x96: 560227709747861419891227623424, // sqrt(50) * 2^96
+            default_tick_lower: -23030,                             // Approx sqrt(0.1) price
+            default_tick_upper: 23030,                              // Approx sqrt(10) price
+            liquidity_scaling_factor: 400_000_000_000_000,          // Scale USDC to 18 decimals
+        }
+    }
+}
+
 pub struct AppState {
     pub provider: Arc<AlloyProvider>,
     pub wallet_address: Address,
@@ -15,6 +201,7 @@ pub struct AppState {
     pub perpcity_registry_address: Address,
     pub perp_hook_address: Address,
     pub access_token: String,
+    pub perp_config: PerpConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

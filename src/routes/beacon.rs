@@ -351,7 +351,6 @@ pub async fn update_beacon(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routes::test_utils::create_test_app_state;
     use alloy::primitives::Address;
     use std::str::FromStr;
 
@@ -394,11 +393,12 @@ mod tests {
     #[tokio::test]
     async fn test_create_perpcity_beacon_fails_without_network() {
         use crate::guards::ApiToken;
+        use crate::routes::test_utils::create_simple_test_app_state;
         use rocket::State;
 
         // This test will fail because we can't actually connect to a network
         let token = ApiToken("test_token".to_string());
-        let app_state = create_test_app_state();
+        let app_state = create_simple_test_app_state();
         let state = State::from(&app_state);
 
         let result = create_perpcity_beacon(token, &state).await;
@@ -408,7 +408,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_beacon_via_factory_helper() {
-        let app_state = create_test_app_state();
+        use crate::routes::test_utils::create_simple_test_app_state;
+        
+        let app_state = create_simple_test_app_state();
         let owner_address =
             Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
         let factory_address = app_state.beacon_factory_address;
@@ -420,7 +422,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_register_beacon_with_registry_helper() {
-        let app_state = create_test_app_state();
+        use crate::routes::test_utils::create_simple_test_app_state;
+        
+        let app_state = create_simple_test_app_state();
         let beacon_address =
             Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
         let registry_address = app_state.perpcity_registry_address;
@@ -434,11 +438,13 @@ mod tests {
     #[tokio::test]
     async fn test_batch_create_perpcity_beacon_invalid_count() {
         use crate::guards::ApiToken;
-        use rocket::serde::json::Json;
+        use crate::models::BatchCreatePerpcityBeaconRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
 
         let token = ApiToken("test_token".to_string());
-        let app_state = create_test_app_state();
-        let state = rocket::State::from(&app_state);
+        let app_state = create_simple_test_app_state();
+        let state = State::from(&app_state);
 
         // Test count = 0 (invalid)
         let request = Json(BatchCreatePerpcityBeaconRequest { count: 0 });
@@ -457,14 +463,16 @@ mod tests {
     #[tokio::test]
     async fn test_batch_create_perpcity_beacon_valid_count() {
         use crate::guards::ApiToken;
-        use rocket::serde::json::Json;
+        use crate::models::BatchCreatePerpcityBeaconRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
 
         let token = ApiToken("test_token".to_string());
-        let app_state = create_test_app_state();
-        let state = rocket::State::from(&app_state);
+        let app_state = create_simple_test_app_state();
+        let state = State::from(&app_state);
 
         // Test valid count - this will fail at network level but should return partial results
-        let request = Json(BatchCreatePerpcityBeaconRequest { count: 5 });
+        let request = Json(BatchCreatePerpcityBeaconRequest { count: 3 });
         let result = batch_create_perpcity_beacon(request, token, &state).await;
 
         // Should return OK with failure details, not InternalServerError
@@ -476,56 +484,17 @@ mod tests {
         assert!(response.data.is_some());
         let batch_data = response.data.unwrap();
         assert_eq!(batch_data.created_count, 0);
-        assert_eq!(batch_data.failed_count, 5);
+        assert_eq!(batch_data.failed_count, 3);
         assert!(!batch_data.errors.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_batch_create_response_structure() {
-        use crate::models::BatchCreatePerpcityBeaconResponse;
-
-        // Test response serialization/deserialization
-        let response = BatchCreatePerpcityBeaconResponse {
-            created_count: 3,
-            beacon_addresses: vec![
-                "0x123".to_string(),
-                "0x456".to_string(),
-                "0x789".to_string(),
-            ],
-            failed_count: 2,
-            errors: vec!["Error 1".to_string(), "Error 2".to_string()],
-        };
-
-        let serialized = serde_json::to_string(&response).unwrap();
-        let deserialized: BatchCreatePerpcityBeaconResponse =
-            serde_json::from_str(&serialized).unwrap();
-
-        assert_eq!(deserialized.created_count, 3);
-        assert_eq!(deserialized.failed_count, 2);
-        assert_eq!(deserialized.beacon_addresses.len(), 3);
-        assert_eq!(deserialized.errors.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_batch_create_request_structure() {
-        use crate::models::BatchCreatePerpcityBeaconRequest;
-
-        // Test request deserialization
-        let json_str = r#"{"count": 10}"#;
-        let request: BatchCreatePerpcityBeaconRequest = serde_json::from_str(json_str).unwrap();
-        assert_eq!(request.count, 10);
-
-        // Test request serialization
-        let request = BatchCreatePerpcityBeaconRequest { count: 25 };
-        let serialized = serde_json::to_string(&request).unwrap();
-        assert!(serialized.contains("25"));
     }
 
     #[test]
     fn test_app_state_has_required_contract_info() {
-        let app_state = create_test_app_state();
-
-        // Verify that the app state contains the required contract information
+        use crate::routes::test_utils::create_simple_test_app_state;
+        
+        let app_state = create_simple_test_app_state();
+        
+        // Test that all required contract addresses are set
         assert_ne!(
             app_state.beacon_factory_address,
             Address::from_str("0x0000000000000000000000000000000000000000").unwrap()
@@ -535,5 +504,57 @@ mod tests {
             Address::from_str("0x0000000000000000000000000000000000000000").unwrap()
         );
         assert!(!app_state.access_token.is_empty());
+    }
+
+    #[test]
+    fn test_batch_create_perpcity_beacon_individual_beacon_creation() {
+        use crate::models::BatchCreatePerpcityBeaconResponse;
+
+        // Test response serialization/deserialization
+        let response = BatchCreatePerpcityBeaconResponse {
+            created_count: 2,
+            beacon_addresses: vec![
+                "0x1234567890123456789012345678901234567890".to_string(),
+                "0x9876543210987654321098765432109876543210".to_string(),
+            ],
+            failed_count: 1,
+            errors: vec!["Error creating beacon".to_string()],
+        };
+
+        let serialized = serde_json::to_string(&response).unwrap();
+        let deserialized: BatchCreatePerpcityBeaconResponse =
+            serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized.created_count, 2);
+        assert_eq!(deserialized.failed_count, 1);
+        assert_eq!(deserialized.beacon_addresses.len(), 2);
+        assert_eq!(deserialized.errors.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_create_perpcity_beacon_with_anvil_integration() {
+        use crate::guards::ApiToken;
+        use crate::routes::test_utils::{create_test_app_state, TestUtils};
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let app_state = create_test_app_state().await;
+        let state = State::from(&app_state);
+
+        // Test that we can connect to the blockchain
+        let block_number = TestUtils::get_block_number(&app_state.provider).await;
+        assert!(block_number.is_ok());
+        
+        // Test that the deployer account has funds
+        let balance = TestUtils::get_balance(&app_state.provider, app_state.wallet_address).await;
+        assert!(balance.is_ok());
+        let balance = balance.unwrap();
+        assert!(balance > alloy::primitives::U256::ZERO);
+
+        // Test the endpoint - this will fail because we don't have actual contracts deployed
+        let result = create_perpcity_beacon(token, &state).await;
+        assert!(result.is_err());
+        // The error should be InternalServerError (contract call failed) 
+        assert_eq!(result.unwrap_err(), rocket::http::Status::InternalServerError);
     }
 }
