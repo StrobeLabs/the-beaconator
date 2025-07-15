@@ -14,7 +14,7 @@ pub mod guards;
 pub mod models;
 pub mod routes;
 
-use crate::models::AppState;
+use crate::models::{AppState, PerpConfig};
 
 // Let Rust infer the complex provider type
 pub type AlloyProvider = alloy::providers::fillers::FillProvider<
@@ -38,75 +38,107 @@ pub type AlloyProvider = alloy::providers::fillers::FillProvider<
     alloy::network::Ethereum,
 >;
 
-// IBeacon interface ABI
-pub const BEACON_ABI: &str = r#"[
-    {
-        "inputs": [],
-        "name": "getData",
-        "outputs": [
-            {"name": "data", "type": "uint256"},
-            {"name": "timestamp", "type": "uint256"}
-        ],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
-        "inputs": [
-            {"name": "proof", "type": "bytes"},
-            {"name": "publicSignals", "type": "bytes"}
-        ],
-        "name": "updateData",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    }
-]"#;
+// Load ABIs from files
+fn load_abi(name: &str) -> JsonAbi {
+    let abi_path = format!("abis/{name}.json");
+    let abi_content = std::fs::read_to_string(&abi_path)
+        .unwrap_or_else(|_| panic!("Failed to read ABI file: {abi_path}"));
+    serde_json::from_str(&abi_content)
+        .unwrap_or_else(|_| panic!("Failed to parse ABI file: {abi_path}"))
+}
 
-pub const BEACON_FACTORY_ABI: &str = r#"[
-    {
-        "inputs": [
-            {"internalType": "address", "name": "owner", "type": "address"}
-        ],
-        "name": "createBeacon",
-        "outputs": [
-            {"internalType": "address", "name": "", "type": "address"}
-        ],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    }
-]"#;
+/// Load perp configuration from environment variables with fallback to defaults
+fn load_perp_config() -> PerpConfig {
+    let default_config = PerpConfig::default();
 
-pub const BEACON_REGISTRY_ABI: &str = r#"[
-    {
-        "inputs": [
-            {"internalType": "address", "name": "beacon", "type": "address"}
-        ],
-        "name": "registerBeacon",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
-        "inputs": [
-            {"internalType": "address", "name": "beacon", "type": "address"}
-        ],
-        "name": "unregisterBeacon",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
-        "inputs": [
-            {"internalType": "address", "name": "", "type": "address"}
-        ],
-        "name": "beacons",
-        "outputs": [
-            {"internalType": "bool", "name": "", "type": "bool"}
-        ],
-        "stateMutability": "view",
-        "type": "function"
+    let parse_env_or_default = |key: &str, default: u128| -> u128 {
+        env::var(key)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(default)
+    };
+
+    let parse_env_or_default_i32 = |key: &str, default: i32| -> i32 {
+        env::var(key)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(default)
+    };
+
+    let parse_env_or_default_i128 = |key: &str, default: i128| -> i128 {
+        env::var(key)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(default)
+    };
+
+    let parse_env_or_default_u32 = |key: &str, default: u32| -> u32 {
+        env::var(key)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(default)
+    };
+
+    PerpConfig {
+        trading_fee_bps: parse_env_or_default_u32(
+            "PERP_TRADING_FEE_BPS",
+            default_config.trading_fee_bps,
+        ),
+        trading_fee_creator_split_x96: parse_env_or_default(
+            "PERP_TRADING_FEE_CREATOR_SPLIT_X96",
+            default_config.trading_fee_creator_split_x96,
+        ),
+        min_margin_usdc: parse_env_or_default(
+            "PERP_MIN_MARGIN_USDC",
+            default_config.min_margin_usdc,
+        ),
+        max_margin_usdc: parse_env_or_default(
+            "PERP_MAX_MARGIN_USDC",
+            default_config.max_margin_usdc,
+        ),
+        min_opening_leverage_x96: parse_env_or_default(
+            "PERP_MIN_OPENING_LEVERAGE_X96",
+            default_config.min_opening_leverage_x96,
+        ),
+        max_opening_leverage_x96: parse_env_or_default(
+            "PERP_MAX_OPENING_LEVERAGE_X96",
+            default_config.max_opening_leverage_x96,
+        ),
+        liquidation_leverage_x96: parse_env_or_default(
+            "PERP_LIQUIDATION_LEVERAGE_X96",
+            default_config.liquidation_leverage_x96,
+        ),
+        liquidation_fee_x96: parse_env_or_default(
+            "PERP_LIQUIDATION_FEE_X96",
+            default_config.liquidation_fee_x96,
+        ),
+        liquidation_fee_split_x96: parse_env_or_default(
+            "PERP_LIQUIDATION_FEE_SPLIT_X96",
+            default_config.liquidation_fee_split_x96,
+        ),
+        funding_interval_seconds: parse_env_or_default_i128(
+            "PERP_FUNDING_INTERVAL_SECONDS",
+            default_config.funding_interval_seconds,
+        ),
+        tick_spacing: parse_env_or_default_i32("PERP_TICK_SPACING", default_config.tick_spacing),
+        starting_sqrt_price_x96: parse_env_or_default(
+            "PERP_STARTING_SQRT_PRICE_X96",
+            default_config.starting_sqrt_price_x96,
+        ),
+        default_tick_lower: parse_env_or_default_i32(
+            "PERP_DEFAULT_TICK_LOWER",
+            default_config.default_tick_lower,
+        ),
+        default_tick_upper: parse_env_or_default_i32(
+            "PERP_DEFAULT_TICK_UPPER",
+            default_config.default_tick_upper,
+        ),
+        liquidity_scaling_factor: parse_env_or_default(
+            "PERP_LIQUIDITY_SCALING_FACTOR",
+            default_config.liquidity_scaling_factor,
+        ),
     }
-]"#;
+}
 
 pub async fn create_rocket() -> Rocket<Build> {
     // Load and cache environment variables
@@ -117,12 +149,11 @@ pub async fn create_rocket() -> Rocket<Build> {
     let access_token = env::var("BEACONATOR_ACCESS_TOKEN")
         .expect("BEACONATOR_ACCESS_TOKEN environment variable not set");
 
-    // Parse and cache the ABIs
-    let beacon_abi: JsonAbi = serde_json::from_str(BEACON_ABI).expect("Failed to parse beacon ABI");
-    let beacon_factory_abi: JsonAbi =
-        serde_json::from_str(BEACON_FACTORY_ABI).expect("Failed to parse beacon factory ABI");
-    let beacon_registry_abi: JsonAbi =
-        serde_json::from_str(BEACON_REGISTRY_ABI).expect("Failed to parse beacon registry ABI");
+    // Load ABIs from files
+    let beacon_abi = load_abi("Beacon");
+    let beacon_factory_abi = load_abi("BeaconFactory");
+    let beacon_registry_abi = load_abi("BeaconRegistry");
+    let perp_hook_abi = load_abi("PerpHook");
 
     // Load contract addresses
     let beacon_factory_address = Address::from_str(
@@ -136,6 +167,32 @@ pub async fn create_rocket() -> Rocket<Build> {
             .expect("PERPCITY_REGISTRY_ADDRESS environment variable not set"),
     )
     .expect("Failed to parse perpcity registry address");
+
+    let perp_hook_address = Address::from_str(
+        &env::var("PERP_HOOK_ADDRESS").expect("PERP_HOOK_ADDRESS environment variable not set"),
+    )
+    .expect("Failed to parse perp hook address");
+
+    // Load perp configuration
+    let perp_config = load_perp_config();
+
+    // Log loaded configuration for debugging
+    tracing::info!("Perp configuration loaded:");
+    tracing::info!(
+        "  - Trading fee: {}bps ({}%)",
+        perp_config.trading_fee_bps,
+        perp_config.trading_fee_bps as f64 / 100.0
+    );
+    tracing::info!(
+        "  - Max margin: {} USDC",
+        perp_config.max_margin_usdc as f64 / 1_000_000.0
+    );
+    tracing::info!("  - Tick spacing: {}", perp_config.tick_spacing);
+    tracing::info!(
+        "  - Funding interval: {}s ({}h)",
+        perp_config.funding_interval_seconds,
+        perp_config.funding_interval_seconds / 3600
+    );
 
     // Get environment configuration
     let env_type = env::var("ENV").expect("ENV environment variable not set");
@@ -198,9 +255,12 @@ pub async fn create_rocket() -> Rocket<Build> {
         beacon_abi,
         beacon_factory_abi,
         beacon_registry_abi,
+        perp_hook_abi,
         beacon_factory_address,
         perpcity_registry_address,
+        perp_hook_address,
         access_token,
+        perp_config,
     };
 
     rocket::build().manage(app_state).mount(
@@ -212,7 +272,10 @@ pub async fn create_rocket() -> Rocket<Build> {
             routes::register_beacon,
             routes::create_perpcity_beacon,
             routes::batch_create_perpcity_beacon,
-            routes::deploy_perp_for_beacon,
+            routes::deploy_perp_for_beacon_endpoint,
+            routes::batch_deploy_perps_for_beacons,
+            routes::deposit_liquidity_for_perp_endpoint,
+            routes::batch_deposit_liquidity_for_perps,
             routes::update_beacon
         ],
     )

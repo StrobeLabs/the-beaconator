@@ -31,3 +31,6 @@ Thumbs.db
 .env.development.local
 .env.test.local
 .env.production.local 
+
+# Agent files
+.claude/settings.local.json

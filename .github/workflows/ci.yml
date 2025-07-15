@@ -15,6 +15,10 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy, rustfmt
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
       - name: Build
         run: cargo build --all --release
       - name: Lint
@@ -42,6 +46,7 @@ jobs:
             -e BEACONATOR_ACCESS_TOKEN=test_token_123 \
             -e BEACON_FACTORY_ADDRESS=0x1234567890123456789012345678901234567890 \
             -e PERPCITY_REGISTRY_ADDRESS=0x3456789012345678901234567890123456789012 \
+            -e PERP_HOOK_ADDRESS=0x5678901234567890123456789012345678901234 \
             the-beaconator
           sleep 10
           curl -f http://localhost:8000/ || exit 1

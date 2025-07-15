@@ -53,6 +53,9 @@ docker-build: ## Build Docker image
 docker-run: ## Run Docker container (requires env vars)
 	docker run --env-file .env -p 8000:8000 the-beaconator
 
+docker-run-local: ## Run Docker container with local env file
+	docker run --env-file .env.local -p 8000:8000 the-beaconator
+
 # Documentation
 docs: ## Generate and open documentation
 	cargo doc --open
