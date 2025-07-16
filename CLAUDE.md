@@ -143,3 +143,8 @@ The perp deployment endpoints use hardcoded defaults from `DeployPerp.s.sol`:
 - Sentry integration for production error tracking
 - Batch operations continue on individual failures with detailed error reporting
 - Network errors gracefully handled in test environment
+
+## Git Commit Guidelines
+- Use concise commit messages (1 sentence max)
+- Do not include Claude Code attribution or co-author tags (private repo)
+- Focus on the specific change made
