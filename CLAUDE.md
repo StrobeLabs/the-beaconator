@@ -131,7 +131,7 @@ let contract = IBeacon::new(address, &*state.provider);
 ## Perp Deployment Configuration
 
 The perp deployment endpoints use hardcoded defaults from `DeployPerp.s.sol`:
-- Trading fee: 0.5% (5000 basis points)
+- Trading fee: 0.5% (50 basis points)
 - Leverage range: 0-10x (min/max)
 - Liquidation leverage: 10x
 - Starting price: sqrt(50) * 2^96
