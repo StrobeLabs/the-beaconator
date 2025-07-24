@@ -175,6 +175,8 @@ pub struct PerpConfig {
     pub default_tick_upper: i32,
     /// Liquidity scaling factor (multiplier to convert USDC margin to 18-decimal liquidity)
     pub liquidity_scaling_factor: u128,
+    /// Maximum margin amount per perp in USDC (6 decimals)
+    pub max_margin_per_perp_usdc: u128,
 }
 
 impl Default for PerpConfig {
@@ -195,6 +197,7 @@ impl Default for PerpConfig {
             default_tick_lower: -23030,                               // Approx sqrt(0.1) price
             default_tick_upper: 23030,                                // Approx sqrt(10) price
             liquidity_scaling_factor: 400_000_000_000_000,            // Scale USDC to 18 decimals
+            max_margin_per_perp_usdc: 5_000_000,                      // 5 USDC in 6 decimals
         }
     }
 }

@@ -344,12 +344,14 @@ pub async fn deposit_liquidity_for_perp_endpoint(
         }
     };
 
-    // Validate margin amount limit (5 USDC = 5,000,000 in 6 decimals)
-    const MAX_MARGIN_AMOUNT_USDC: u128 = 5_000_000; // 5 USDC in 6 decimals
-    if margin_amount > MAX_MARGIN_AMOUNT_USDC {
+    // Validate margin amount limit using configurable value
+    let max_margin = state.perp_config.max_margin_per_perp_usdc;
+    if margin_amount > max_margin {
         let error_msg = format!(
-            "Margin amount {} exceeds maximum limit of 5 USDC ({} in 6 decimals)",
-            request.margin_amount_usdc, MAX_MARGIN_AMOUNT_USDC
+            "Margin amount {} exceeds maximum limit of {} USDC ({} in 6 decimals)",
+            request.margin_amount_usdc,
+            max_margin as f64 / 1_000_000.0,
+            max_margin
         );
         tracing::error!("{}", error_msg);
         return Err(Status::BadRequest);
@@ -439,12 +441,14 @@ pub async fn batch_deposit_liquidity_for_perps(
             }
         };
 
-        // Validate margin amount limit (5 USDC = 5,000,000 in 6 decimals)
-        const MAX_MARGIN_AMOUNT_USDC: u128 = 5_000_000; // 5 USDC in 6 decimals
-        if margin_amount > MAX_MARGIN_AMOUNT_USDC {
+        // Validate margin amount limit using configurable value
+        let max_margin = state.perp_config.max_margin_per_perp_usdc;
+        if margin_amount > max_margin {
             let error_msg = format!(
-                "Margin amount {} exceeds maximum limit of 5 USDC ({} in 6 decimals) for deposit {index}",
-                deposit_request.margin_amount_usdc, MAX_MARGIN_AMOUNT_USDC
+                "Margin amount {} exceeds maximum limit of {} USDC ({} in 6 decimals) for deposit {index}",
+                deposit_request.margin_amount_usdc,
+                max_margin as f64 / 1_000_000.0,
+                max_margin
             );
             tracing::error!("{}", error_msg);
             errors.push(error_msg.clone());
@@ -1018,11 +1022,13 @@ mod tests {
         let app_state = create_simple_test_app_state();
         let state = State::from(&app_state);
 
-        // Test margin amount exceeding 5 USDC limit (6,000,000 > 5,000,000)
+        // Test margin amount exceeding the configured limit
+        let max_margin = app_state.perp_config.max_margin_per_perp_usdc;
+        let exceeding_amount = max_margin + 1_000_000; // Add 1 USDC to exceed limit
         let request = Json(DepositLiquidityForPerpRequest {
             perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
                 .to_string(),
-            margin_amount_usdc: "6000000".to_string(), // 6 USDC
+            margin_amount_usdc: exceeding_amount.to_string(),
         });
 
         let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
@@ -1040,11 +1046,12 @@ mod tests {
         let app_state = create_simple_test_app_state();
         let state = State::from(&app_state);
 
-        // Test margin amount exactly at 5 USDC limit (5,000,000)
+        // Test margin amount exactly at the configured limit
+        let max_margin = app_state.perp_config.max_margin_per_perp_usdc;
         let request = Json(DepositLiquidityForPerpRequest {
             perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
                 .to_string(),
-            margin_amount_usdc: "5000000".to_string(), // 5 USDC
+            margin_amount_usdc: max_margin.to_string(),
         });
 
         let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
@@ -1067,16 +1074,19 @@ mod tests {
         let state = State::from(&app_state);
 
         // Test batch with one valid and one exceeding limit
+        let max_margin = app_state.perp_config.max_margin_per_perp_usdc;
+        let valid_amount = max_margin - 2_000_000; // 2 USDC less than limit
+        let exceeding_amount = max_margin + 2_000_000; // 2 USDC more than limit
         let deposits = vec![
             DepositLiquidityForPerpRequest {
                 perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
                     .to_string(),
-                margin_amount_usdc: "3000000".to_string(), // 3 USDC - valid
+                margin_amount_usdc: valid_amount.to_string(),
             },
             DepositLiquidityForPerpRequest {
                 perp_id: "0x5678901234567890123456789012345678901234567890123456789012345678"
                     .to_string(),
-                margin_amount_usdc: "7000000".to_string(), // 7 USDC - exceeds limit
+                margin_amount_usdc: exceeding_amount.to_string(),
             },
         ];
 
@@ -1097,6 +1107,6 @@ mod tests {
         assert_eq!(batch_data.errors.len(), 2);
 
         // Check that the second error is about margin limit
-        assert!(batch_data.errors[1].contains("exceeds maximum limit of 5 USDC"));
+        assert!(batch_data.errors[1].contains("exceeds maximum limit"));
     }
 }

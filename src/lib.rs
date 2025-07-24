@@ -137,6 +137,10 @@ fn load_perp_config() -> PerpConfig {
             "PERP_LIQUIDITY_SCALING_FACTOR",
             default_config.liquidity_scaling_factor,
         ),
+        max_margin_per_perp_usdc: parse_env_or_default(
+            "PERP_MAX_MARGIN_PER_PERP_USDC",
+            default_config.max_margin_per_perp_usdc,
+        ),
     }
 }
 
@@ -192,6 +196,10 @@ pub async fn create_rocket() -> Rocket<Build> {
         "  - Funding interval: {}s ({}h)",
         perp_config.funding_interval_seconds,
         perp_config.funding_interval_seconds / 3600
+    );
+    tracing::info!(
+        "  - Max margin per perp: {} USDC",
+        perp_config.max_margin_per_perp_usdc as f64 / 1_000_000.0
     );
 
     // Get environment configuration
