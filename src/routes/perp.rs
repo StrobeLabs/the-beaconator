@@ -344,6 +344,17 @@ pub async fn deposit_liquidity_for_perp_endpoint(
         }
     };
 
+    // Validate margin amount limit (5 USDC = 5,000,000 in 6 decimals)
+    const MAX_MARGIN_AMOUNT_USDC: u128 = 5_000_000; // 5 USDC in 6 decimals
+    if margin_amount > MAX_MARGIN_AMOUNT_USDC {
+        let error_msg = format!(
+            "Margin amount {} exceeds maximum limit of 5 USDC ({} in 6 decimals)",
+            request.margin_amount_usdc, MAX_MARGIN_AMOUNT_USDC
+        );
+        tracing::error!("{}", error_msg);
+        return Err(Status::BadRequest);
+    }
+
     match deposit_liquidity_for_perp(state, perp_id, margin_amount).await {
         Ok(maker_pos_id) => {
             let message = "Liquidity deposited successfully";
@@ -427,6 +438,19 @@ pub async fn batch_deposit_liquidity_for_perps(
                 continue;
             }
         };
+
+        // Validate margin amount limit (5 USDC = 5,000,000 in 6 decimals)
+        const MAX_MARGIN_AMOUNT_USDC: u128 = 5_000_000; // 5 USDC in 6 decimals
+        if margin_amount > MAX_MARGIN_AMOUNT_USDC {
+            let error_msg = format!(
+                "Margin amount {} exceeds maximum limit of 5 USDC ({} in 6 decimals) for deposit {index}",
+                deposit_request.margin_amount_usdc, MAX_MARGIN_AMOUNT_USDC
+            );
+            tracing::error!("{}", error_msg);
+            errors.push(error_msg.clone());
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            continue;
+        }
 
         match deposit_liquidity_for_perp(state, perp_id, margin_amount).await {
             Ok(maker_pos_id) => {
@@ -609,7 +633,7 @@ mod tests {
             DepositLiquidityForPerpRequest {
                 perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
                     .to_string(),
-                margin_amount_usdc: "500000000".to_string(),
+                margin_amount_usdc: "3000000".to_string(), // 3 USDC - valid amount
             },
             DepositLiquidityForPerpRequest {
                 perp_id: "invalid_perp_id".to_string(), // Invalid
@@ -982,5 +1006,97 @@ mod tests {
         assert_eq!(deserialized.failed_count, 1);
         assert_eq!(deserialized.maker_position_ids.len(), 2);
         assert_eq!(deserialized.errors.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_deposit_liquidity_margin_limit_exceeded() {
+        use crate::guards::ApiToken;
+        use crate::models::DepositLiquidityForPerpRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+
+        let token = ApiToken("test_token".to_string());
+        let app_state = create_simple_test_app_state();
+        let state = State::from(&app_state);
+
+        // Test margin amount exceeding 5 USDC limit (6,000,000 > 5,000,000)
+        let request = Json(DepositLiquidityForPerpRequest {
+            perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                .to_string(),
+            margin_amount_usdc: "6000000".to_string(), // 6 USDC
+        });
+
+        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
+    }
+
+    #[tokio::test]
+    async fn test_deposit_liquidity_margin_limit_exact() {
+        use crate::guards::ApiToken;
+        use crate::models::DepositLiquidityForPerpRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+
+        let token = ApiToken("test_token".to_string());
+        let app_state = create_simple_test_app_state();
+        let state = State::from(&app_state);
+
+        // Test margin amount exactly at 5 USDC limit (5,000,000)
+        let request = Json(DepositLiquidityForPerpRequest {
+            perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                .to_string(),
+            margin_amount_usdc: "5000000".to_string(), // 5 USDC
+        });
+
+        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+        // Should fail with InternalServerError due to network/contract issues, not BadRequest
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            rocket::http::Status::InternalServerError
+        );
+    }
+
+    #[tokio::test]
+    async fn test_batch_deposit_liquidity_margin_limit_exceeded() {
+        use crate::guards::ApiToken;
+        use crate::models::{BatchDepositLiquidityForPerpsRequest, DepositLiquidityForPerpRequest};
+        use crate::routes::test_utils::create_simple_test_app_state;
+
+        let token = ApiToken("test_token".to_string());
+        let app_state = create_simple_test_app_state();
+        let state = State::from(&app_state);
+
+        // Test batch with one valid and one exceeding limit
+        let deposits = vec![
+            DepositLiquidityForPerpRequest {
+                perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                    .to_string(),
+                margin_amount_usdc: "3000000".to_string(), // 3 USDC - valid
+            },
+            DepositLiquidityForPerpRequest {
+                perp_id: "0x5678901234567890123456789012345678901234567890123456789012345678"
+                    .to_string(),
+                margin_amount_usdc: "7000000".to_string(), // 7 USDC - exceeds limit
+            },
+        ];
+
+        let request = Json(BatchDepositLiquidityForPerpsRequest {
+            liquidity_deposits: deposits,
+        });
+
+        let result = batch_deposit_liquidity_for_perps(request, token, &state).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap().into_inner();
+        assert!(!response.success); // Should be false since no successful deposits
+        assert!(response.data.is_some());
+
+        let batch_data = response.data.unwrap();
+        assert_eq!(batch_data.deposited_count, 0);
+        assert_eq!(batch_data.failed_count, 2);
+        assert_eq!(batch_data.errors.len(), 2);
+
+        // Check that the second error is about margin limit
+        assert!(batch_data.errors[1].contains("exceeds maximum limit of 5 USDC"));
     }
 }

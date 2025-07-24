@@ -145,7 +145,7 @@ pub struct ApiSummary {
 /// Configuration for perpetual contract parameters
 #[derive(Debug, Clone)]
 pub struct PerpConfig {
-    /// Trading fee in basis points (e.g., 5000 = 0.5%)
+    /// Trading fee in basis points (e.g., 50 = 0.5%)
     pub trading_fee_bps: u32,
     /// Trading fee creator split in Q96 format (e.g., 5% = 3951369912303465813)
     pub trading_fee_creator_split_x96: u128,
