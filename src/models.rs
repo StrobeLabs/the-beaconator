@@ -180,7 +180,7 @@ pub struct PerpConfig {
 impl Default for PerpConfig {
     fn default() -> Self {
         Self {
-            trading_fee_bps: 50,                                      // 0.5%
+            trading_fee_bps: 5000,                                    // 0.5%
             trading_fee_creator_split_x96: 3951369912303465813,       // 5% of Q96
             min_margin_usdc: 0,                                       // No minimum
             max_margin_usdc: 1_000_000_000,                           // 1000 USDC (6 decimals)
