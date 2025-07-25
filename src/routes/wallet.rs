@@ -25,6 +25,15 @@ pub async fn fund_guest_wallet(
     request: Json<FundGuestWalletRequest>,
     _token: ApiToken,
 ) -> Result<Json<ApiResponse<String>>, (Status, Json<ApiResponse<String>>)> {
+    tracing::info!("Received request: POST /fund_guest_wallet");
+    let _guard = sentry::Hub::current().push_scope();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("endpoint", "/fund_guest_wallet");
+        scope.set_extra("wallet_address", request.wallet_address.clone().into());
+        scope.set_extra("usdc_amount", request.usdc_amount.clone().into());
+        scope.set_extra("eth_amount", request.eth_amount.clone().into());
+    });
+
     let wallet_address = match Address::from_str(&request.wallet_address) {
         Ok(addr) => addr,
         Err(e) => {
@@ -110,6 +119,11 @@ pub async fn fund_guest_wallet(
     let eth_balance = match state.provider.get_balance(state.wallet_address).await {
         Ok(balance) => balance,
         Err(e) => {
+            tracing::error!("Failed to get ETH balance: {}", e);
+            sentry::capture_message(
+                &format!("Failed to get ETH balance: {e}"),
+                sentry::Level::Error,
+            );
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
@@ -142,6 +156,11 @@ pub async fn fund_guest_wallet(
     let usdc_balance = match usdc_contract.balanceOf(state.wallet_address).call().await {
         Ok(result) => result,
         Err(e) => {
+            tracing::error!("Failed to get USDC balance: {}", e);
+            sentry::capture_message(
+                &format!("Failed to get USDC balance: {e}"),
+                sentry::Level::Error,
+            );
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
@@ -178,6 +197,11 @@ pub async fn fund_guest_wallet(
         Ok(pending) => match pending.watch().await {
             Ok(hash) => hash,
             Err(e) => {
+                tracing::error!("Failed to confirm ETH transaction: {}", e);
+                sentry::capture_message(
+                    &format!("Failed to confirm ETH transaction: {e}"),
+                    sentry::Level::Error,
+                );
                 return Err((
                     Status::InternalServerError,
                     Json(ApiResponse {
@@ -189,6 +213,8 @@ pub async fn fund_guest_wallet(
             }
         },
         Err(e) => {
+            tracing::error!("Failed to send ETH: {}", e);
+            sentry::capture_message(&format!("Failed to send ETH: {e}"), sentry::Level::Error);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
@@ -211,6 +237,11 @@ pub async fn fund_guest_wallet(
         Ok(pending) => match pending.get_receipt().await {
             Ok(receipt) => receipt,
             Err(e) => {
+                tracing::error!("Failed to get USDC transaction receipt: {}", e);
+                sentry::capture_message(
+                    &format!("Failed to get USDC transaction receipt: {e}"),
+                    sentry::Level::Error,
+                );
                 return Err((
                     Status::InternalServerError,
                     Json(ApiResponse {
@@ -222,6 +253,8 @@ pub async fn fund_guest_wallet(
             }
         },
         Err(e) => {
+            tracing::error!("Failed to send USDC: {}", e);
+            sentry::capture_message(&format!("Failed to send USDC: {e}"), sentry::Level::Error);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
