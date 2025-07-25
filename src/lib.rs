@@ -177,6 +177,21 @@ pub async fn create_rocket() -> Rocket<Build> {
     )
     .expect("Failed to parse perp hook address");
 
+    let usdc_address = Address::from_str(
+        &env::var("USDC_ADDRESS").expect("USDC_ADDRESS environment variable not set"),
+    )
+    .expect("Failed to parse USDC address");
+
+    let usdc_transfer_limit = env::var("USDC_TRANSFER_LIMIT")
+        .unwrap_or_else(|_| "1000000000".to_string()) // Default 1000 USDC
+        .parse::<u128>()
+        .expect("Failed to parse USDC_TRANSFER_LIMIT");
+
+    let eth_transfer_limit = env::var("ETH_TRANSFER_LIMIT")
+        .unwrap_or_else(|_| "10000000000000000".to_string()) // Default 0.01 ETH
+        .parse::<u128>()
+        .expect("Failed to parse ETH_TRANSFER_LIMIT");
+
     // Load perp configuration
     let perp_config = load_perp_config();
 
@@ -267,6 +282,9 @@ pub async fn create_rocket() -> Rocket<Build> {
         beacon_factory_address,
         perpcity_registry_address,
         perp_hook_address,
+        usdc_address,
+        usdc_transfer_limit,
+        eth_transfer_limit,
         access_token,
         perp_config,
     };
@@ -284,7 +302,8 @@ pub async fn create_rocket() -> Rocket<Build> {
             routes::batch_deploy_perps_for_beacons,
             routes::deposit_liquidity_for_perp_endpoint,
             routes::batch_deposit_liquidity_for_perps,
-            routes::update_beacon
+            routes::update_beacon,
+            routes::fund_guest_wallet
         ],
     )
 }

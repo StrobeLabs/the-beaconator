@@ -104,6 +104,14 @@ impl ApiEndpoints {
                 requires_auth: true,
                 status: EndpointStatus::Working,
             },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/fund_guest_wallet".to_string(),
+                description: "Fund a guest wallet with specified USDC + ETH amounts (with limits)"
+                    .to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
         ]
     }
 
@@ -212,6 +220,9 @@ pub struct AppState {
     pub beacon_factory_address: Address,
     pub perpcity_registry_address: Address,
     pub perp_hook_address: Address,
+    pub usdc_address: Address,
+    pub usdc_transfer_limit: u128,
+    pub eth_transfer_limit: u128,
     pub access_token: String,
     pub perp_config: PerpConfig,
 }
@@ -290,4 +301,11 @@ pub struct BatchDepositLiquidityForPerpsResponse {
     pub maker_position_ids: Vec<String>, // Maker position IDs as strings
     pub failed_count: u32,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FundGuestWalletRequest {
+    pub wallet_address: String,
+    pub usdc_amount: String, // Amount in 6 decimals (e.g., "100000000" for 100 USDC)
+    pub eth_amount: String,  // Amount in wei (e.g., "1000000000000000" for 0.001 ETH)
 }

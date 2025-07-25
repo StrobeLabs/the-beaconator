@@ -3,6 +3,7 @@ use alloy::sol;
 pub mod beacon;
 pub mod info;
 pub mod perp;
+pub mod wallet;
 
 #[cfg(test)]
 mod test_utils;
@@ -11,6 +12,7 @@ mod test_utils;
 pub use beacon::*;
 pub use info::*;
 pub use perp::*;
+pub use wallet::*;
 
 // Define contract interfaces using Alloy's sol! macro - shared across all route modules
 sol! {
