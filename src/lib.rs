@@ -347,4 +347,3 @@ fn catch_panic(request: &Request) -> String {
 
     "Internal Server Error".to_string()
 }
-}

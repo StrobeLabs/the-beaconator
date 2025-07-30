@@ -17,7 +17,7 @@ async fn rocket() -> _ {
         .init();
 
     tracing::info!("Starting the Beaconator server...");
-    
+
     // Check environment setup
     tracing::info!("Environment check:");
     tracing::info!("  - RUST_LOG: {:?}", std::env::var("RUST_LOG"));
