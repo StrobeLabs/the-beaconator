@@ -18,10 +18,10 @@ build-release: ## Build the application in release mode
 	cargo build --release
 
 test: ## Run all tests
-	cargo test
+	PATH="$$HOME/.foundry/bin:$$PATH" cargo test
 
 test-verbose: ## Run tests with verbose output
-	cargo test -- --nocapture
+	PATH="$$HOME/.foundry/bin:$$PATH" cargo test -- --nocapture
 
 # Code quality targets
 lint: ## Run clippy linter

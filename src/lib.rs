@@ -10,10 +10,10 @@ use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
 
+pub mod fairings;
 pub mod guards;
 pub mod models;
 pub mod routes;
-pub mod fairings;
 
 use crate::models::{AppState, PerpConfig};
 use rocket::{Request, catch, catchers};
@@ -323,11 +323,15 @@ fn catch_all_errors(status: rocket::http::Status, request: &Request) -> String {
         request.method(),
         request.uri()
     );
-    
+
     tracing::error!("Unhandled error: {}", error_msg);
     sentry::capture_message(&error_msg, sentry::Level::Error);
-    
-    format!("Error {}: {}", status.code, status.reason().unwrap_or("Unknown error"))
+
+    format!(
+        "Error {}: {}",
+        status.code,
+        status.reason().unwrap_or("Unknown error")
+    )
 }
 
 #[catch(500)]
@@ -337,10 +341,10 @@ fn catch_panic(request: &Request) -> String {
         request.method(),
         request.uri()
     );
-    
+
     tracing::error!("{}", error_msg);
     sentry::capture_message(&error_msg, sentry::Level::Fatal);
-    
+
     "Internal Server Error".to_string()
 }
 }

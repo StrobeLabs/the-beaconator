@@ -1,7 +1,7 @@
 use crate::models::AppState;
 use rocket::{Request, State, http::Status, request::FromRequest, request::Outcome};
-use tracing;
 use sentry;
+use tracing;
 
 // API Token guard
 pub struct ApiToken(pub String);
@@ -13,7 +13,7 @@ impl<'r> FromRequest<'r> for ApiToken {
     async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
         let endpoint = request.uri().to_string();
         tracing::debug!("ApiToken guard checking authentication for: {}", endpoint);
-        
+
         let state = request.guard::<&State<AppState>>().await;
         match state {
             Outcome::Success(state) => {
@@ -34,7 +34,10 @@ impl<'r> FromRequest<'r> for ApiToken {
                         }
                     }
                     Some(_header) => {
-                        tracing::warn!("Authorization header doesn't start with 'Bearer ' for: {}", endpoint);
+                        tracing::warn!(
+                            "Authorization header doesn't start with 'Bearer ' for: {}",
+                            endpoint
+                        );
                         Outcome::Error((
                             Status::Unauthorized,
                             "Authorization header must start with 'Bearer '".to_string(),

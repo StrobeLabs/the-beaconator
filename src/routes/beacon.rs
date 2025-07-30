@@ -44,19 +44,16 @@ async fn create_beacon_via_factory(
             sentry::capture_message(&error_msg, sentry::Level::Error);
             error_msg
         })?;
-    
+
     tracing::info!("Transaction sent, waiting for receipt...");
-    
-    let receipt = pending_tx
-        .get_receipt()
-        .await
-        .map_err(|e| {
-            let error_msg = format!("Failed to get receipt: {e}");
-            tracing::error!("{}", error_msg);
-            tracing::error!("Receipt error details: {:?}", e);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
-            error_msg
-        })?;
+
+    let receipt = pending_tx.get_receipt().await.map_err(|e| {
+        let error_msg = format!("Failed to get receipt: {e}");
+        tracing::error!("{}", error_msg);
+        tracing::error!("Receipt error details: {:?}", e);
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        error_msg
+    })?;
 
     tracing::info!(
         "Transaction confirmed with hash: {:?}",
@@ -112,19 +109,16 @@ async fn register_beacon_with_registry(
             sentry::capture_message(&error_msg, sentry::Level::Error);
             error_msg
         })?;
-    
+
     tracing::info!("Registration transaction sent, waiting for receipt...");
-    
-    let receipt = pending_tx
-        .get_receipt()
-        .await
-        .map_err(|e| {
-            let error_msg = format!("Failed to get receipt: {e}");
-            tracing::error!("{}", error_msg);
-            tracing::error!("Receipt error details: {:?}", e);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
-            error_msg
-        })?;
+
+    let receipt = pending_tx.get_receipt().await.map_err(|e| {
+        let error_msg = format!("Failed to get receipt: {e}");
+        tracing::error!("{}", error_msg);
+        tracing::error!("Receipt error details: {:?}", e);
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        error_msg
+    })?;
 
     tracing::info!(
         "Registration transaction confirmed with hash: {:?}",
@@ -151,20 +145,28 @@ fn parse_beacon_created_event(
 ) -> Result<Address, String> {
     tracing::debug!("Parsing BeaconCreated event from receipt");
     tracing::debug!("Looking for events from factory: {}", factory_address);
-    
+
     // Look for the BeaconCreated event in the logs
     for (index, log) in receipt.logs().iter().enumerate() {
-        tracing::debug!("Log {}: address={}, topics={}", index, log.address(), log.topics().len());
-        
+        tracing::debug!(
+            "Log {}: address={}, topics={}",
+            index,
+            log.address(),
+            log.topics().len()
+        );
+
         // Check if this log is from our factory contract
         if log.address() == factory_address {
             tracing::debug!("Found log from factory contract");
-            
+
             // Try to decode as BeaconCreated event
             match log.log_decode::<IBeaconFactory::BeaconCreated>() {
                 Ok(decoded_log) => {
                     let beacon = decoded_log.inner.data.beacon;
-                    tracing::info!("Successfully parsed BeaconCreated event - beacon address: {}", beacon);
+                    tracing::info!(
+                        "Successfully parsed BeaconCreated event - beacon address: {}",
+                        beacon
+                    );
                     return Ok(beacon);
                 }
                 Err(e) => {
@@ -214,25 +216,37 @@ pub async fn create_perpcity_beacon(
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<String>>, Status> {
     tracing::info!("Received request: POST /create_perpcity_beacon");
-    
+
     // Log configuration details for debugging
     tracing::debug!("Configuration:");
     tracing::debug!("  - Wallet address: {}", state.wallet_address);
-    tracing::debug!("  - Beacon factory address: {}", state.beacon_factory_address);
-    tracing::debug!("  - Perpcity registry address: {}", state.perpcity_registry_address);
-    
+    tracing::debug!(
+        "  - Beacon factory address: {}",
+        state.beacon_factory_address
+    );
+    tracing::debug!(
+        "  - Perpcity registry address: {}",
+        state.perpcity_registry_address
+    );
+
     let _guard = sentry::Hub::current().push_scope();
     sentry::configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_perpcity_beacon");
         scope.set_extra("wallet_address", state.wallet_address.to_string().into());
-        scope.set_extra("beacon_factory_address", state.beacon_factory_address.to_string().into());
-        scope.set_extra("perpcity_registry_address", state.perpcity_registry_address.to_string().into());
+        scope.set_extra(
+            "beacon_factory_address",
+            state.beacon_factory_address.to_string().into(),
+        );
+        scope.set_extra(
+            "perpcity_registry_address",
+            state.perpcity_registry_address.to_string().into(),
+        );
     });
 
     // Create a beacon using the factory
     let owner_address = state.wallet_address;
     tracing::info!("Starting beacon creation for owner: {}", owner_address);
-    
+
     let beacon_address =
         match create_beacon_via_factory(state, owner_address, state.beacon_factory_address).await {
             Ok(address) => {
@@ -242,7 +256,7 @@ pub async fn create_perpcity_beacon(
                     sentry::Level::Info,
                 );
                 address
-            },
+            }
             Err(e) => {
                 tracing::error!("Failed to create beacon: {}", e);
                 tracing::error!("Error details: {:?}", e);
@@ -255,14 +269,22 @@ pub async fn create_perpcity_beacon(
         };
 
     // Register the beacon with the perpcity registry
-    tracing::info!("Starting beacon registration for beacon: {}", beacon_address);
-    
+    tracing::info!(
+        "Starting beacon registration for beacon: {}",
+        beacon_address
+    );
+
     match register_beacon_with_registry(state, beacon_address, state.perpcity_registry_address)
         .await
     {
         Ok(tx_hash) => {
             let message = "Perpcity beacon created and registered successfully";
-            tracing::info!("{} - Beacon: {}, TX: {:?}", message, beacon_address, tx_hash);
+            tracing::info!(
+                "{} - Beacon: {}, TX: {:?}",
+                message,
+                beacon_address,
+                tx_hash
+            );
             sentry::capture_message(
                 &format!("Beacon registered successfully: {beacon_address} (TX: {tx_hash:?})"),
                 sentry::Level::Info,
@@ -274,7 +296,11 @@ pub async fn create_perpcity_beacon(
             }))
         }
         Err(e) => {
-            tracing::error!("Failed to register beacon {} with registry: {}", beacon_address, e);
+            tracing::error!(
+                "Failed to register beacon {} with registry: {}",
+                beacon_address,
+                e
+            );
             tracing::error!("Error details: {:?}", e);
             sentry::capture_message(
                 &format!("Failed to register beacon {beacon_address}: {e}"),

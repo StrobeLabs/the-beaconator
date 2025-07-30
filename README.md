@@ -14,6 +14,12 @@ To build this juicy collaboration, the Baconator starts with two ¼ lb. patties2
 - Cargo
 - Base chain RPC access
 - Ethereum wallet with private key
+- **Anvil** (for running tests) - Install via [Foundry](https://book.getfoundry.sh/getting-started/installation):
+  ```bash
+  curl -L https://foundry.paradigm.xyz | bash
+  foundryup
+  ```
+- **Docker** (for containerized deployment) - [Install Docker](https://docs.docker.com/get-docker/)
 
 ### Installation
 
@@ -39,6 +45,7 @@ make build
 ```bash
 make test
 ```
+**Note**: Tests require Anvil to be installed and available in your PATH. The integration tests will automatically start local blockchain instances.
 
 5. Run the server:
 ```bash

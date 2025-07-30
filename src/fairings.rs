@@ -1,6 +1,6 @@
 use rocket::fairing::{Fairing, Info, Kind};
-use rocket::{Data, Request, Response};
 use rocket::http::Status;
+use rocket::{Data, Request, Response};
 
 pub struct RequestLogger;
 
@@ -16,15 +16,13 @@ impl Fairing for RequestLogger {
     async fn on_request(&self, request: &mut Request<'_>, _: &mut Data<'_>) {
         let method = request.method();
         let uri = request.uri();
-        let remote = request.remote().map(|r| r.to_string()).unwrap_or_else(|| "unknown".to_string());
-        
-        tracing::info!(
-            "Incoming request: {} {} from {}",
-            method,
-            uri,
-            remote
-        );
-        
+        let remote = request
+            .remote()
+            .map(|r| r.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        tracing::info!("Incoming request: {} {} from {}", method, uri, remote);
+
         // Log headers for debugging
         for header in request.headers().iter() {
             if header.name == "authorization" {
@@ -39,23 +37,13 @@ impl Fairing for RequestLogger {
         let method = request.method();
         let uri = request.uri();
         let status = response.status();
-        
+
         // Log the response
-        tracing::info!(
-            "Response: {} {} - Status: {}",
-            method,
-            uri,
-            status
-        );
-        
+        tracing::info!("Response: {} {} - Status: {}", method, uri, status);
+
         // If it's an error, log more details
         if !status.class().is_success() {
-            tracing::error!(
-                "Error response: {} {} returned {}",
-                method,
-                uri,
-                status
-            );
+            tracing::error!("Error response: {} {} returned {}", method, uri, status);
         }
     }
 }
@@ -76,13 +64,13 @@ impl Fairing for PanicCatcher {
         if response.status() == Status::InternalServerError {
             let method = request.method();
             let uri = request.uri();
-            
+
             tracing::error!(
                 "Internal Server Error detected for {} {} - possible panic or unhandled error",
                 method,
                 uri
             );
-            
+
             sentry::capture_message(
                 &format!("Internal Server Error: {method} {uri}"),
                 sentry::Level::Error,
