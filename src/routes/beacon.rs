@@ -1,4 +1,5 @@
 use alloy::primitives::{Address, B256, Bytes};
+use alloy::providers::Provider;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
 use std::str::FromStr;
@@ -32,13 +33,13 @@ async fn create_beacon_via_factory(
     tracing::debug!("  - Owner address: {}", owner_address);
     tracing::debug!("  - From address (wallet): {}", state.wallet_address);
 
-    // Send the transaction and wait for receipt
+    // Send the beacon creation transaction
     let pending_tx = contract
         .createBeacon(owner_address)
         .send()
         .await
         .map_err(|e| {
-            let error_msg = format!("Failed to send transaction: {e}");
+            let error_msg = format!("Failed to send createBeacon transaction: {e}");
             tracing::error!("{}", error_msg);
             tracing::error!("Transaction send error details: {:?}", e);
             sentry::capture_message(&error_msg, sentry::Level::Error);
@@ -47,18 +48,34 @@ async fn create_beacon_via_factory(
 
     tracing::info!("Transaction sent, waiting for receipt...");
 
-    let receipt = pending_tx.get_receipt().await.map_err(|e| {
-        let error_msg = format!("Failed to get receipt: {e}");
+    let tx_hash = pending_tx.watch().await.map_err(|e| {
+        let error_msg = format!("Failed to watch transaction: {e}");
         tracing::error!("{}", error_msg);
-        tracing::error!("Receipt error details: {:?}", e);
+        tracing::error!("Transaction watch error details: {:?}", e);
         sentry::capture_message(&error_msg, sentry::Level::Error);
         error_msg
     })?;
 
-    tracing::info!(
-        "Transaction confirmed with hash: {:?}",
-        receipt.transaction_hash
-    );
+    tracing::info!("Transaction confirmed with hash: {:?}", tx_hash);
+
+    // Get the full receipt for parsing events
+    let receipt = state
+        .provider
+        .get_transaction_receipt(tx_hash)
+        .await
+        .map_err(|e| {
+            let error_msg = format!("Failed to get transaction receipt: {e}");
+            tracing::error!("{}", error_msg);
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            error_msg
+        })?
+        .ok_or_else(|| {
+            let error_msg = "Transaction receipt not found";
+            tracing::error!("{}", error_msg);
+            sentry::capture_message(error_msg, sentry::Level::Error);
+            error_msg.to_string()
+        })?;
+
     tracing::debug!("Receipt details:");
     tracing::debug!("  - Block number: {:?}", receipt.block_number);
     tracing::debug!("  - Gas used: {:?}", receipt.gas_used);
@@ -97,13 +114,13 @@ async fn register_beacon_with_registry(
     tracing::debug!("  - Beacon address: {}", beacon_address);
     tracing::debug!("  - From address (wallet): {}", state.wallet_address);
 
-    // Send the transaction and wait for receipt
+    // Send the registration transaction (beacon creation is already confirmed)
     let pending_tx = contract
         .registerBeacon(beacon_address)
         .send()
         .await
         .map_err(|e| {
-            let error_msg = format!("Failed to send transaction: {e}");
+            let error_msg = format!("Failed to send registerBeacon transaction: {e}");
             tracing::error!("{}", error_msg);
             tracing::error!("Transaction send error details: {:?}", e);
             sentry::capture_message(&error_msg, sentry::Level::Error);
@@ -112,30 +129,34 @@ async fn register_beacon_with_registry(
 
     tracing::info!("Registration transaction sent, waiting for receipt...");
 
-    let receipt = pending_tx.get_receipt().await.map_err(|e| {
-        let error_msg = format!("Failed to get receipt: {e}");
+    let tx_hash = pending_tx.watch().await.map_err(|e| {
+        let error_msg = format!("Failed to watch registration transaction: {e}");
         tracing::error!("{}", error_msg);
-        tracing::error!("Receipt error details: {:?}", e);
+        tracing::error!("Transaction watch error details: {:?}", e);
         sentry::capture_message(&error_msg, sentry::Level::Error);
         error_msg
     })?;
 
     tracing::info!(
         "Registration transaction confirmed with hash: {:?}",
-        receipt.transaction_hash
+        tx_hash
     );
-    tracing::debug!("Receipt details:");
-    tracing::debug!("  - Block number: {:?}", receipt.block_number);
-    tracing::debug!("  - Gas used: {:?}", receipt.gas_used);
-    tracing::debug!("  - Status: {:?}", receipt.status());
-    tracing::debug!("  - Logs count: {}", receipt.logs().len());
+
+    // Get the full receipt for debugging (optional, don't fail if it fails)
+    if let Ok(Some(receipt)) = state.provider.get_transaction_receipt(tx_hash).await {
+        tracing::debug!("Receipt details:");
+        tracing::debug!("  - Block number: {:?}", receipt.block_number);
+        tracing::debug!("  - Gas used: {:?}", receipt.gas_used);
+        tracing::debug!("  - Status: {:?}", receipt.status());
+        tracing::debug!("  - Logs count: {}", receipt.logs().len());
+    }
 
     sentry::capture_message(
         &format!("Beacon {beacon_address} registered with registry {registry_address}"),
         sentry::Level::Info,
     );
 
-    Ok(receipt.transaction_hash)
+    Ok(tx_hash)
 }
 
 // Helper function to parse the BeaconCreated event from transaction receipt
@@ -267,6 +288,9 @@ pub async fn create_perpcity_beacon(
                 return Err(Status::InternalServerError);
             }
         };
+
+    // The beacon creation transaction is now fully confirmed, so we can safely proceed with registration
+    tracing::info!("Beacon creation completed successfully, proceeding with registration...");
 
     // Register the beacon with the perpcity registry
     tracing::info!(
