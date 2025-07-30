@@ -27,12 +27,6 @@ async fn create_beacon_via_factory(
     // Create contract instance using the sol! generated interface
     let contract = IBeaconFactory::new(factory_address, &*state.provider);
 
-    tracing::debug!("Sending createBeacon transaction...");
-    tracing::debug!("Transaction parameters:");
-    tracing::debug!("  - Factory address: {}", factory_address);
-    tracing::debug!("  - Owner address: {}", owner_address);
-    tracing::debug!("  - From address (wallet): {}", state.wallet_address);
-
     // Send the beacon creation transaction
     let pending_tx = contract
         .createBeacon(owner_address)
@@ -76,11 +70,10 @@ async fn create_beacon_via_factory(
             error_msg.to_string()
         })?;
 
-    tracing::debug!("Receipt details:");
-    tracing::debug!("  - Block number: {:?}", receipt.block_number);
-    tracing::debug!("  - Gas used: {:?}", receipt.gas_used);
-    tracing::debug!("  - Status: {:?}", receipt.status());
-    tracing::debug!("  - Logs count: {}", receipt.logs().len());
+    tracing::info!(
+        "Beacon creation confirmed in block {:?}",
+        receipt.block_number
+    );
 
     // Parse the beacon address from the event logs
     let beacon_address = parse_beacon_created_event(&receipt, factory_address)?;
@@ -107,12 +100,6 @@ async fn register_beacon_with_registry(
 
     // Create contract instance using the sol! generated interface
     let contract = IBeaconRegistry::new(registry_address, &*state.provider);
-
-    tracing::debug!("Sending registerBeacon transaction...");
-    tracing::debug!("Transaction parameters:");
-    tracing::debug!("  - Registry address: {}", registry_address);
-    tracing::debug!("  - Beacon address: {}", beacon_address);
-    tracing::debug!("  - From address (wallet): {}", state.wallet_address);
 
     // Send the registration transaction (beacon creation is already confirmed)
     let pending_tx = contract
@@ -164,22 +151,10 @@ fn parse_beacon_created_event(
     receipt: &alloy::rpc::types::TransactionReceipt,
     factory_address: Address,
 ) -> Result<Address, String> {
-    tracing::debug!("Parsing BeaconCreated event from receipt");
-    tracing::debug!("Looking for events from factory: {}", factory_address);
-
     // Look for the BeaconCreated event in the logs
-    for (index, log) in receipt.logs().iter().enumerate() {
-        tracing::debug!(
-            "Log {}: address={}, topics={}",
-            index,
-            log.address(),
-            log.topics().len()
-        );
-
+    for log in receipt.logs().iter() {
         // Check if this log is from our factory contract
         if log.address() == factory_address {
-            tracing::debug!("Found log from factory contract");
-
             // Try to decode as BeaconCreated event
             match log.log_decode::<IBeaconFactory::BeaconCreated>() {
                 Ok(decoded_log) => {
@@ -190,8 +165,8 @@ fn parse_beacon_created_event(
                     );
                     return Ok(beacon);
                 }
-                Err(e) => {
-                    tracing::debug!("Failed to decode log as BeaconCreated: {:?}", e);
+                Err(_) => {
+                    // Log is from factory but not BeaconCreated event, continue
                 }
             }
         }

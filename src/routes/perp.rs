@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, B256, FixedBytes, Signed, U160, U256, Uint};
+use alloy::primitives::{Address, FixedBytes, Signed, U160, U256, Uint};
 use alloy::providers::Provider;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
@@ -9,9 +9,33 @@ use super::IPerpHook;
 use crate::guards::ApiToken;
 use crate::models::{
     ApiResponse, AppState, BatchDepositLiquidityForPerpsRequest,
-    BatchDepositLiquidityForPerpsResponse, DeployPerpForBeaconRequest,
+    BatchDepositLiquidityForPerpsResponse, DeployPerpForBeaconRequest, DeployPerpForBeaconResponse,
     DepositLiquidityForPerpRequest,
 };
+
+// Helper function to parse the PerpCreated event from transaction receipt to get perp address
+fn parse_perp_created_event(
+    receipt: &alloy::rpc::types::TransactionReceipt,
+    perp_hook_address: Address,
+) -> Result<FixedBytes<32>, String> {
+    // Look for the PerpCreated event in the logs
+    for log in receipt.logs() {
+        // Check if this log is from our perp hook contract
+        if log.address() == perp_hook_address {
+            // Try to decode as PerpCreated event
+            if let Ok(decoded_log) = log.log_decode::<IPerpHook::PerpCreated>() {
+                let event_data = decoded_log.inner.data;
+                tracing::info!(
+                    "Successfully parsed PerpCreated event - perp address: {}",
+                    event_data.perpId
+                );
+                return Ok(event_data.perpId);
+            }
+        }
+    }
+
+    Err("PerpCreated event not found in transaction receipt".to_string())
+}
 
 // Helper function to parse the MakerPositionOpened event from transaction receipt
 fn parse_maker_position_opened_event(
@@ -39,7 +63,10 @@ fn parse_maker_position_opened_event(
 }
 
 // Helper function to deploy a perp for a beacon using configuration from AppState
-async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Result<B256, String> {
+async fn deploy_perp_for_beacon(
+    state: &AppState,
+    beacon_address: Address,
+) -> Result<DeployPerpForBeaconResponse, String> {
     tracing::info!("Starting perp deployment for beacon: {}", beacon_address);
 
     // Log environment details
@@ -61,7 +88,6 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
 
     // Create contract instance using the sol! generated interface
     let contract = IPerpHook::new(state.perp_hook_address, &*state.provider);
-    tracing::debug!("PerpHook contract instance created");
 
     // Validate beacon exists and has code deployed
     tracing::info!("Validating beacon address exists...");
@@ -352,7 +378,7 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
     let pending_tx_hash = *pending_tx.tx_hash();
     tracing::info!("Transaction hash (pending): {:?}", pending_tx_hash);
 
-    let tx_hash = pending_tx.watch().await.map_err(|e| {
+    let receipt = pending_tx.get_receipt().await.map_err(|e| {
         let error_type = match e.to_string().as_str() {
             s if s.contains("transaction failed") || s.contains("reverted") => {
                 "Transaction Failed/Reverted"
@@ -361,13 +387,13 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
             s if s.contains("not found") => "Transaction Not Found",
             s if s.contains("dropped") || s.contains("replaced") => "Transaction Dropped/Replaced",
             s if s.contains("connection") => "Network Connection Error",
-            _ => "Transaction Watch Error",
+            _ => "Transaction Receipt Error",
         };
 
         let error_msg = format!("{error_type}: {e}");
         tracing::error!("{}", error_msg);
-        tracing::error!("Transaction watch error details: {:?}", e);
-        tracing::error!("Watch operation details:");
+        tracing::error!("Receipt fetch error details: {:?}", e);
+        tracing::error!("Receipt operation details:");
         tracing::error!("  - Original tx hash: {:?}", pending_tx_hash);
         tracing::error!("  - Provider endpoint: RPC connection");
 
@@ -387,7 +413,7 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
                     "  - Transaction may still be pending - check manually with tx hash"
                 );
                 tracing::error!("  - Network might be congested, try with higher gas price");
-                tracing::error!("  - Consider increasing watch timeout");
+                tracing::error!("  - Consider increasing receipt timeout");
             }
             "Transaction Dropped/Replaced" => {
                 tracing::error!("Troubleshooting hints:");
@@ -402,10 +428,23 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
         error_msg
     })?;
 
+    let tx_hash = receipt.transaction_hash;
     tracing::info!("Perp deployment transaction confirmed successfully!");
     tracing::info!("Final transaction hash: {:?}", tx_hash);
+    tracing::info!(
+        "Perp deployment confirmed in block {:?}",
+        receipt.block_number
+    );
 
-    Ok(tx_hash)
+    // Parse the perp address from the PerpCreated event
+    let perp_address = parse_perp_created_event(&receipt, state.perp_hook_address)?;
+
+    tracing::info!("Successfully deployed perp at address: {}", perp_address);
+
+    Ok(DeployPerpForBeaconResponse {
+        perp_address: perp_address.to_string(),
+        transaction_hash: tx_hash.to_string(),
+    })
 }
 
 // Helper function to try to decode revert reason from error
@@ -468,11 +507,12 @@ async fn deposit_liquidity_for_perp(
             .map_err(|e| format!("Invalid tick upper: {e}"))?,
     };
 
-    tracing::debug!(
-        "Sending openMakerPosition transaction with config: tick_range=[{}, {}], liquidity_factor={}",
+    tracing::info!(
+        "Opening maker position: tick_range=[{}, {}], margin={} USDC, liquidity={}",
         tick_lower,
         tick_upper,
-        config.liquidity_scaling_factor
+        margin_amount_usdc as f64 / 1_000_000.0,
+        liquidity
     );
 
     // Send the transaction and wait for receipt
@@ -546,7 +586,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
     request: Json<DeployPerpForBeaconRequest>,
     _token: ApiToken,
     state: &State<AppState>,
-) -> Result<Json<ApiResponse<String>>, Status> {
+) -> Result<Json<ApiResponse<DeployPerpForBeaconResponse>>, Status> {
     tracing::info!("Received request: POST /deploy_perp_for_beacon");
     tracing::info!("Requested beacon address: {}", request.beacon_address);
 
@@ -562,12 +602,8 @@ pub async fn deploy_perp_for_beacon_endpoint(
     });
 
     // Parse the beacon address
-    tracing::debug!("Parsing beacon address: {}", request.beacon_address);
     let beacon_address = match Address::from_str(&request.beacon_address) {
-        Ok(addr) => {
-            tracing::debug!("Successfully parsed beacon address: {}", addr);
-            addr
-        }
+        Ok(addr) => addr,
         Err(e) => {
             let error_msg = format!("Invalid beacon address '{}': {}", request.beacon_address, e);
             tracing::error!("{}", error_msg);
@@ -578,17 +614,21 @@ pub async fn deploy_perp_for_beacon_endpoint(
 
     tracing::info!("Starting perp deployment process...");
     match deploy_perp_for_beacon(state, beacon_address).await {
-        Ok(tx_hash) => {
+        Ok(response) => {
             let message = "Perp deployed successfully!";
             tracing::info!("{}", message);
-            tracing::info!("Transaction hash: {}", tx_hash);
+            tracing::info!("Perp address: {}", response.perp_address);
+            tracing::info!("Transaction hash: {}", response.transaction_hash);
             sentry::capture_message(
-                &format!("Perp deployed successfully for beacon {beacon_address}"),
+                &format!(
+                    "Perp deployed successfully for beacon {beacon_address}, perp address: {}",
+                    response.perp_address
+                ),
                 sentry::Level::Info,
             );
             Ok(Json(ApiResponse {
                 success: true,
-                data: Some(format!("Transaction hash: {tx_hash}")),
+                data: Some(response),
                 message: message.to_string(),
             }))
         }

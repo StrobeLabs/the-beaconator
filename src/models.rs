@@ -252,6 +252,12 @@ pub struct DeployPerpForBeaconRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct DeployPerpForBeaconResponse {
+    pub perp_address: String,
+    pub transaction_hash: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BatchCreatePerpcityBeaconRequest {
     pub count: u32,
 }
