@@ -63,6 +63,66 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
     let contract = IPerpHook::new(state.perp_hook_address, &*state.provider);
     tracing::debug!("✅ PerpHook contract instance created");
 
+    // Validate beacon exists and has code deployed
+    tracing::info!("🔍 Validating beacon address exists...");
+    match state.provider.get_code_at(beacon_address).await {
+        Ok(code) => {
+            if code.is_empty() {
+                let error_msg = format!(
+                    "❌ Beacon address {beacon_address} has no deployed code (not a contract)"
+                );
+                tracing::error!("{}", error_msg);
+                tracing::error!("💡 Troubleshooting hints:");
+                tracing::error!("  - Verify the beacon was successfully deployed");
+                tracing::error!(
+                    "  - Check if you're using the correct network (mainnet vs testnet)"
+                );
+                tracing::error!("  - Confirm the beacon deployment transaction was mined");
+                tracing::error!("  - Double-check the beacon address is correct");
+                return Err(error_msg);
+            } else {
+                tracing::info!(
+                    "✅ Beacon address {} has deployed code ({} bytes)",
+                    beacon_address,
+                    code.len()
+                );
+            }
+        }
+        Err(e) => {
+            let error_msg = format!("❌ Failed to check beacon address {beacon_address}: {e}");
+            tracing::error!("{}", error_msg);
+            tracing::error!(
+                "💡 This might indicate network connectivity issues or invalid address"
+            );
+            return Err(error_msg);
+        }
+    }
+
+    // Additional beacon validation - try to call a basic function
+    tracing::info!("🔍 Attempting to validate beacon contract interface...");
+
+    // Try to get the beacon address from the beacon contract (if it implements the standard interface)
+    let beacon_call_result = state
+        .provider
+        .call(
+            alloy::rpc::types::TransactionRequest::default()
+                .to(beacon_address)
+                .input(alloy::primitives::hex!("59659e90").to_vec().into()),
+        ) // selector for beacon() function
+        .await;
+
+    match beacon_call_result {
+        Ok(_) => {
+            tracing::info!("✅ Beacon contract appears to have standard interface");
+        }
+        Err(e) => {
+            tracing::warn!("⚠️ Could not validate standard beacon interface: {}", e);
+            tracing::warn!("💡 Proceeding anyway - contract exists but may use custom interface");
+            tracing::warn!("  - This could be a custom beacon implementation");
+            tracing::warn!("  - The perp deployment may still succeed if the beacon is valid");
+        }
+    }
+
     // Use configuration from AppState instead of hardcoded values
     let config = &state.perp_config;
     tracing::info!("📊 Perp configuration:");
@@ -92,7 +152,7 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
     let liquidation_fee_split_x96 = config.liquidation_fee_split_x96;
     let funding_interval = config.funding_interval_seconds;
     let tick_spacing = Signed::<24, 1>::try_from(config.tick_spacing).map_err(|e| {
-        let error = format!("❌ Invalid tick spacing conversion: {}", e);
+        let error = format!("❌ Invalid tick spacing conversion: {e}");
         tracing::error!("{}", error);
         error
     })?;
@@ -135,19 +195,23 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
                 s if s.contains("insufficient funds") => "💸 Insufficient Funds",
                 s if s.contains("gas") => "⛽ Gas Related Error",
                 s if s.contains("nonce") => "🔢 Nonce Error",
-                s if s.contains("connection") || s.contains("timeout") => "🌐 Network Connection Error",
-                s if s.contains("unauthorized") || s.contains("forbidden") => "🔐 Authorization Error",
+                s if s.contains("connection") || s.contains("timeout") => {
+                    "🌐 Network Connection Error"
+                }
+                s if s.contains("unauthorized") || s.contains("forbidden") => {
+                    "🔐 Authorization Error"
+                }
                 _ => "❌ Unknown Transaction Error",
             };
-            
-            let error_msg = format!("{}: {}", error_type, e);
+
+            let error_msg = format!("{error_type}: {e}");
             tracing::error!("{}", error_msg);
             tracing::error!("🔍 Transaction send error details: {:?}", e);
             tracing::error!("📋 Contract call details:");
             tracing::error!("  - PerpHook address: {}", state.perp_hook_address);
             tracing::error!("  - Beacon address: {}", beacon_address);
             tracing::error!("  - Provider type: Alloy HTTP provider");
-            
+
             // Add specific troubleshooting hints based on error type
             match error_type {
                 "🚫 Contract Execution Reverted" => {
@@ -155,7 +219,9 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
                     tracing::error!("  - Check if PerpHook contract is properly deployed");
                     tracing::error!("  - Verify beacon address exists and is valid");
                     tracing::error!("  - Ensure all constructor parameters are correct");
-                    tracing::error!("  - Check if external contracts (PoolManager, Router, etc.) are available");
+                    tracing::error!(
+                        "  - Check if external contracts (PoolManager, Router, etc.) are available"
+                    );
                 }
                 "💸 Insufficient Funds" => {
                     tracing::error!("💡 Troubleshooting hints:");
@@ -175,7 +241,7 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
                 }
                 _ => {}
             }
-            
+
             sentry::capture_message(&error_msg, sentry::Level::Error);
             error_msg
         })?;
@@ -186,32 +252,40 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
 
     let tx_hash = pending_tx.watch().await.map_err(|e| {
         let error_type = match e.to_string().as_str() {
-            s if s.contains("transaction failed") || s.contains("reverted") => "🚫 Transaction Failed/Reverted",
+            s if s.contains("transaction failed") || s.contains("reverted") => {
+                "🚫 Transaction Failed/Reverted"
+            }
             s if s.contains("timeout") => "⏰ Transaction Timeout",
             s if s.contains("not found") => "🔍 Transaction Not Found",
-            s if s.contains("dropped") || s.contains("replaced") => "🔄 Transaction Dropped/Replaced",
+            s if s.contains("dropped") || s.contains("replaced") => {
+                "🔄 Transaction Dropped/Replaced"
+            }
             s if s.contains("connection") => "🌐 Network Connection Error",
             _ => "❌ Transaction Watch Error",
         };
-        
-        let error_msg = format!("{}: {}", error_type, e);
+
+        let error_msg = format!("{error_type}: {e}");
         tracing::error!("{}", error_msg);
         tracing::error!("🔍 Transaction watch error details: {:?}", e);
         tracing::error!("📋 Watch operation details:");
         tracing::error!("  - Original tx hash: {:?}", pending_tx_hash);
         tracing::error!("  - Provider endpoint: RPC connection");
-        
+
         // Add specific troubleshooting hints based on error type
         match error_type {
             "🚫 Transaction Failed/Reverted" => {
                 tracing::error!("💡 Troubleshooting hints:");
                 tracing::error!("  - Check transaction receipt for revert reason");
-                tracing::error!("  - Verify contract state hasn't changed since transaction was sent");
+                tracing::error!(
+                    "  - Verify contract state hasn't changed since transaction was sent"
+                );
                 tracing::error!("  - Look for events in transaction logs for more context");
             }
             "⏰ Transaction Timeout" => {
                 tracing::error!("💡 Troubleshooting hints:");
-                tracing::error!("  - Transaction may still be pending - check manually with tx hash");
+                tracing::error!(
+                    "  - Transaction may still be pending - check manually with tx hash"
+                );
                 tracing::error!("  - Network might be congested, try with higher gas price");
                 tracing::error!("  - Consider increasing watch timeout");
             }
@@ -223,7 +297,7 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
             }
             _ => {}
         }
-        
+
         sentry::capture_message(&error_msg, sentry::Level::Error);
         error_msg
     })?;
@@ -290,15 +364,17 @@ async fn deposit_liquidity_for_perp(
             let error_type = match e.to_string().as_str() {
                 s if s.contains("execution reverted") => "🚫 Liquidity Deposit Reverted",
                 s if s.contains("insufficient funds") => "💸 Insufficient Funds for Liquidity",
-                s if s.contains("perp not found") || s.contains("invalid perp") => "🔍 Invalid Perp ID",
+                s if s.contains("perp not found") || s.contains("invalid perp") => {
+                    "🔍 Invalid Perp ID"
+                }
                 s if s.contains("margin") => "📊 Margin Related Error",
                 s if s.contains("liquidity") => "🌊 Liquidity Related Error",
                 _ => "❌ Liquidity Transaction Error",
             };
-            
-            let error_msg = format!("{}: {}", error_type, e);
+
+            let error_msg = format!("{error_type}: {e}");
             tracing::error!("{}", error_msg);
-            
+
             // Add specific troubleshooting hints
             match error_type {
                 "🚫 Liquidity Deposit Reverted" => {
@@ -314,7 +390,7 @@ async fn deposit_liquidity_for_perp(
                 }
                 _ => {}
             }
-            
+
             error_msg
         })?
         .get_receipt()
@@ -322,7 +398,9 @@ async fn deposit_liquidity_for_perp(
         .map_err(|e| {
             let error_msg = format!("❌ Failed to get liquidity deposit receipt: {e}");
             tracing::error!("{}", error_msg);
-            tracing::error!("💡 This usually indicates the transaction was sent but confirmation failed");
+            tracing::error!(
+                "💡 This usually indicates the transaction was sent but confirmation failed"
+            );
             error_msg
         })?;
 
@@ -388,7 +466,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
             tracing::info!("{}", message);
             tracing::info!("🔗 Transaction hash: {}", tx_hash);
             sentry::capture_message(
-                &format!("Perp deployed successfully for beacon {}", beacon_address),
+                &format!("Perp deployed successfully for beacon {beacon_address}"),
                 sentry::Level::Info,
             );
             Ok(Json(ApiResponse {
@@ -398,23 +476,28 @@ pub async fn deploy_perp_for_beacon_endpoint(
             }))
         }
         Err(e) => {
-            let error_msg = format!(
-                "❌ Failed to deploy perp for beacon {}: {}",
-                beacon_address, e
-            );
+            let error_msg = format!("❌ Failed to deploy perp for beacon {beacon_address}: {e}");
             tracing::error!("{}", error_msg);
             tracing::error!("🔍 Error context:");
             tracing::error!("  - Beacon address: {}", beacon_address);
             tracing::error!("  - PerpHook address: {}", state.perp_hook_address);
             tracing::error!("  - Wallet address: {}", state.wallet_address);
             tracing::error!("  - USDC address: {}", state.usdc_address);
-            
+
             // Provide actionable next steps based on error
             tracing::error!("🛠️ Recommended next steps:");
             if e.contains("execution reverted") {
-                tracing::error!("  1. Verify PerpHook contract is deployed at {}", state.perp_hook_address);
-                tracing::error!("  2. Check beacon address {} exists and is valid", beacon_address);
-                tracing::error!("  3. Ensure external contracts (PoolManager, Router) are accessible");
+                tracing::error!(
+                    "  1. Verify PerpHook contract is deployed at {}",
+                    state.perp_hook_address
+                );
+                tracing::error!(
+                    "  2. Check beacon address {} exists and is valid",
+                    beacon_address
+                );
+                tracing::error!(
+                    "  3. Ensure external contracts (PoolManager, Router) are accessible"
+                );
                 tracing::error!("  4. Review transaction parameters for correctness");
             } else if e.contains("insufficient funds") {
                 tracing::error!("  1. Check wallet balance and ensure sufficient ETH for gas");
@@ -424,7 +507,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
                 tracing::error!("  2. Verify all contract addresses are correct");
                 tracing::error!("  3. Try the request again after a short delay");
             }
-            
+
             sentry::capture_message(&error_msg, sentry::Level::Error);
             Err(Status::InternalServerError)
         }
@@ -449,10 +532,8 @@ pub async fn deposit_liquidity_for_perp_endpoint(
     let perp_id = match FixedBytes::<32>::from_str(&request.perp_id) {
         Ok(id) => id,
         Err(e) => {
-            let error_msg = format!("❌ Invalid perp ID '{}': {}", request.perp_id, e);
+            let error_msg = format!("❌ Invalid perp ID '{}': {e}", request.perp_id);
             tracing::error!("{}", error_msg);
-            tracing::error!("💡 Perp ID must be a 32-byte hex string (64 characters)");
-            tracing::error!("  Example: 0x1234567890123456789012345678901234567890123456789012345678901234");
             sentry::capture_message(&error_msg, sentry::Level::Error);
             return Err(Status::BadRequest);
         }
@@ -462,7 +543,10 @@ pub async fn deposit_liquidity_for_perp_endpoint(
     let margin_amount = match request.margin_amount_usdc.parse::<u128>() {
         Ok(amount) => amount,
         Err(e) => {
-            let error_msg = format!("❌ Invalid margin amount '{}': {}", request.margin_amount_usdc, e);
+            let error_msg = format!(
+                "❌ Invalid margin amount '{}': {e}",
+                request.margin_amount_usdc
+            );
             tracing::error!("{}", error_msg);
             tracing::error!("💡 Margin amount must be a valid number in USDC with 6 decimals");
             tracing::error!("  Examples: '1000000' = 1 USDC, '500000000' = 500 USDC");
@@ -483,7 +567,10 @@ pub async fn deposit_liquidity_for_perp_endpoint(
         tracing::error!("{}", error_msg);
         tracing::error!("💡 Please reduce margin amount to {} or less", max_margin);
         tracing::error!("  Current limit: {} USDC", max_margin as f64 / 1_000_000.0);
-        tracing::error!("  Your request: {} USDC", margin_amount as f64 / 1_000_000.0);
+        tracing::error!(
+            "  Your request: {} USDC",
+            margin_amount as f64 / 1_000_000.0
+        );
         sentry::capture_message(&error_msg, sentry::Level::Error);
         return Err(Status::BadRequest);
     }
@@ -499,19 +586,28 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             }))
         }
         Err(e) => {
-            let error_msg = format!("❌ Failed to deposit liquidity for perp {}: {}", request.perp_id, e);
+            let error_msg = format!(
+                "❌ Failed to deposit liquidity for perp {}: {e}",
+                request.perp_id
+            );
             tracing::error!("{}", error_msg);
             tracing::error!("🔍 Error context:");
             tracing::error!("  - Perp ID: {}", request.perp_id);
             tracing::error!("  - Margin amount: {} USDC", request.margin_amount_usdc);
             tracing::error!("  - PerpHook address: {}", state.perp_hook_address);
             tracing::error!("  - Wallet address: {}", state.wallet_address);
-            
+
             // Provide actionable next steps
             tracing::error!("🛠️ Recommended next steps:");
             if e.contains("execution reverted") {
-                tracing::error!("  1. Verify perp ID {} exists and is active", request.perp_id);
-                tracing::error!("  2. Check margin amount {} is within allowed limits", request.margin_amount_usdc);
+                tracing::error!(
+                    "  1. Verify perp ID {} exists and is active",
+                    request.perp_id
+                );
+                tracing::error!(
+                    "  2. Check margin amount {} is within allowed limits",
+                    request.margin_amount_usdc
+                );
                 tracing::error!("  3. Ensure sufficient USDC balance for liquidity deposit");
                 tracing::error!("  4. Verify tick range configuration is valid");
             } else if e.contains("invalid perp") || e.contains("perp not found") {
@@ -523,7 +619,7 @@ pub async fn deposit_liquidity_for_perp_endpoint(
                 tracing::error!("  2. Verify all contract addresses are correct");
                 tracing::error!("  3. Try the request again after a short delay");
             }
-            
+
             sentry::capture_message(&error_msg, sentry::Level::Error);
             Err(Status::InternalServerError)
         }
@@ -820,8 +916,9 @@ mod tests {
 
         // Check that error messages are meaningful
         assert!(
-            batch_data.errors[0].contains("Failed to send transaction")
-                || batch_data.errors[0].contains("Failed to get receipt")
+            batch_data.errors[0].contains("❌ Liquidity Transaction Error")
+                || batch_data.errors[0].contains("🚫 Liquidity Deposit Reverted")
+                || batch_data.errors[0].contains("❌ Failed to get liquidity deposit receipt")
         );
         assert!(batch_data.errors[1].contains("Failed to parse perp ID"));
         assert!(batch_data.errors[2].contains("Failed to parse margin amount"));
