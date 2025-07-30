@@ -1,4 +1,5 @@
 use alloy::primitives::{Address, B256, FixedBytes, Signed, U160, U256, Uint};
+use alloy::providers::Provider;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
 use std::str::FromStr;
@@ -7,9 +8,9 @@ use tracing;
 use super::IPerpHook;
 use crate::guards::ApiToken;
 use crate::models::{
-    ApiResponse, AppState, BatchDeployPerpsForBeaconsRequest, BatchDeployPerpsForBeaconsResponse,
-    BatchDepositLiquidityForPerpsRequest, BatchDepositLiquidityForPerpsResponse,
-    DeployPerpForBeaconRequest, DepositLiquidityForPerpRequest,
+    ApiResponse, AppState, BatchDepositLiquidityForPerpsRequest,
+    BatchDepositLiquidityForPerpsResponse, DeployPerpForBeaconRequest,
+    DepositLiquidityForPerpRequest,
 };
 
 // Helper function to parse the MakerPositionOpened event from transaction receipt
@@ -39,13 +40,46 @@ fn parse_maker_position_opened_event(
 
 // Helper function to deploy a perp for a beacon using configuration from AppState
 async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Result<B256, String> {
-    tracing::info!("Deploying perp for beacon {}", beacon_address);
+    tracing::info!("🚀 Starting perp deployment for beacon: {}", beacon_address);
+
+    // Log environment details
+    tracing::info!("📋 Environment details:");
+    tracing::info!("  - PerpHook address: {}", state.perp_hook_address);
+    tracing::info!("  - Wallet address: {}", state.wallet_address);
+    tracing::info!("  - USDC address: {}", state.usdc_address);
+
+    // Check wallet balance first
+    match state.provider.get_balance(state.wallet_address).await {
+        Ok(balance) => {
+            let balance_f64 = balance.to::<u128>() as f64 / 1e18;
+            tracing::info!("💰 Wallet balance: {:.6} ETH", balance_f64);
+        }
+        Err(e) => {
+            tracing::warn!("⚠️ Failed to get wallet balance: {}", e);
+        }
+    }
 
     // Create contract instance using the sol! generated interface
     let contract = IPerpHook::new(state.perp_hook_address, &*state.provider);
+    tracing::debug!("✅ PerpHook contract instance created");
 
     // Use configuration from AppState instead of hardcoded values
     let config = &state.perp_config;
+    tracing::info!("📊 Perp configuration:");
+    tracing::info!(
+        "  - Trading fee: {} bps ({}%)",
+        config.trading_fee_bps,
+        config.trading_fee_bps as f64 / 100.0
+    );
+    tracing::info!(
+        "  - Max margin: {} USDC",
+        config.max_margin_usdc as f64 / 1_000_000.0
+    );
+    tracing::info!("  - Tick spacing: {}", config.tick_spacing);
+    tracing::info!(
+        "  - Funding interval: {} seconds",
+        config.funding_interval_seconds
+    );
 
     let trading_fee = Uint::<24, 1>::from(config.trading_fee_bps);
     let trading_fee_creator_split_x96 = config.trading_fee_creator_split_x96;
@@ -57,9 +91,17 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
     let liquidation_fee_x96 = config.liquidation_fee_x96;
     let liquidation_fee_split_x96 = config.liquidation_fee_split_x96;
     let funding_interval = config.funding_interval_seconds;
-    let tick_spacing = Signed::<24, 1>::try_from(config.tick_spacing)
-        .map_err(|e| format!("Invalid tick spacing: {e}"))?;
+    let tick_spacing = Signed::<24, 1>::try_from(config.tick_spacing).map_err(|e| {
+        let error = format!("❌ Invalid tick spacing conversion: {}", e);
+        tracing::error!("{}", error);
+        error
+    })?;
     let starting_sqrt_price_x96 = U160::from(config.starting_sqrt_price_x96);
+
+    tracing::debug!("🔢 Parameter conversion completed:");
+    tracing::debug!("  - trading_fee: {}", trading_fee);
+    tracing::debug!("  - starting_sqrt_price_x96: {}", starting_sqrt_price_x96);
+    tracing::debug!("  - tick_spacing: {}", tick_spacing);
 
     // Prepare the CreatePerpParams struct with proper Alloy type constructors
     let create_perp_params = IPerpHook::CreatePerpParams {
@@ -78,29 +120,46 @@ async fn deploy_perp_for_beacon(state: &AppState, beacon_address: Address) -> Re
         startingSqrtPriceX96: starting_sqrt_price_x96,
     };
 
-    tracing::debug!(
-        "Sending createPerp transaction with config: trading_fee={}bps, max_margin={} USDC, tick_spacing={}",
-        config.trading_fee_bps,
-        config.max_margin_usdc as f64 / 1_000_000.0,
-        config.tick_spacing
-    );
+    tracing::info!("📦 CreatePerpParams struct prepared successfully");
+    tracing::info!("📤 Initiating createPerp transaction...");
 
-    // Send the transaction and wait for receipt
-    let receipt = contract
+    // Send the transaction and wait for confirmation
+    tracing::info!("📡 Sending createPerp transaction to PerpHook contract...");
+    let pending_tx = contract
         .createPerp(create_perp_params)
         .send()
         .await
-        .map_err(|e| format!("Failed to send transaction: {e}"))?
-        .get_receipt()
-        .await
-        .map_err(|e| format!("Failed to get receipt: {e}"))?;
+        .map_err(|e| {
+            let error_msg = format!("❌ Failed to send createPerp transaction: {e}");
+            tracing::error!("{}", error_msg);
+            tracing::error!("🔍 Transaction send error details: {:?}", e);
+            tracing::error!("📋 Contract call details:");
+            tracing::error!("  - PerpHook address: {}", state.perp_hook_address);
+            tracing::error!("  - Beacon address: {}", beacon_address);
+            tracing::error!("  - Provider type: Alloy HTTP provider");
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            error_msg
+        })?;
 
-    tracing::info!(
-        "Perp deployment transaction confirmed with hash: {:?}",
-        receipt.transaction_hash
-    );
+    tracing::info!("✅ Transaction sent successfully, waiting for confirmation...");
+    let pending_tx_hash = *pending_tx.tx_hash();
+    tracing::info!("🔍 Transaction hash (pending): {:?}", pending_tx_hash);
 
-    Ok(receipt.transaction_hash)
+    let tx_hash = pending_tx.watch().await.map_err(|e| {
+        let error_msg = format!("❌ Failed to watch perp deployment transaction: {e}");
+        tracing::error!("{}", error_msg);
+        tracing::error!("🔍 Transaction watch error details: {:?}", e);
+        tracing::error!("📋 Watch operation details:");
+        tracing::error!("  - Original tx hash: {:?}", pending_tx_hash);
+        tracing::error!("  - Provider endpoint: RPC connection");
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        error_msg
+    })?;
+
+    tracing::info!("🎉 Perp deployment transaction confirmed successfully!");
+    tracing::info!("🔗 Final transaction hash: {:?}", tx_hash);
+
+    Ok(tx_hash)
 }
 
 // Helper function to deposit liquidity for a perp using configuration from AppState
@@ -183,26 +242,48 @@ pub async fn deploy_perp_for_beacon_endpoint(
     _token: ApiToken,
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<String>>, Status> {
-    tracing::info!("Received request: POST /deploy_perp_for_beacon");
+    tracing::info!("🚀 ✨ Received request: POST /deploy_perp_for_beacon");
+    tracing::info!("🎯 Requested beacon address: {}", request.beacon_address);
+
     let _guard = sentry::Hub::current().push_scope();
     sentry::configure_scope(|scope| {
         scope.set_tag("endpoint", "/deploy_perp_for_beacon");
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
+        scope.set_extra(
+            "perp_hook_address",
+            state.perp_hook_address.to_string().into(),
+        );
+        scope.set_extra("wallet_address", state.wallet_address.to_string().into());
     });
 
     // Parse the beacon address
+    tracing::debug!("🔍 Parsing beacon address: {}", request.beacon_address);
     let beacon_address = match Address::from_str(&request.beacon_address) {
-        Ok(addr) => addr,
+        Ok(addr) => {
+            tracing::debug!("✅ Successfully parsed beacon address: {}", addr);
+            addr
+        }
         Err(e) => {
-            tracing::error!("Invalid beacon address: {}", e);
+            let error_msg = format!(
+                "❌ Invalid beacon address '{}': {}",
+                request.beacon_address, e
+            );
+            tracing::error!("{}", error_msg);
+            sentry::capture_message(&error_msg, sentry::Level::Error);
             return Err(Status::BadRequest);
         }
     };
 
+    tracing::info!("📝 Starting perp deployment process...");
     match deploy_perp_for_beacon(state, beacon_address).await {
         Ok(tx_hash) => {
-            let message = "Perp deployed successfully";
+            let message = "🎉 Perp deployed successfully!";
             tracing::info!("{}", message);
+            tracing::info!("🔗 Transaction hash: {}", tx_hash);
+            sentry::capture_message(
+                &format!("Perp deployed successfully for beacon {}", beacon_address),
+                sentry::Level::Info,
+            );
             Ok(Json(ApiResponse {
                 success: true,
                 data: Some(format!("Transaction hash: {tx_hash}")),
@@ -210,106 +291,20 @@ pub async fn deploy_perp_for_beacon_endpoint(
             }))
         }
         Err(e) => {
-            tracing::error!("Failed to deploy perp: {}", e);
-            sentry::capture_message(&format!("Failed to deploy perp: {e}"), sentry::Level::Error);
+            let error_msg = format!(
+                "❌ Failed to deploy perp for beacon {}: {}",
+                beacon_address, e
+            );
+            tracing::error!("{}", error_msg);
+            tracing::error!("🔍 Error context:");
+            tracing::error!("  - Beacon address: {}", beacon_address);
+            tracing::error!("  - PerpHook address: {}", state.perp_hook_address);
+            tracing::error!("  - Wallet address: {}", state.wallet_address);
+            tracing::error!("  - USDC address: {}", state.usdc_address);
+            sentry::capture_message(&error_msg, sentry::Level::Error);
             Err(Status::InternalServerError)
         }
     }
-}
-
-#[post("/batch_deploy_perps_for_beacons", data = "<request>")]
-pub async fn batch_deploy_perps_for_beacons(
-    request: Json<BatchDeployPerpsForBeaconsRequest>,
-    _token: ApiToken,
-    state: &State<AppState>,
-) -> Result<Json<ApiResponse<BatchDeployPerpsForBeaconsResponse>>, Status> {
-    tracing::info!("Received request: POST /batch_deploy_perps_for_beacons");
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
-        scope.set_tag("endpoint", "/batch_deploy_perps_for_beacons");
-        scope.set_extra("requested_count", request.beacon_addresses.len().into());
-    });
-
-    let beacon_count = request.beacon_addresses.len();
-
-    // Validate the count (similar to batch beacon creation)
-    if beacon_count == 0 || beacon_count > 10 {
-        tracing::warn!("Invalid beacon count: {}", beacon_count);
-        return Err(Status::BadRequest);
-    }
-
-    let mut perp_ids = Vec::new();
-    let mut errors = Vec::new();
-
-    for (i, beacon_address) in request.beacon_addresses.iter().enumerate() {
-        let index = i + 1;
-        tracing::info!(
-            "Deploying perp {}/{} for beacon {}",
-            index,
-            beacon_count,
-            beacon_address
-        );
-
-        // Parse the beacon address
-        let beacon_addr = match Address::from_str(beacon_address) {
-            Ok(addr) => addr,
-            Err(e) => {
-                let error_msg =
-                    format!("Failed to parse beacon address {index} ({beacon_address}): {e}");
-                tracing::error!("{}", error_msg);
-                errors.push(error_msg.clone());
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                continue;
-            }
-        };
-
-        match deploy_perp_for_beacon(state, beacon_addr).await {
-            Ok(tx_hash) => {
-                perp_ids.push(tx_hash.to_string());
-                tracing::info!(
-                    "Successfully deployed perp {}: {} for beacon {}",
-                    index,
-                    tx_hash,
-                    beacon_address
-                );
-            }
-            Err(e) => {
-                let error_msg =
-                    format!("Failed to deploy perp {index} for beacon {beacon_address}: {e}");
-                tracing::error!("{}", error_msg);
-                errors.push(error_msg.clone());
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                continue; // Continue with next beacon instead of failing entire batch
-            }
-        }
-    }
-
-    let deployed_count = perp_ids.len() as u32;
-    let failed_count = beacon_count as u32 - deployed_count;
-
-    let response_data = BatchDeployPerpsForBeaconsResponse {
-        deployed_count,
-        perp_ids: perp_ids.clone(),
-        failed_count,
-        errors,
-    };
-
-    let message = if failed_count == 0 {
-        format!("Successfully deployed perps for all {deployed_count} beacons")
-    } else if deployed_count == 0 {
-        "Failed to deploy any perps".to_string()
-    } else {
-        format!("Partially successful: {deployed_count} deployed, {failed_count} failed")
-    };
-
-    tracing::info!("{}", message);
-
-    // Return success even with partial failures, let client handle the response
-    Ok(Json(ApiResponse {
-        success: deployed_count > 0,
-        data: Some(response_data),
-        message,
-    }))
 }
 
 #[post("/deposit_liquidity_for_perp", data = "<request>")]
@@ -676,79 +671,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_batch_deploy_perps_mixed_validity() {
-        use crate::guards::ApiToken;
-        use crate::models::BatchDeployPerpsForBeaconsRequest;
-        use crate::routes::test_utils::create_simple_test_app_state;
-
-        let token = ApiToken("test_token".to_string());
-        let app_state = create_simple_test_app_state();
-        let state = State::from(&app_state);
-
-        // Test mixed valid and invalid beacon addresses
-        let request = Json(BatchDeployPerpsForBeaconsRequest {
-            beacon_addresses: vec![
-                "0x1111111111111111111111111111111111111111".to_string(),
-                "invalid_address".to_string(),
-                "0x2222222222222222222222222222222222222222".to_string(),
-                "0x".to_string(), // Too short
-            ],
-        });
-
-        let result = batch_deploy_perps_for_beacons(request, token, &state).await;
-        assert!(result.is_ok());
-
-        let response = result.unwrap().into_inner();
-        assert!(!response.success); // Should be false since no successful deployments
-        assert!(response.data.is_some());
-
-        let batch_data = response.data.unwrap();
-        assert_eq!(batch_data.deployed_count, 0);
-        assert_eq!(batch_data.failed_count, 4);
-        assert_eq!(batch_data.errors.len(), 4);
-
-        // Check that error messages are meaningful
-        assert!(
-            batch_data.errors[0].contains("Failed to send transaction")
-                || batch_data.errors[0].contains("Failed to get receipt")
-        );
-        assert!(batch_data.errors[1].contains("Failed to parse beacon address"));
-        assert!(
-            batch_data.errors[2].contains("Failed to send transaction")
-                || batch_data.errors[2].contains("Failed to get receipt")
-        );
-        assert!(batch_data.errors[3].contains("Failed to parse beacon address"));
-    }
-
-    #[tokio::test]
-    async fn test_batch_deploy_perps_invalid_count() {
-        use crate::guards::ApiToken;
-        use crate::models::BatchDeployPerpsForBeaconsRequest;
-        use crate::routes::test_utils::create_simple_test_app_state;
-
-        let token = ApiToken("test_token".to_string());
-        let app_state = create_simple_test_app_state();
-        let state = State::from(&app_state);
-
-        // Test count = 0 (invalid)
-        let request = Json(BatchDeployPerpsForBeaconsRequest {
-            beacon_addresses: vec![],
-        });
-        let result = batch_deploy_perps_for_beacons(request, token, &state).await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
-
-        // Test count > 10 (invalid)
-        let token2 = ApiToken("test_token".to_string());
-        let request2 = Json(BatchDeployPerpsForBeaconsRequest {
-            beacon_addresses: vec!["0x1111111111111111111111111111111111111111".to_string(); 11],
-        });
-        let result2 = batch_deploy_perps_for_beacons(request2, token2, &state).await;
-        assert!(result2.is_err());
-        assert_eq!(result2.unwrap_err(), rocket::http::Status::BadRequest);
-    }
-
-    #[tokio::test]
     async fn test_batch_deposit_liquidity_invalid_count() {
         use crate::guards::ApiToken;
         use crate::models::{BatchDepositLiquidityForPerpsRequest, DepositLiquidityForPerpRequest};
@@ -963,31 +885,6 @@ mod tests {
             app_state.beacon_abi.functions.len(),
             app_state.perp_hook_abi.functions.len()
         );
-    }
-
-    #[tokio::test]
-    async fn test_deploy_perp_response_structure() {
-        use crate::models::BatchDeployPerpsForBeaconsResponse;
-
-        // Test response serialization/deserialization
-        let response = BatchDeployPerpsForBeaconsResponse {
-            deployed_count: 2,
-            perp_ids: vec![
-                "0x1234567890123456789012345678901234567890123456789012345678901234".to_string(),
-                "0x9876543210987654321098765432109876543210987654321098765432109876".to_string(),
-            ],
-            failed_count: 1,
-            errors: vec!["Error deploying perp".to_string()],
-        };
-
-        let serialized = serde_json::to_string(&response).unwrap();
-        let deserialized: BatchDeployPerpsForBeaconsResponse =
-            serde_json::from_str(&serialized).unwrap();
-
-        assert_eq!(deserialized.deployed_count, 2);
-        assert_eq!(deserialized.failed_count, 1);
-        assert_eq!(deserialized.perp_ids.len(), 2);
-        assert_eq!(deserialized.errors.len(), 1);
     }
 
     #[tokio::test]

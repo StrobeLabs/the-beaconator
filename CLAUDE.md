@@ -43,8 +43,7 @@ make build-release # Build project (release)
 **Production-Ready:**
 - `POST /create_perpcity_beacon` - Create single beacon
 - `POST /batch_create_perpcity_beacon` - Batch create beacons (1-100 limit)
-- `POST /deploy_perp_for_beacon` - Deploy perp for single beacon  
-- `POST /batch_deploy_perps_for_beacons` - Batch deploy perps (1-10 limit)
+- `POST /deploy_perp_for_beacon` - Deploy perp for single beacon
 - `POST /update_beacon` - Update beacon with ZK proof
 
 **Placeholder (not implemented):**

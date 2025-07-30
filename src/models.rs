@@ -78,13 +78,6 @@ impl ApiEndpoints {
             },
             EndpointInfo {
                 method: "POST".to_string(),
-                path: "/batch_deploy_perps_for_beacons".to_string(),
-                description: "Batch deploy perpetuals for multiple beacons".to_string(),
-                requires_auth: true,
-                status: EndpointStatus::Working,
-            },
-            EndpointInfo {
-                method: "POST".to_string(),
                 path: "/deposit_liquidity_for_perp".to_string(),
                 description: "Deposit liquidity for a specific perpetual".to_string(),
                 requires_auth: true,
@@ -190,22 +183,22 @@ pub struct PerpConfig {
 impl Default for PerpConfig {
     fn default() -> Self {
         Self {
-            trading_fee_bps: 5000,                                    // 0.5%
-            trading_fee_creator_split_x96: 3951369912303465813,       // 5% of Q96
-            min_margin_usdc: 0,                                       // No minimum
-            max_margin_usdc: 1_000_000_000,                           // 1000 USDC (6 decimals)
-            min_opening_leverage_x96: 0,                              // No minimum
+            trading_fee_bps: 5000, // 0.5% (contract uses 1/10000 scale, not bps)
+            trading_fee_creator_split_x96: 3951369912303465813, // 5% of Q96
+            min_margin_usdc: 0,    // No minimum
+            max_margin_usdc: 1_000_000_000, // 1000 USDC (6 decimals)
+            min_opening_leverage_x96: 0, // No minimum
             max_opening_leverage_x96: 790273926286361721684336819027, // 10x in Q96
             liquidation_leverage_x96: 790273926286361721684336819027, // 10x in Q96
-            liquidation_fee_x96: 790273926286361721684336819,         // 1% of Q96
+            liquidation_fee_x96: 790273926286361721684336819, // 1% of Q96
             liquidation_fee_split_x96: 39513699123034658136834084095, // 50% of Q96
-            funding_interval_seconds: 86400,                          // 1 day
-            tick_spacing: 30,                                         // Standard tick spacing
-            starting_sqrt_price_x96: 560227709747861419891227623424,  // sqrt(50) * 2^96
-            default_tick_lower: -23030,                               // Approx sqrt(0.1) price
-            default_tick_upper: 23030,                                // Approx sqrt(10) price
-            liquidity_scaling_factor: 400_000_000_000_000,            // Scale USDC to 18 decimals
-            max_margin_per_perp_usdc: 5_000_000,                      // 5 USDC in 6 decimals
+            funding_interval_seconds: 86400, // 1 day
+            tick_spacing: 30,      // Standard tick spacing
+            starting_sqrt_price_x96: 560227709747861419891227623424, // sqrt(50) * 2^96
+            default_tick_lower: -23030, // Approx sqrt(0.1) price
+            default_tick_upper: 23030, // Approx sqrt(10) price
+            liquidity_scaling_factor: 400_000_000_000_000, // Scale USDC to 18 decimals
+            max_margin_per_perp_usdc: 5_000_000, // 5 USDC in 6 decimals
         }
     }
 }
@@ -267,19 +260,6 @@ pub struct BatchCreatePerpcityBeaconRequest {
 pub struct BatchCreatePerpcityBeaconResponse {
     pub created_count: u32,
     pub beacon_addresses: Vec<String>,
-    pub failed_count: u32,
-    pub errors: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BatchDeployPerpsForBeaconsRequest {
-    pub beacon_addresses: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BatchDeployPerpsForBeaconsResponse {
-    pub deployed_count: u32,
-    pub perp_ids: Vec<String>, // PoolId as hex strings
     pub failed_count: u32,
     pub errors: Vec<String>,
 }
