@@ -13,8 +13,10 @@ use std::sync::Arc;
 pub mod guards;
 pub mod models;
 pub mod routes;
+pub mod fairings;
 
 use crate::models::{AppState, PerpConfig};
+use rocket::{Request, catch, catchers};
 
 // Let Rust infer the complex provider type
 pub type AlloyProvider = alloy::providers::fillers::FillProvider<
@@ -289,21 +291,56 @@ pub async fn create_rocket() -> Rocket<Build> {
         perp_config,
     };
 
-    rocket::build().manage(app_state).mount(
-        "/",
-        rocket::routes![
-            routes::index,
-            routes::all_beacons,
-            routes::create_beacon,
-            routes::register_beacon,
-            routes::create_perpcity_beacon,
-            routes::batch_create_perpcity_beacon,
-            routes::deploy_perp_for_beacon_endpoint,
-            routes::batch_deploy_perps_for_beacons,
-            routes::deposit_liquidity_for_perp_endpoint,
-            routes::batch_deposit_liquidity_for_perps,
-            routes::update_beacon,
-            routes::fund_guest_wallet
-        ],
-    )
+    rocket::build()
+        .manage(app_state)
+        .attach(fairings::RequestLogger)
+        .attach(fairings::PanicCatcher)
+        .mount(
+            "/",
+            rocket::routes![
+                routes::index,
+                routes::all_beacons,
+                routes::create_beacon,
+                routes::register_beacon,
+                routes::create_perpcity_beacon,
+                routes::batch_create_perpcity_beacon,
+                routes::deploy_perp_for_beacon_endpoint,
+                routes::batch_deploy_perps_for_beacons,
+                routes::deposit_liquidity_for_perp_endpoint,
+                routes::batch_deposit_liquidity_for_perps,
+                routes::update_beacon,
+                routes::fund_guest_wallet
+            ],
+        )
+        .register("/", catchers![catch_all_errors, catch_panic])
+}
+
+#[catch(default)]
+fn catch_all_errors(status: rocket::http::Status, request: &Request) -> String {
+    let error_msg = format!(
+        "Error {}: {} {}",
+        status.code,
+        request.method(),
+        request.uri()
+    );
+    
+    tracing::error!("Unhandled error: {}", error_msg);
+    sentry::capture_message(&error_msg, sentry::Level::Error);
+    
+    format!("Error {}: {}", status.code, status.reason().unwrap_or("Unknown error"))
+}
+
+#[catch(500)]
+fn catch_panic(request: &Request) -> String {
+    let error_msg = format!(
+        "Internal Server Error (possible panic): {} {}",
+        request.method(),
+        request.uri()
+    );
+    
+    tracing::error!("{}", error_msg);
+    sentry::capture_message(&error_msg, sentry::Level::Fatal);
+    
+    "Internal Server Error".to_string()
+}
 }
