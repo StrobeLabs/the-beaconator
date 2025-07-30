@@ -33,7 +33,6 @@ pub async fn fund_guest_wallet(
         scope.set_extra("usdc_amount", request.usdc_amount.clone().into());
         scope.set_extra("eth_amount", request.eth_amount.clone().into());
     });
-
     let wallet_address = match Address::from_str(&request.wallet_address) {
         Ok(addr) => addr,
         Err(e) => {
