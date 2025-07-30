@@ -146,10 +146,8 @@ pub struct ApiSummary {
 /// Configuration for perpetual contract parameters
 #[derive(Debug, Clone)]
 pub struct PerpConfig {
-    /// Trading fee in basis points (e.g., 50 = 0.5%)
+    /// Trading fee in basis points (e.g., 5000 = 0.5%)
     pub trading_fee_bps: u32,
-    /// Trading fee creator split in Q96 format (e.g., 5% = 3951369912303465813)
-    pub trading_fee_creator_split_x96: u128,
     /// Minimum margin amount in USDC (6 decimals)
     pub min_margin_usdc: u128,
     /// Maximum margin amount in USDC (6 decimals, e.g., 1000 USDC = 1_000_000_000)
@@ -182,22 +180,21 @@ pub struct PerpConfig {
 
 impl Default for PerpConfig {
     fn default() -> Self {
-        // Values that match the successful transaction on Base Sepolia
-        // These are the EXACT values that worked in transaction 0x5513c458dc258a61a716d68af58a9b220a25a40b36b2caa13affce2485798b05
+        // Values that exactly match DeployPerp.s.sol constants
+        // These are calculated values that match the Solidity script
 
         Self {
-            trading_fee_bps: 5000,            // uint24: Matches successful tx
-            trading_fee_creator_split_x96: 0, // NOTE: Not used by deployed contract (removed from struct)
-            min_margin_usdc: 0,               // uint128: Matches successful tx
-            max_margin_usdc: 1_000_000_000,   // uint128: Matches successful tx (1000000000)
-            min_opening_leverage_x96: 0,      // uint128: Matches successful tx
-            max_opening_leverage_x96: 790273926286361721684336819027, // uint128: Matches successful tx exactly
-            liquidation_leverage_x96: 790273926286361721684336819027, // uint128: Matches successful tx exactly
-            liquidation_fee_x96: 790273926286361721684336819, // uint128: Matches successful tx exactly
-            liquidation_fee_split_x96: 39513699123034658136834084095, // uint128: Matches successful tx exactly
-            funding_interval_seconds: 86400, // int128: Matches successful tx (86400)
-            tick_spacing: 30,                // int24: Matches successful tx (30)
-            starting_sqrt_price_x96: 560227709747861419891227623424, // uint160: Matches successful tx exactly
+            trading_fee_bps: 5000,          // TRADING_FEE = 5000 (0.5%)
+            min_margin_usdc: 0,             // MIN_MARGIN = 0
+            max_margin_usdc: 1_000_000_000, // MAX_MARGIN = 1000e6 (1000 USDC in 6 decimals)
+            min_opening_leverage_x96: 0,    // MIN_OPENING_LEVERAGE_X96 = 0
+            max_opening_leverage_x96: 790273926286361721684336819027, // MAX_OPENING_LEVERAGE_X96 = (10 * FixedPoint96.Q96).toUint128()
+            liquidation_leverage_x96: 790273926286361721684336819027, // LIQUIDATION_LEVERAGE_X96 = (10 * FixedPoint96.Q96).toUint128()
+            liquidation_fee_x96: 790273926286361721684336819, // LIQUIDATION_FEE_X96 = (1 * FixedPoint96.Q96 / 100).toUint128()
+            liquidation_fee_split_x96: 39513699123034658136834084095, // LIQUIDATION_FEE_SPLIT_X96 = (50 * FixedPoint96.Q96 / 100).toUint128()
+            funding_interval_seconds: 86400, // FUNDING_INTERVAL = 1 days = 86400 seconds
+            tick_spacing: 30,                // TICK_SPACING = 30
+            starting_sqrt_price_x96: 560227709747861419891227623424, // STARTING_SQRT_PRICE_X96 = SQRT_50_X96 = 2^96 * sqrt(50)
             default_tick_lower: -23030,                              // Approx sqrt(0.1) price
             default_tick_upper: 23030,                               // Approx sqrt(10) price
             liquidity_scaling_factor: 400_000_000_000_000,           // Scale USDC to 18 decimals

@@ -86,10 +86,6 @@ fn load_perp_config() -> PerpConfig {
             "PERP_TRADING_FEE_BPS",
             default_config.trading_fee_bps,
         ),
-        trading_fee_creator_split_x96: parse_env_or_default(
-            "PERP_TRADING_FEE_CREATOR_SPLIT_X96",
-            default_config.trading_fee_creator_split_x96,
-        ),
         min_margin_usdc: parse_env_or_default(
             "PERP_MIN_MARGIN_USDC",
             default_config.min_margin_usdc,
