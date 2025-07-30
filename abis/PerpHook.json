@@ -19,11 +19,6 @@
                         "internalType": "uint24"
                     },
                     {
-                        "name": "tradingFeeCreatorSplitX96",
-                        "type": "uint128",
-                        "internalType": "uint128"
-                    },
-                    {
                         "name": "minMargin",
                         "type": "uint128",
                         "internalType": "uint128"

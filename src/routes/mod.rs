@@ -37,10 +37,11 @@ sol! {
 
     #[sol(rpc)]
     interface IPerpHook {
+        // This struct matches the DEPLOYED PerpHook contract on Base Sepolia
+        // Note: tradingFeeCreatorSplitX96 is NOT included in the deployed version
         struct CreatePerpParams {
             address beacon;
             uint24 tradingFee;
-            uint128 tradingFeeCreatorSplitX96;
             uint128 minMargin;
             uint128 maxMargin;
             uint128 minOpeningLeverageX96;
