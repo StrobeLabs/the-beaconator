@@ -191,27 +191,24 @@ async fn is_beacon_registered(
         beacon_address
     );
 
-    // Try to call the registry's beacons(address) function
-    let result = state
-        .provider
-        .call(
-            alloy::rpc::types::TransactionRequest::default()
-                .to(registry_address)
-                .input(alloy::primitives::hex!("8da5cb5b").to_vec().into()), // selector for beacons(address)
-        )
-        .await;
+    // Create contract instance and call beacons(address) directly
+    let contract = IBeaconRegistry::new(registry_address, &*state.provider);
 
-    match result {
-        Ok(_) => {
-            tracing::warn!("Beacon {} appears to be already registered", beacon_address);
-            Ok(true)
+    match contract.beacons(beacon_address).call().await {
+        Ok(is_registered) => {
+            if is_registered {
+                tracing::info!("Beacon {} is already registered", beacon_address);
+            } else {
+                tracing::info!("Beacon {} is not registered", beacon_address);
+            }
+            Ok(is_registered)
         }
         Err(e) => {
-            tracing::info!(
-                "Beacon {} appears to be unregistered: {}",
-                beacon_address,
+            tracing::warn!(
+                "Failed to check beacon registration status: {}. Assuming not registered.",
                 e
             );
+            // If we can't check, assume it's not registered to allow the operation to proceed
             Ok(false)
         }
     }
@@ -240,12 +237,14 @@ async fn register_beacon_with_registry(
     let is_registered = is_beacon_registered(state, beacon_address, registry_address).await?;
 
     if is_registered {
-        let error_msg = format!(
-            "Beacon {beacon_address} is already registered with registry {registry_address}"
+        tracing::info!(
+            "Beacon {} is already registered with registry {}, returning success",
+            beacon_address,
+            registry_address
         );
-        tracing::error!("{}", error_msg);
-        tracing::error!("Skipping registration to avoid revert");
-        return Err(error_msg);
+        // Return a fake transaction hash to indicate success without actual transaction
+        // Using zeros is a common pattern to indicate no-op success
+        return Ok(B256::ZERO);
     }
 
     // Validate beacon contract exists and has code
@@ -559,15 +558,29 @@ pub async fn create_perpcity_beacon(
         .await
     {
         Ok(tx_hash) => {
-            let message = "Perpcity beacon created and registered successfully";
-            tracing::info!(
-                "{} - Beacon: {}, TX: {:?}",
-                message,
-                beacon_address,
-                tx_hash
-            );
+            let message = if tx_hash == B256::ZERO {
+                "Perpcity beacon created successfully (already registered)"
+            } else {
+                "Perpcity beacon created and registered successfully"
+            };
+
+            if tx_hash == B256::ZERO {
+                tracing::info!(
+                    "{} - Beacon: {} was already registered",
+                    message,
+                    beacon_address
+                );
+            } else {
+                tracing::info!(
+                    "{} - Beacon: {}, TX: {:?}",
+                    message,
+                    beacon_address,
+                    tx_hash
+                );
+            }
+
             sentry::capture_message(
-                &format!("Beacon registered successfully: {beacon_address} (TX: {tx_hash:?})"),
+                &format!("Beacon successfully created: {beacon_address}"),
                 sentry::Level::Info,
             );
             Ok(Json(ApiResponse {
