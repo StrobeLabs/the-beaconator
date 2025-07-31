@@ -983,4 +983,81 @@ mod tests {
             rocket::http::Status::InternalServerError
         );
     }
+
+    #[tokio::test]
+    async fn test_transaction_confirmation_timeout_handling() {
+        use crate::routes::test_utils::create_simple_test_app_state;
+
+        let app_state = create_simple_test_app_state();
+        let tx_hash =
+            B256::from_str("0x1234567890123456789012345678901234567890123456789012345678901234")
+                .unwrap();
+
+        // Test transaction confirmation check
+        let result = is_transaction_confirmed(&app_state, tx_hash).await;
+        // Should fail due to network issues in test environment
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err();
+        assert!(
+            error_msg.contains("Failed to check transaction") || error_msg.contains("on-chain")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_beacon_registration_already_registered() {
+        use crate::routes::test_utils::create_simple_test_app_state;
+
+        let app_state = create_simple_test_app_state();
+        let beacon_address =
+            Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
+        let registry_address = app_state.perpcity_registry_address;
+
+        // Test beacon registration check
+        let result = is_beacon_registered(&app_state, beacon_address, registry_address).await;
+        assert!(result.is_ok());
+        // Should return false since beacon doesn't exist on test network
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_beacon_registration_with_registry_fallback() {
+        use crate::routes::test_utils::create_simple_test_app_state;
+
+        let app_state = create_simple_test_app_state();
+        let beacon_address =
+            Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
+        let registry_address = app_state.perpcity_registry_address;
+
+        // Test registration with non-existent beacon (should fail gracefully)
+        let result =
+            register_beacon_with_registry(&app_state, beacon_address, registry_address).await;
+        assert!(result.is_err());
+        // Should fail because beacon doesn't exist, but should provide meaningful error
+        let error_msg = result.unwrap_err();
+        assert!(
+            error_msg.contains("has no deployed code")
+                || error_msg.contains("Failed to check beacon contract")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_beacon_via_factory_timeout_handling() {
+        use crate::routes::test_utils::create_simple_test_app_state;
+
+        let app_state = create_simple_test_app_state();
+        let owner_address =
+            Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
+        let factory_address = app_state.beacon_factory_address;
+
+        // Test beacon creation with timeout handling
+        let result = create_beacon_via_factory(&app_state, owner_address, factory_address).await;
+        assert!(result.is_err());
+        // Should fail due to network issues, but should provide meaningful error
+        let error_msg = result.unwrap_err();
+        assert!(
+            error_msg.contains("Failed to send createBeacon transaction")
+                || error_msg.contains("Transaction")
+                || error_msg.contains("timeout")
+        );
+    }
 }

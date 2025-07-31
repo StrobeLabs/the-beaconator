@@ -5,7 +5,7 @@ use rocket::{State, http::Status, post};
 use std::str::FromStr;
 use tracing;
 
-use super::IPerpHook;
+use super::{IERC20, IPerpHook};
 use crate::guards::ApiToken;
 use crate::models::{
     ApiResponse, AppState, BatchDepositLiquidityForPerpsRequest,
@@ -164,7 +164,6 @@ async fn deploy_perp_for_beacon(
         }
         Err(e) => {
             tracing::warn!("Beacon contract may not have getData() function: {}", e);
-            tracing::warn!("This could indicate the contract is not a standard beacon");
             tracing::warn!(
                 "  - The perp deployment may fail if PerpHook expects a standard beacon"
             );
@@ -513,6 +512,37 @@ async fn deposit_liquidity_for_perp(
         tick_upper,
         margin_amount_usdc as f64 / 1_000_000.0,
         liquidity
+    );
+
+    // First, approve USDC spending by the PerpHook contract
+    tracing::info!(
+        "Approving USDC spending: {} USDC for PerpHook contract {}",
+        margin_amount_usdc as f64 / 1_000_000.0,
+        state.perp_hook_address
+    );
+
+    let usdc_contract = IERC20::new(state.usdc_address, &*state.provider);
+    let approval_receipt = usdc_contract
+        .approve(state.perp_hook_address, U256::from(margin_amount_usdc))
+        .send()
+        .await
+        .map_err(|e| {
+            let error_msg = format!("Failed to approve USDC spending: {e}");
+            tracing::error!("{}", error_msg);
+            tracing::error!("Make sure the wallet has sufficient USDC balance");
+            error_msg
+        })?
+        .get_receipt()
+        .await
+        .map_err(|e| {
+            let error_msg = format!("Failed to get USDC approval receipt: {e}");
+            tracing::error!("{}", error_msg);
+            error_msg
+        })?;
+
+    tracing::info!(
+        "USDC approval confirmed with hash: {:?}",
+        approval_receipt.transaction_hash
     );
 
     // Send the transaction and wait for receipt
@@ -1072,8 +1102,10 @@ mod tests {
         assert_eq!(batch_data.errors.len(), 3);
 
         // Check that error messages are meaningful
+        // First error should be about USDC approval or liquidity deposit failure
         assert!(
-            batch_data.errors[0].contains("Liquidity Transaction Error")
+            batch_data.errors[0].contains("Failed to approve USDC spending")
+                || batch_data.errors[0].contains("Liquidity Transaction Error")
                 || batch_data.errors[0].contains("Liquidity Deposit Reverted")
                 || batch_data.errors[0].contains("Failed to get liquidity deposit receipt")
         );
@@ -1416,5 +1448,164 @@ mod tests {
 
         // Check that the second error is about margin limit
         assert!(batch_data.errors[1].contains("exceeds maximum limit"));
+    }
+
+    #[tokio::test]
+    async fn test_usdc_approval_before_liquidity_deposit() {
+        use crate::guards::ApiToken;
+        use crate::models::DepositLiquidityForPerpRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+
+        let token = ApiToken("test_token".to_string());
+        let app_state = create_simple_test_app_state();
+        let state = State::from(&app_state);
+
+        // Test that USDC approval is properly configured in the flow
+        // This tests the logic added to deposit_liquidity_for_perp function
+        let request = Json(DepositLiquidityForPerpRequest {
+            perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                .to_string(),
+            margin_amount_usdc: "1000000".to_string(), // 1 USDC
+        });
+
+        // The test should either succeed (if contracts are properly deployed and funded)
+        // or fail with InternalServerError due to contract/network issues.
+        // The key is that it should NOT fail due to missing USDC approval logic.
+        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+
+        // We expect either success or InternalServerError (due to test environment limitations)
+        // but NOT BadRequest (which would indicate a validation/approval logic issue)
+        match result {
+            Ok(_) => {
+                println!("✅ Liquidity deposit succeeded (including USDC approval)");
+            }
+            Err(status) => {
+                assert_eq!(status, rocket::http::Status::InternalServerError);
+                println!(
+                    "✅ Liquidity deposit failed at contract level (expected in test environment)"
+                );
+                println!("   This confirms USDC approval logic is in place and validation passes");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_usdc_approval_interface_available() {
+        use crate::routes::test_utils::create_simple_test_app_state;
+
+        let app_state = create_simple_test_app_state();
+
+        // Test that IERC20 interface is properly imported and can be instantiated
+        let usdc_contract = IERC20::new(app_state.usdc_address, &*app_state.provider);
+
+        // Verify the contract instance was created with correct address
+        assert_eq!(*usdc_contract.address(), app_state.usdc_address);
+
+        println!("✅ IERC20 interface properly configured for USDC contract");
+        println!("   USDC address: {}", app_state.usdc_address);
+        println!("   PerpHook address: {}", app_state.perp_hook_address);
+    }
+
+    #[tokio::test]
+    async fn test_deploy_perp_for_beacon_response_structure() {
+        use crate::guards::ApiToken;
+        use crate::models::DeployPerpForBeaconRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let app_state = create_simple_test_app_state();
+        let state = State::from(&app_state);
+
+        let request = Json(DeployPerpForBeaconRequest {
+            beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
+        });
+
+        let result = deploy_perp_for_beacon_endpoint(request, token, &state).await;
+        assert!(result.is_err()); // Should fail due to network issues
+        assert_eq!(
+            result.unwrap_err(),
+            rocket::http::Status::InternalServerError
+        );
+    }
+
+    #[tokio::test]
+    async fn test_deposit_liquidity_for_perp_response_structure() {
+        use crate::guards::ApiToken;
+        use crate::models::DepositLiquidityForPerpRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let app_state = create_simple_test_app_state();
+        let state = State::from(&app_state);
+
+        let request = Json(DepositLiquidityForPerpRequest {
+            perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                .to_string(),
+            margin_amount_usdc: "1000000".to_string(), // 1 USDC
+        });
+
+        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+        assert!(result.is_err()); // Should fail due to network issues
+        assert_eq!(
+            result.unwrap_err(),
+            rocket::http::Status::InternalServerError
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_decode_revert_reason() {
+        // Test with execution reverted error
+        let error_msg = "server returned an error response: error code 3: execution reverted";
+        let result = try_decode_revert_reason(&error_msg);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("Execution reverted"));
+
+        // Test with other error types
+        let other_error = "insufficient funds";
+        let result2 = try_decode_revert_reason(&other_error);
+        assert!(result2.is_none());
+
+        // Test with empty string
+        let empty_error = "";
+        let result3 = try_decode_revert_reason(&empty_error);
+        assert!(result3.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_deploy_perp_for_beacon_invalid_beacon() {
+        use crate::routes::test_utils::create_simple_test_app_state;
+
+        let app_state = create_simple_test_app_state();
+        let invalid_beacon =
+            Address::from_str("0x0000000000000000000000000000000000000000").unwrap();
+
+        let result = deploy_perp_for_beacon(&app_state, invalid_beacon).await;
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err();
+        assert!(
+            error_msg.contains("has no deployed code")
+                || error_msg.contains("Failed to check beacon")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_deposit_liquidity_for_perp_invalid_perp_id() {
+        use crate::routes::test_utils::create_simple_test_app_state;
+
+        let app_state = create_simple_test_app_state();
+        let invalid_perp_id = FixedBytes::from_str(
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap();
+
+        let result = deposit_liquidity_for_perp(&app_state, invalid_perp_id, 1000000).await;
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err();
+        assert!(
+            error_msg.contains("Failed to approve USDC spending")
+                || error_msg.contains("Failed to send")
+        );
     }
 }

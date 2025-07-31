@@ -1,23 +1,14 @@
 use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 use alloy::rpc::types::TransactionRequest;
-use alloy::sol;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
 use std::str::FromStr;
 use tracing;
 
+use super::IERC20;
 use crate::guards::ApiToken;
 use crate::models::{ApiResponse, AppState, FundGuestWalletRequest};
-
-// Define ERC20 interface for USDC transfers
-sol! {
-    #[sol(rpc)]
-    interface IERC20 {
-        function transfer(address to, uint256 amount) external returns (bool);
-        function balanceOf(address account) external view returns (uint256 balance);
-    }
-}
 
 #[post("/fund_guest_wallet", format = "json", data = "<request>")]
 pub async fn fund_guest_wallet(

@@ -36,6 +36,13 @@ sol! {
     }
 
     #[sol(rpc)]
+    interface IERC20 {
+        function transfer(address to, uint256 amount) external returns (bool);
+        function approve(address spender, uint256 amount) external returns (bool);
+        function balanceOf(address account) external view returns (uint256 balance);
+    }
+
+    #[sol(rpc)]
     interface IPerpHook {
         // This struct matches the DEPLOYED PerpHook contract on Base Sepolia
         // Note: tradingFeeCreatorSplitX96 is NOT included in the deployed version
