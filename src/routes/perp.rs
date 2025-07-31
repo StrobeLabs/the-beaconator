@@ -388,27 +388,37 @@ async fn deploy_perp_for_beacon(
         Ok(Err(e)) => {
             tracing::warn!("get_receipt() failed for perp deployment: {}", e);
             tracing::info!("Falling back to on-chain perp deployment check...");
-            
+
             // Try to get the receipt directly from the provider with timeout
-            match timeout(Duration::from_secs(30), state.provider.get_transaction_receipt(pending_tx_hash)).await {
+            match timeout(
+                Duration::from_secs(30),
+                state.provider.get_transaction_receipt(pending_tx_hash),
+            )
+            .await
+            {
                 Ok(Ok(Some(receipt))) => {
                     tracing::info!("Perp deployment confirmed via on-chain check");
                     receipt
                 }
                 Ok(Ok(None)) => {
-                    let error_msg = format!("Perp deployment transaction {pending_tx_hash} not found on-chain");
+                    let error_msg =
+                        format!("Perp deployment transaction {pending_tx_hash} not found on-chain");
                     tracing::error!("{}", error_msg);
                     sentry::capture_message(&error_msg, sentry::Level::Error);
                     return Err(error_msg);
                 }
                 Ok(Err(e)) => {
-                    let error_msg = format!("Failed to check perp deployment transaction {pending_tx_hash} on-chain: {e}");
+                    let error_msg = format!(
+                        "Failed to check perp deployment transaction {pending_tx_hash} on-chain: {e}"
+                    );
                     tracing::error!("{}", error_msg);
                     sentry::capture_message(&error_msg, sentry::Level::Error);
                     return Err(error_msg);
                 }
                 Err(_) => {
-                    let error_msg = format!("Timeout checking perp deployment transaction {pending_tx_hash} on-chain");
+                    let error_msg = format!(
+                        "Timeout checking perp deployment transaction {pending_tx_hash} on-chain"
+                    );
                     tracing::error!("{}", error_msg);
                     sentry::capture_message(&error_msg, sentry::Level::Error);
                     return Err(error_msg);
@@ -416,7 +426,7 @@ async fn deploy_perp_for_beacon(
             }
         }
         Err(_) => {
-            let error_msg = format!("Timeout waiting for perp deployment receipt");
+            let error_msg = "Timeout waiting for perp deployment receipt".to_string();
             tracing::error!("{}", error_msg);
             sentry::capture_message(&error_msg, sentry::Level::Error);
             return Err(error_msg);
@@ -539,7 +549,9 @@ async fn deposit_liquidity_for_perp(
     tracing::info!("USDC approval transaction hash: {:?}", approval_tx_hash);
 
     // Use get_receipt() with timeout and fallback like beacon endpoints
-    let approval_receipt = match timeout(Duration::from_secs(60), pending_approval.get_receipt()).await {
+    let approval_receipt = match timeout(Duration::from_secs(60), pending_approval.get_receipt())
+        .await
+    {
         Ok(Ok(receipt)) => {
             tracing::info!("USDC approval confirmed via get_receipt()");
             receipt
@@ -547,32 +559,42 @@ async fn deposit_liquidity_for_perp(
         Ok(Err(e)) => {
             tracing::warn!("get_receipt() failed for USDC approval: {}", e);
             tracing::info!("Falling back to on-chain approval check...");
-            
+
             // Try to get the receipt directly from the provider with timeout
-            match timeout(Duration::from_secs(30), state.provider.get_transaction_receipt(approval_tx_hash)).await {
+            match timeout(
+                Duration::from_secs(30),
+                state.provider.get_transaction_receipt(approval_tx_hash),
+            )
+            .await
+            {
                 Ok(Ok(Some(receipt))) => {
                     tracing::info!("USDC approval confirmed via on-chain check");
                     receipt
                 }
                 Ok(Ok(None)) => {
-                    let error_msg = format!("USDC approval transaction {approval_tx_hash} not found on-chain");
+                    let error_msg =
+                        format!("USDC approval transaction {approval_tx_hash} not found on-chain");
                     tracing::error!("{}", error_msg);
                     return Err(error_msg);
                 }
                 Ok(Err(e)) => {
-                    let error_msg = format!("Failed to check USDC approval transaction {approval_tx_hash} on-chain: {e}");
+                    let error_msg = format!(
+                        "Failed to check USDC approval transaction {approval_tx_hash} on-chain: {e}"
+                    );
                     tracing::error!("{}", error_msg);
                     return Err(error_msg);
                 }
                 Err(_) => {
-                    let error_msg = format!("Timeout checking USDC approval transaction {approval_tx_hash} on-chain");
+                    let error_msg = format!(
+                        "Timeout checking USDC approval transaction {approval_tx_hash} on-chain"
+                    );
                     tracing::error!("{}", error_msg);
                     return Err(error_msg);
                 }
             }
         }
         Err(_) => {
-            let error_msg = format!("Timeout waiting for USDC approval receipt");
+            let error_msg = "Timeout waiting for USDC approval receipt".to_string();
             tracing::error!("{}", error_msg);
             return Err(error_msg);
         }
@@ -633,32 +655,43 @@ async fn deposit_liquidity_for_perp(
         Ok(Err(e)) => {
             tracing::warn!("get_receipt() failed for liquidity deposit: {}", e);
             tracing::info!("Falling back to on-chain deposit check...");
-            
+
             // Try to get the receipt directly from the provider with timeout
-            match timeout(Duration::from_secs(30), state.provider.get_transaction_receipt(deposit_tx_hash)).await {
+            match timeout(
+                Duration::from_secs(30),
+                state.provider.get_transaction_receipt(deposit_tx_hash),
+            )
+            .await
+            {
                 Ok(Ok(Some(receipt))) => {
                     tracing::info!("Liquidity deposit confirmed via on-chain check");
                     receipt
                 }
                 Ok(Ok(None)) => {
-                    let error_msg = format!("Liquidity deposit transaction {deposit_tx_hash} not found on-chain");
+                    let error_msg = format!(
+                        "Liquidity deposit transaction {deposit_tx_hash} not found on-chain"
+                    );
                     tracing::error!("{}", error_msg);
                     return Err(error_msg);
                 }
                 Ok(Err(e)) => {
-                    let error_msg = format!("Failed to check liquidity deposit transaction {deposit_tx_hash} on-chain: {e}");
+                    let error_msg = format!(
+                        "Failed to check liquidity deposit transaction {deposit_tx_hash} on-chain: {e}"
+                    );
                     tracing::error!("{}", error_msg);
                     return Err(error_msg);
                 }
                 Err(_) => {
-                    let error_msg = format!("Timeout checking liquidity deposit transaction {deposit_tx_hash} on-chain");
+                    let error_msg = format!(
+                        "Timeout checking liquidity deposit transaction {deposit_tx_hash} on-chain"
+                    );
                     tracing::error!("{}", error_msg);
                     return Err(error_msg);
                 }
             }
         }
         Err(_) => {
-            let error_msg = format!("Timeout waiting for liquidity deposit receipt");
+            let error_msg = "Timeout waiting for liquidity deposit receipt".to_string();
             tracing::error!("{}", error_msg);
             return Err(error_msg);
         }
