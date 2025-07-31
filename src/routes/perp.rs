@@ -698,8 +698,8 @@ async fn deposit_liquidity_for_perp(
     let approval_tx_hash = *pending_approval.tx_hash();
     tracing::info!("USDC approval transaction hash: {:?}", approval_tx_hash);
 
-    // Use get_receipt() with timeout and fallback like beacon endpoints
-    let approval_receipt = match timeout(Duration::from_secs(90), pending_approval.get_receipt())
+    // Use get_receipt() with extended timeout for USDC approvals (Base can be slow)
+    let approval_receipt = match timeout(Duration::from_secs(150), pending_approval.get_receipt())
         .await
     {
         Ok(Ok(receipt)) => {
@@ -712,7 +712,7 @@ async fn deposit_liquidity_for_perp(
 
             // Try to get the receipt directly from the provider with timeout
             match timeout(
-                Duration::from_secs(30),
+                Duration::from_secs(60),
                 state.provider.get_transaction_receipt(approval_tx_hash),
             )
             .await
@@ -744,48 +744,80 @@ async fn deposit_liquidity_for_perp(
             }
         }
         Err(_) => {
-            tracing::warn!("Initial get_receipt() timed out for USDC approval, trying fallback...");
+            tracing::warn!(
+                "Initial get_receipt() timed out for USDC approval, trying extended fallback..."
+            );
             tracing::info!(
-                "Checking USDC approval transaction {} on-chain...",
+                "Checking USDC approval transaction {} on-chain with extended timeout...",
                 approval_tx_hash
             );
 
-            // Fallback to direct provider check with extended timeout for approval transactions
-            match timeout(
-                Duration::from_secs(60),
-                state.provider.get_transaction_receipt(approval_tx_hash),
-            )
-            .await
-            {
-                Ok(Ok(Some(receipt))) => {
-                    tracing::info!("USDC approval found on-chain via fallback receipt lookup");
-                    receipt
-                }
-                Ok(Ok(None)) => {
-                    let error_msg = format!(
-                        "USDC approval transaction {approval_tx_hash} not found on-chain after timeout"
-                    );
-                    tracing::error!("{}", error_msg);
-                    tracing::error!("This could indicate:");
-                    tracing::error!("  - USDC approval transaction was dropped/replaced");
-                    tracing::error!("  - Network issues prevented confirmation");
-                    tracing::error!("  - Transaction is still pending (check gas price)");
-                    return Err(error_msg);
-                }
-                Ok(Err(e)) => {
-                    let error_msg = format!(
-                        "Failed to check USDC approval transaction {approval_tx_hash} on-chain: {e}"
-                    );
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-                Err(_) => {
-                    let error_msg = format!(
-                        "Final timeout waiting for USDC approval receipt {approval_tx_hash}"
-                    );
-                    tracing::error!("{}", error_msg);
-                    tracing::error!("All fallback methods exhausted for USDC approval");
-                    return Err(error_msg);
+            // Extended fallback: retry with progressive timeouts (15s, 30s, 60s) for Base network
+            let mut retry_count = 0;
+            let max_retries = 3;
+            let timeout_seconds = [15u64, 30u64, 60u64]; // Progressive timeout pattern
+
+            loop {
+                retry_count += 1;
+                let current_timeout = timeout_seconds[retry_count - 1];
+                tracing::info!(
+                    "USDC approval receipt attempt {}/{} ({}s timeout)",
+                    retry_count,
+                    max_retries,
+                    current_timeout
+                );
+
+                match timeout(
+                    Duration::from_secs(current_timeout),
+                    state.provider.get_transaction_receipt(approval_tx_hash),
+                )
+                .await
+                {
+                    Ok(Ok(Some(receipt))) => {
+                        tracing::info!(
+                            "USDC approval found on-chain via extended fallback (attempt {})",
+                            retry_count
+                        );
+                        break receipt;
+                    }
+                    Ok(Ok(None)) => {
+                        if retry_count >= max_retries {
+                            let error_msg = format!(
+                                "USDC approval transaction {approval_tx_hash} not found on-chain after {max_retries} attempts"
+                            );
+                            tracing::error!("{}", error_msg);
+                            tracing::error!("This could indicate:");
+                            tracing::error!("  - USDC approval transaction was dropped/replaced");
+                            tracing::error!("  - Network issues prevented confirmation");
+                            tracing::error!("  - Transaction is still pending (check gas price)");
+                            tracing::error!("  - Base network congestion causing delays");
+                            return Err(error_msg);
+                        }
+                        tracing::warn!(
+                            "USDC approval not found on attempt {}, retrying...",
+                            retry_count
+                        );
+                        tokio::time::sleep(Duration::from_secs(5)).await; // Brief pause between retries
+                    }
+                    Ok(Err(e)) => {
+                        let error_msg = format!(
+                            "Failed to check USDC approval transaction {approval_tx_hash} on-chain: {e}"
+                        );
+                        tracing::error!("{}", error_msg);
+                        return Err(error_msg);
+                    }
+                    Err(_) => {
+                        if retry_count >= max_retries {
+                            let error_msg = format!(
+                                "Final timeout waiting for USDC approval receipt {approval_tx_hash} after {max_retries} attempts"
+                            );
+                            tracing::error!("{}", error_msg);
+                            tracing::error!("All fallback methods exhausted for USDC approval");
+                            return Err(error_msg);
+                        }
+                        tracing::warn!("Timeout on attempt {}, retrying...", retry_count);
+                        tokio::time::sleep(Duration::from_secs(5)).await; // Brief pause between retries
+                    }
                 }
             }
         }
