@@ -13,7 +13,7 @@ use crate::models::{
     DepositLiquidityForPerpRequest,
 };
 
-// Helper function to parse the PerpCreated event from transaction receipt to get perp address
+// Helper function to parse the PerpCreated event from transaction receipt to get perp ID
 fn parse_perp_created_event(
     receipt: &alloy::rpc::types::TransactionReceipt,
     perp_hook_address: Address,
@@ -26,7 +26,7 @@ fn parse_perp_created_event(
             if let Ok(decoded_log) = log.log_decode::<IPerpHook::PerpCreated>() {
                 let event_data = decoded_log.inner.data;
                 tracing::info!(
-                    "Successfully parsed PerpCreated event - perp address: {}",
+                    "Successfully parsed PerpCreated event - perp ID: {}",
                     event_data.perpId
                 );
                 return Ok(event_data.perpId);
@@ -435,13 +435,15 @@ async fn deploy_perp_for_beacon(
         receipt.block_number
     );
 
-    // Parse the perp address from the PerpCreated event
-    let perp_address = parse_perp_created_event(&receipt, state.perp_hook_address)?;
+    // Parse the perp ID from the PerpCreated event
+    let perp_id = parse_perp_created_event(&receipt, state.perp_hook_address)?;
 
-    tracing::info!("Successfully deployed perp at address: {}", perp_address);
+    tracing::info!("Successfully deployed perp with ID: {}", perp_id);
+    tracing::info!("Perp is managed by PerpHook contract: {}", state.perp_hook_address);
 
     Ok(DeployPerpForBeaconResponse {
-        perp_address: perp_address.to_string(),
+        perp_id: perp_id.to_string(),
+        perp_hook_address: state.perp_hook_address.to_string(),
         transaction_hash: tx_hash.to_string(),
     })
 }
