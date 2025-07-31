@@ -29,18 +29,60 @@ async fn create_beacon_via_factory(
     // Create contract instance using the sol! generated interface
     let contract = IBeaconFactory::new(factory_address, &*state.provider);
 
-    // Send the beacon creation transaction
-    let pending_tx = contract
-        .createBeacon(owner_address)
-        .send()
-        .await
-        .map_err(|e| {
-            let error_msg = format!("Failed to send createBeacon transaction: {e}");
-            tracing::error!("{}", error_msg);
-            tracing::error!("Transaction send error details: {:?}", e);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
-            error_msg
-        })?;
+    // Send the beacon creation transaction with nonce retry logic
+    let pending_tx = {
+        let mut retry_count = 0;
+        let max_retries = 2; // Allow 1 retry for nonce issues
+
+        loop {
+            match contract.createBeacon(owner_address).send().await {
+                Ok(pending) => break pending,
+                Err(e) => {
+                    let error_msg = format!("Failed to send createBeacon transaction: {e}");
+                    tracing::error!("{}", error_msg);
+                    tracing::error!("Transaction send error details: {:?}", e);
+
+                    // Check if this is a nonce error and we can retry
+                    if is_nonce_error(&error_msg) && retry_count < max_retries {
+                        retry_count += 1;
+                        tracing::warn!(
+                            "Nonce error detected, attempting to sync and retry (attempt {}/{})",
+                            retry_count,
+                            max_retries
+                        );
+
+                        // Sync wallet nonce
+                        match sync_wallet_nonce(state).await {
+                            Ok(current_nonce) => {
+                                tracing::info!(
+                                    "Nonce synchronized to {}, retrying beacon creation...",
+                                    current_nonce
+                                );
+                                // Brief pause before retry to allow network state to settle
+                                tokio::time::sleep(Duration::from_secs(2)).await;
+                                continue;
+                            }
+                            Err(sync_error) => {
+                                let combined_error = format!(
+                                    "Nonce sync failed after transaction error: {error_msg}. Sync error: {sync_error}"
+                                );
+                                tracing::error!("{}", combined_error);
+                                sentry::capture_message(&combined_error, sentry::Level::Error);
+                                return Err(combined_error);
+                            }
+                        }
+                    } else {
+                        // Not a nonce error or max retries exceeded
+                        if retry_count >= max_retries {
+                            tracing::error!("Max nonce retry attempts ({}) exceeded", max_retries);
+                        }
+                        sentry::capture_message(&error_msg, sentry::Level::Error);
+                        return Err(error_msg);
+                    }
+                }
+            }
+        }
+    };
 
     tracing::info!("Transaction sent, waiting for receipt...");
 
@@ -321,58 +363,106 @@ async fn register_beacon_with_registry(
     // Create contract instance using the sol! generated interface
     let contract = IBeaconRegistry::new(registry_address, &*state.provider);
 
-    // Send the registration transaction (beacon creation is already confirmed)
-    let pending_tx = contract
-        .registerBeacon(beacon_address)
-        .send()
-        .await
-        .map_err(|e| {
-            let error_type = match e.to_string().as_str() {
-                s if s.contains("execution reverted") => "Contract Execution Reverted",
-                s if s.contains("insufficient funds") => "Insufficient Funds",
-                s if s.contains("gas") => "Gas Related Error",
-                s if s.contains("nonce") => "Nonce Error",
-                s if s.contains("connection") || s.contains("timeout") => {
-                    "Network Connection Error"
-                }
-                s if s.contains("unauthorized") || s.contains("forbidden") => "Authorization Error",
-                _ => "Unknown Transaction Error",
-            };
+    // Send the registration transaction with nonce retry logic
+    let pending_tx = {
+        let mut retry_count = 0;
+        let max_retries = 2; // Allow 1 retry for nonce issues
 
-            let error_msg = format!("Failed to send registerBeacon transaction: {e}");
-            tracing::error!("{}", error_msg);
-            tracing::error!("Error type: {}", error_type);
-            tracing::error!("Transaction send error details: {:?}", e);
+        loop {
+            match contract.registerBeacon(beacon_address).send().await {
+                Ok(pending) => break pending,
+                Err(e) => {
+                    let error_type = match e.to_string().as_str() {
+                        s if s.contains("execution reverted") => "Contract Execution Reverted",
+                        s if s.contains("insufficient funds") => "Insufficient Funds",
+                        s if s.contains("gas") => "Gas Related Error",
+                        s if s.contains("nonce") => "Nonce Error",
+                        s if s.contains("connection") || s.contains("timeout") => {
+                            "Network Connection Error"
+                        }
+                        s if s.contains("unauthorized") || s.contains("forbidden") => {
+                            "Authorization Error"
+                        }
+                        _ => "Unknown Transaction Error",
+                    };
 
-            // Add specific troubleshooting hints based on error type
-            match error_type {
-                "Contract Execution Reverted" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Check if beacon is already registered");
-                    tracing::error!("  - Verify beacon contract is valid and deployed");
-                    tracing::error!("  - Check if registry contract is properly deployed");
-                    tracing::error!("  - Verify wallet has required permissions");
-                    tracing::error!("  - Check if beacon implements expected interface");
-                }
-                "Insufficient Funds" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Check wallet ETH balance for gas fees");
-                }
-                "Gas Related Error" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Try increasing gas limit");
-                    tracing::error!("  - Check current network gas prices");
-                }
-                _ => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Check network connectivity");
-                    tracing::error!("  - Verify contract addresses are correct");
+                    let error_msg = format!("Failed to send registerBeacon transaction: {e}");
+                    tracing::error!("{}", error_msg);
+                    tracing::error!("Error type: {}", error_type);
+                    tracing::error!("Transaction send error details: {:?}", e);
+
+                    // Check if this is a nonce error and we can retry
+                    if is_nonce_error(&error_msg) && retry_count < max_retries {
+                        retry_count += 1;
+                        tracing::warn!(
+                            "Nonce error detected, attempting to sync and retry (attempt {}/{})",
+                            retry_count,
+                            max_retries
+                        );
+
+                        // Sync wallet nonce
+                        match sync_wallet_nonce(state).await {
+                            Ok(current_nonce) => {
+                                tracing::info!(
+                                    "Nonce synchronized to {}, retrying beacon registration...",
+                                    current_nonce
+                                );
+                                // Brief pause before retry to allow network state to settle
+                                tokio::time::sleep(Duration::from_secs(2)).await;
+                                continue;
+                            }
+                            Err(sync_error) => {
+                                let combined_error = format!(
+                                    "Nonce sync failed after transaction error: {error_msg}. Sync error: {sync_error}"
+                                );
+                                tracing::error!("{}", combined_error);
+                                sentry::capture_message(&combined_error, sentry::Level::Error);
+                                return Err(combined_error);
+                            }
+                        }
+                    } else {
+                        // Not a nonce error or max retries exceeded - add troubleshooting hints
+                        if retry_count >= max_retries {
+                            tracing::error!("Max nonce retry attempts ({}) exceeded", max_retries);
+                        }
+
+                        // Add specific troubleshooting hints based on error type
+                        match error_type {
+                            "Contract Execution Reverted" => {
+                                tracing::error!("Troubleshooting hints:");
+                                tracing::error!("  - Check if beacon is already registered");
+                                tracing::error!("  - Verify beacon contract is valid and deployed");
+                                tracing::error!(
+                                    "  - Check if registry contract is properly deployed"
+                                );
+                                tracing::error!("  - Verify wallet has required permissions");
+                                tracing::error!(
+                                    "  - Check if beacon implements expected interface"
+                                );
+                            }
+                            "Insufficient Funds" => {
+                                tracing::error!("Troubleshooting hints:");
+                                tracing::error!("  - Check wallet ETH balance for gas fees");
+                            }
+                            "Gas Related Error" => {
+                                tracing::error!("Troubleshooting hints:");
+                                tracing::error!("  - Try increasing gas limit");
+                                tracing::error!("  - Check current network gas prices");
+                            }
+                            _ => {
+                                tracing::error!("Troubleshooting hints:");
+                                tracing::error!("  - Check network connectivity");
+                                tracing::error!("  - Verify contract addresses are correct");
+                            }
+                        }
+
+                        sentry::capture_message(&error_msg, sentry::Level::Error);
+                        return Err(error_msg);
+                    }
                 }
             }
-
-            sentry::capture_message(&error_msg, sentry::Level::Error);
-            error_msg
-        })?;
+        }
+    };
 
     tracing::info!("Registration transaction sent, waiting for receipt...");
 
@@ -872,6 +962,35 @@ pub async fn update_beacon(
         data: Some(format!("Transaction hash: {:?}", receipt.transaction_hash)),
         message: message.to_string(),
     }))
+}
+
+// Helper function to check if an error is a nonce-related error
+fn is_nonce_error(error_msg: &str) -> bool {
+    error_msg.contains("nonce too low")
+        || error_msg.contains("nonce too high")
+        || error_msg.contains("invalid nonce")
+        || error_msg.contains("replacement transaction underpriced")
+}
+
+// Helper function to sync wallet nonce with on-chain state
+async fn sync_wallet_nonce(state: &AppState) -> Result<u64, String> {
+    tracing::info!("Syncing wallet nonce with on-chain state...");
+
+    match state
+        .provider
+        .get_transaction_count(state.wallet_address)
+        .await
+    {
+        Ok(nonce) => {
+            tracing::info!("Current on-chain nonce: {}", nonce);
+            Ok(nonce)
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to get current nonce: {e}");
+            tracing::error!("{}", error_msg);
+            Err(error_msg)
+        }
+    }
 }
 
 #[cfg(test)]
