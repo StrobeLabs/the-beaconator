@@ -99,29 +99,81 @@ async fn create_beacon_via_factory(
             }
         }
         Err(_) => {
-            let error_msg = format!("Timeout waiting for transaction {tx_hash} confirmation");
-            tracing::error!("{}", error_msg);
-            tracing::error!("Transaction may still be pending or network is slow");
+            tracing::warn!(
+                "Initial get_receipt() timed out for beacon transaction, trying extended fallback..."
+            );
             tracing::info!(
-                "Checking if transaction {} is already confirmed...",
+                "Checking beacon transaction {} on-chain with progressive timeouts...",
                 tx_hash
             );
 
-            // Final fallback: check if transaction is already confirmed
-            match is_transaction_confirmed(state, tx_hash).await {
-                Ok(Some(receipt)) => {
-                    tracing::info!("Transaction {} was already confirmed!", tx_hash);
-                    receipt
-                }
-                Ok(None) => {
-                    let error_msg =
-                        format!("Transaction {tx_hash} not found on-chain after timeout");
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to check transaction status: {}", e);
-                    return Err(error_msg);
+            // Extended fallback: retry with progressive timeouts (15s, 30s, 60s) for Base network
+            let mut retry_count = 0;
+            let max_retries = 3;
+            let timeout_seconds = [15u64, 30u64, 60u64]; // Progressive timeout pattern
+
+            loop {
+                retry_count += 1;
+                let current_timeout = timeout_seconds[retry_count - 1];
+                tracing::info!(
+                    "Beacon transaction receipt attempt {}/{} ({}s timeout)",
+                    retry_count,
+                    max_retries,
+                    current_timeout
+                );
+
+                match timeout(
+                    Duration::from_secs(current_timeout),
+                    is_transaction_confirmed(state, tx_hash),
+                )
+                .await
+                {
+                    Ok(Ok(Some(receipt))) => {
+                        tracing::info!(
+                            "Beacon transaction found on-chain via extended fallback (attempt {})",
+                            retry_count
+                        );
+                        break receipt;
+                    }
+                    Ok(Ok(None)) => {
+                        if retry_count >= max_retries {
+                            let error_msg = format!(
+                                "Beacon transaction {tx_hash} not found on-chain after {max_retries} attempts"
+                            );
+                            tracing::error!("{}", error_msg);
+                            tracing::error!("This could indicate:");
+                            tracing::error!("  - Beacon transaction was dropped/replaced");
+                            tracing::error!("  - Network issues prevented confirmation");
+                            tracing::error!("  - Transaction is still pending (check gas price)");
+                            tracing::error!("  - Base network congestion causing delays");
+                            return Err(error_msg);
+                        }
+                        tracing::warn!(
+                            "Beacon transaction not found on attempt {}, retrying...",
+                            retry_count
+                        );
+                        tokio::time::sleep(Duration::from_secs(3)).await; // Brief pause between retries
+                    }
+                    Ok(Err(e)) => {
+                        let error_msg =
+                            format!("Failed to check beacon transaction {tx_hash} on-chain: {e}");
+                        tracing::error!("{}", error_msg);
+                        return Err(error_msg);
+                    }
+                    Err(_) => {
+                        if retry_count >= max_retries {
+                            let error_msg = format!(
+                                "Final timeout waiting for beacon transaction receipt {tx_hash} after {max_retries} attempts"
+                            );
+                            tracing::error!("{}", error_msg);
+                            tracing::error!(
+                                "All fallback methods exhausted for beacon transaction"
+                            );
+                            return Err(error_msg);
+                        }
+                        tracing::warn!("Timeout on attempt {}, retrying...", retry_count);
+                        tokio::time::sleep(Duration::from_secs(3)).await; // Brief pause between retries
+                    }
                 }
             }
         }
@@ -382,31 +434,82 @@ async fn register_beacon_with_registry(
             }
         }
         Err(_) => {
-            let error_msg =
-                format!("Timeout waiting for registration transaction {tx_hash} confirmation");
-            tracing::error!("{}", error_msg);
-            tracing::error!("Registration may still be pending or network is slow");
+            tracing::warn!(
+                "Initial get_receipt() timed out for registration transaction, trying extended fallback..."
+            );
             tracing::info!(
-                "Checking if registration transaction {} is already confirmed...",
+                "Checking registration transaction {} on-chain with progressive timeouts...",
                 tx_hash
             );
 
-            // Final fallback: check if transaction is already confirmed
-            match is_transaction_confirmed(state, tx_hash).await {
-                Ok(Some(receipt)) => {
-                    tracing::info!("Registration transaction {tx_hash} was already confirmed!");
-                    receipt
-                }
-                Ok(None) => {
-                    let error_msg = format!(
-                        "Registration transaction {tx_hash} not found on-chain after timeout"
-                    );
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to check registration status: {}", e);
-                    return Err(error_msg);
+            // Extended fallback: retry with progressive timeouts (15s, 30s, 60s) for Base network
+            let mut retry_count = 0;
+            let max_retries = 3;
+            let timeout_seconds = [15u64, 30u64, 60u64]; // Progressive timeout pattern
+
+            loop {
+                retry_count += 1;
+                let current_timeout = timeout_seconds[retry_count - 1];
+                tracing::info!(
+                    "Registration transaction receipt attempt {}/{} ({}s timeout)",
+                    retry_count,
+                    max_retries,
+                    current_timeout
+                );
+
+                match timeout(
+                    Duration::from_secs(current_timeout),
+                    is_transaction_confirmed(state, tx_hash),
+                )
+                .await
+                {
+                    Ok(Ok(Some(receipt))) => {
+                        tracing::info!(
+                            "Registration transaction found on-chain via extended fallback (attempt {})",
+                            retry_count
+                        );
+                        break receipt;
+                    }
+                    Ok(Ok(None)) => {
+                        if retry_count >= max_retries {
+                            let error_msg = format!(
+                                "Registration transaction {tx_hash} not found on-chain after {max_retries} attempts"
+                            );
+                            tracing::error!("{}", error_msg);
+                            tracing::error!("This could indicate:");
+                            tracing::error!("  - Registration transaction was dropped/replaced");
+                            tracing::error!("  - Network issues prevented confirmation");
+                            tracing::error!("  - Transaction is still pending (check gas price)");
+                            tracing::error!("  - Base network congestion causing delays");
+                            return Err(error_msg);
+                        }
+                        tracing::warn!(
+                            "Registration transaction not found on attempt {}, retrying...",
+                            retry_count
+                        );
+                        tokio::time::sleep(Duration::from_secs(3)).await; // Brief pause between retries
+                    }
+                    Ok(Err(e)) => {
+                        let error_msg = format!(
+                            "Failed to check registration transaction {tx_hash} on-chain: {e}"
+                        );
+                        tracing::error!("{}", error_msg);
+                        return Err(error_msg);
+                    }
+                    Err(_) => {
+                        if retry_count >= max_retries {
+                            let error_msg = format!(
+                                "Final timeout waiting for registration transaction receipt {tx_hash} after {max_retries} attempts"
+                            );
+                            tracing::error!("{}", error_msg);
+                            tracing::error!(
+                                "All fallback methods exhausted for registration transaction"
+                            );
+                            return Err(error_msg);
+                        }
+                        tracing::warn!("Timeout on attempt {}, retrying...", retry_count);
+                        tokio::time::sleep(Duration::from_secs(3)).await; // Brief pause between retries
+                    }
                 }
             }
         }

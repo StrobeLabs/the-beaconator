@@ -33,8 +33,10 @@ fmt: ## Format code with rustfmt
 fmt-check: ## Check if code is properly formatted
 	cargo fmt -- --check
 
-check: ## Run cargo check (faster than build)
+check: ## Run cargo check and anvil cleanup (faster than build)
 	cargo check
+	@echo "🧹 Running anvil cleanup..."
+	./scripts/anvil-cleanup.sh
 
 # Comprehensive quality check
 quality: fmt-check lint test ## Run all quality checks (format, lint, test)
