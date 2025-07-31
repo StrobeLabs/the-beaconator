@@ -79,7 +79,7 @@ impl ApiEndpoints {
             EndpointInfo {
                 method: "POST".to_string(),
                 path: "/deposit_liquidity_for_perp".to_string(),
-                description: "Deposit liquidity for a specific perpetual".to_string(),
+                description: "Deposit liquidity for a specific perpetual (min: 10 USDC due to wide tick range)".to_string(),
                 requires_auth: true,
                 status: EndpointStatus::Working,
             },
@@ -178,6 +178,35 @@ pub struct PerpConfig {
     pub max_margin_per_perp_usdc: u128,
 }
 
+impl PerpConfig {
+    /// Calculate minimum margin amount based on current configuration.
+    ///
+    /// This is based on empirical testing with Uniswap V4 and the current tick range.
+    /// The calculation considers:
+    /// - Wide tick range [-23030, 23030] requires substantial liquidity
+    /// - Liquidity scaling factor of 400,000,000,000,000
+    /// - Uniswap V4 minimum liquidity thresholds
+    ///
+    /// Returns minimum margin in USDC (6 decimals)
+    pub fn calculate_minimum_margin_usdc(&self) -> u128 {
+        // Based on empirical testing, we need at least 4 × 10^21 final liquidity
+        // With current scaling factor: min_margin × 400,000,000,000,000 >= 4 × 10^21
+        // Therefore: min_margin >= 4 × 10^21 / 400,000,000,000,000 = 10,000,000 (10 USDC)
+
+        let min_liquidity_required = 4_000_000_000_000_000_000_000u128; // 4 × 10^21
+        let min_margin = min_liquidity_required / self.liquidity_scaling_factor;
+
+        // Add 10% safety buffer and ensure minimum of 10 USDC
+        let min_with_buffer = (min_margin * 110) / 100;
+        std::cmp::max(min_with_buffer, 10_000_000) // 10 USDC minimum
+    }
+
+    /// Get user-friendly minimum margin amount in USDC (as decimal)
+    pub fn minimum_margin_usdc_decimal(&self) -> f64 {
+        self.calculate_minimum_margin_usdc() as f64 / 1_000_000.0
+    }
+}
+
 impl Default for PerpConfig {
     fn default() -> Self {
         // Values that exactly match DeployPerp.s.sol constants
@@ -273,8 +302,22 @@ pub struct BatchCreatePerpcityBeaconResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DepositLiquidityForPerpRequest {
-    pub perp_id: String,            // PoolId as hex string
-    pub margin_amount_usdc: String, // USDC amount in 6 decimals (e.g., "500000000" for 500 USDC)
+    pub perp_id: String, // PoolId as hex string
+    /// USDC margin amount in 6 decimals (e.g., "50000000" for 50 USDC)
+    ///
+    /// **IMPORTANT**: Due to Uniswap V4 liquidity requirements and wide tick range [-23030, 23030],
+    /// minimum recommended amount is 10 USDC (10,000,000). Smaller amounts will likely fail
+    /// with execution revert due to insufficient liquidity.
+    ///
+    /// Current scaling: margin × 400,000,000,000,000 = final liquidity amount
+    pub margin_amount_usdc: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DepositLiquidityForPerpResponse {
+    pub maker_position_id: String, // Maker position ID from MakerPositionOpened event
+    pub approval_transaction_hash: String, // USDC approval transaction hash
+    pub deposit_transaction_hash: String, // Liquidity deposit transaction hash
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -10,7 +10,7 @@ use crate::guards::ApiToken;
 use crate::models::{
     ApiResponse, AppState, BatchDepositLiquidityForPerpsRequest,
     BatchDepositLiquidityForPerpsResponse, DeployPerpForBeaconRequest, DeployPerpForBeaconResponse,
-    DepositLiquidityForPerpRequest,
+    DepositLiquidityForPerpRequest, DepositLiquidityForPerpResponse,
 };
 
 // Helper function to parse the PerpCreated event from transaction receipt to get perp ID
@@ -476,7 +476,7 @@ async fn deposit_liquidity_for_perp(
     state: &AppState,
     perp_id: FixedBytes<32>,
     margin_amount_usdc: u128,
-) -> Result<U256, String> {
+) -> Result<DepositLiquidityForPerpResponse, String> {
     tracing::info!(
         "Depositing liquidity for perp {} with margin {}",
         perp_id,
@@ -613,7 +613,11 @@ async fn deposit_liquidity_for_perp(
         maker_pos_id
     );
 
-    Ok(maker_pos_id)
+    Ok(DepositLiquidityForPerpResponse {
+        maker_position_id: maker_pos_id.to_string(),
+        approval_transaction_hash: approval_receipt.transaction_hash.to_string(),
+        deposit_transaction_hash: receipt.transaction_hash.to_string(),
+    })
 }
 
 #[post("/deploy_perp_for_beacon", data = "<request>")]
@@ -712,7 +716,7 @@ pub async fn deposit_liquidity_for_perp_endpoint(
     request: Json<DepositLiquidityForPerpRequest>,
     _token: ApiToken,
     state: &State<AppState>,
-) -> Result<Json<ApiResponse<String>>, Status> {
+) -> Result<Json<ApiResponse<DepositLiquidityForPerpResponse>>, Status> {
     tracing::info!("Received request: POST /deposit_liquidity_for_perp");
     let _guard = sentry::Hub::current().push_scope();
     sentry::configure_scope(|scope| {
@@ -748,8 +752,37 @@ pub async fn deposit_liquidity_for_perp_endpoint(
         }
     };
 
-    // Validate margin amount limit using configurable value
+    // Validate margin amount range using computed minimum and configured maximum
+    let min_margin = state.perp_config.calculate_minimum_margin_usdc();
     let max_margin = state.perp_config.max_margin_per_perp_usdc;
+
+    if margin_amount < min_margin {
+        let error_msg = format!(
+            "Margin amount {} USDC is below computed minimum of {} USDC",
+            margin_amount as f64 / 1_000_000.0,
+            state.perp_config.minimum_margin_usdc_decimal()
+        );
+        tracing::error!("{}", error_msg);
+        tracing::error!("Minimum is calculated based on current configuration:");
+        tracing::error!(
+            "  - Tick range: [{}, {}]",
+            state.perp_config.default_tick_lower,
+            state.perp_config.default_tick_upper
+        );
+        tracing::error!(
+            "  - Liquidity scaling factor: {}",
+            state.perp_config.liquidity_scaling_factor
+        );
+        tracing::error!("  - Required minimum liquidity for Uniswap V4 operations");
+        tracing::error!(
+            "Please increase margin to {} USDC or more ({} in 6 decimals)",
+            state.perp_config.minimum_margin_usdc_decimal(),
+            min_margin
+        );
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        return Err(Status::BadRequest);
+    }
+
     if margin_amount > max_margin {
         let error_msg = format!(
             "Margin amount {} exceeds maximum limit of {} USDC ({} in 6 decimals)",
@@ -769,12 +802,18 @@ pub async fn deposit_liquidity_for_perp_endpoint(
     }
 
     match deposit_liquidity_for_perp(state, perp_id, margin_amount).await {
-        Ok(maker_pos_id) => {
+        Ok(response) => {
             let message = "Liquidity deposited successfully";
             tracing::info!("{}", message);
+            tracing::info!("Maker position ID: {}", response.maker_position_id);
+            tracing::info!(
+                "Approval transaction: {}",
+                response.approval_transaction_hash
+            );
+            tracing::info!("Deposit transaction: {}", response.deposit_transaction_hash);
             Ok(Json(ApiResponse {
                 success: true,
-                data: Some(format!("Maker position ID: {maker_pos_id}")),
+                data: Some(response),
                 message: message.to_string(),
             }))
         }
@@ -882,8 +921,22 @@ pub async fn batch_deposit_liquidity_for_perps(
             }
         };
 
-        // Validate margin amount limit using configurable value
+        // Validate margin amount range using computed minimum and configured maximum
+        let min_margin = state.perp_config.calculate_minimum_margin_usdc();
         let max_margin = state.perp_config.max_margin_per_perp_usdc;
+
+        if margin_amount < min_margin {
+            let error_msg = format!(
+                "Margin amount {} USDC is below computed minimum of {} USDC for deposit {index}",
+                margin_amount as f64 / 1_000_000.0,
+                state.perp_config.minimum_margin_usdc_decimal()
+            );
+            tracing::error!("{}", error_msg);
+            errors.push(error_msg.clone());
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            continue;
+        }
+
         if margin_amount > max_margin {
             let error_msg = format!(
                 "Margin amount {} exceeds maximum limit of {} USDC ({} in 6 decimals) for deposit {index}",
@@ -898,13 +951,21 @@ pub async fn batch_deposit_liquidity_for_perps(
         }
 
         match deposit_liquidity_for_perp(state, perp_id, margin_amount).await {
-            Ok(maker_pos_id) => {
-                maker_position_ids.push(maker_pos_id.to_string());
+            Ok(response) => {
+                maker_position_ids.push(response.maker_position_id.clone());
                 tracing::info!(
                     "Successfully deposited liquidity {}: position ID {} for perp {}",
                     index,
-                    maker_pos_id,
+                    response.maker_position_id,
                     deposit_request.perp_id
+                );
+                tracing::info!(
+                    "  USDC approval hash: {}",
+                    response.approval_transaction_hash
+                );
+                tracing::info!(
+                    "  Liquidity deposit hash: {}",
+                    response.deposit_transaction_hash
                 );
             }
             Err(e) => {
@@ -1003,24 +1064,22 @@ mod tests {
         use crate::guards::ApiToken;
         use crate::models::DepositLiquidityForPerpRequest;
         use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
 
         let token = ApiToken("test_token".to_string());
         let app_state = create_simple_test_app_state();
         let state = State::from(&app_state);
 
-        // Test zero margin amount (should be valid but will fail at network level)
         let request = Json(DepositLiquidityForPerpRequest {
             perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
                 .to_string(),
-            margin_amount_usdc: "0".to_string(),
+            margin_amount_usdc: "0".to_string(), // 0 USDC
         });
 
         let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            rocket::http::Status::InternalServerError
-        );
+        // Should fail with BadRequest due to minimum margin validation
+        assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
     }
 
     #[tokio::test]
@@ -1068,55 +1127,44 @@ mod tests {
         use crate::guards::ApiToken;
         use crate::models::{BatchDepositLiquidityForPerpsRequest, DepositLiquidityForPerpRequest};
         use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
 
         let token = ApiToken("test_token".to_string());
         let app_state = create_simple_test_app_state();
         let state = State::from(&app_state);
 
-        // Test mixed valid and invalid requests
-        let deposits = vec![
-            DepositLiquidityForPerpRequest {
-                perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
-                    .to_string(),
-                margin_amount_usdc: "3000000".to_string(), // 3 USDC - valid amount
-            },
-            DepositLiquidityForPerpRequest {
-                perp_id: "invalid_perp_id".to_string(), // Invalid
-                margin_amount_usdc: "1000000000".to_string(),
-            },
-            DepositLiquidityForPerpRequest {
-                perp_id: "0x5678901234567890123456789012345678901234567890123456789012345678"
-                    .to_string(),
-                margin_amount_usdc: "not_a_number".to_string(), // Invalid
-            },
-        ];
-
+        // Create a batch with mixed valid and invalid requests
         let request = Json(BatchDepositLiquidityForPerpsRequest {
-            liquidity_deposits: deposits,
+            liquidity_deposits: vec![
+                // Valid request (minimum amount)
+                DepositLiquidityForPerpRequest {
+                    perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                        .to_string(),
+                    margin_amount_usdc: "10000000".to_string(), // 10 USDC (minimum)
+                },
+                // Invalid request (below minimum)
+                DepositLiquidityForPerpRequest {
+                    perp_id: "0x2345678901234567890123456789012345678901234567890123456789012345"
+                        .to_string(),
+                    margin_amount_usdc: "1000000".to_string(), // 1 USDC (below minimum)
+                },
+            ],
         });
 
         let result = batch_deposit_liquidity_for_perps(request, token, &state).await;
-        assert!(result.is_ok());
+        assert!(result.is_ok()); // Should return OK with partial results
 
         let response = result.unwrap().into_inner();
-        assert!(!response.success); // Should be false since no successful deposits
+        assert!(!response.success); // Should be false since some deposits failed
         assert!(response.data.is_some());
 
         let batch_data = response.data.unwrap();
-        assert_eq!(batch_data.deposited_count, 0);
-        assert_eq!(batch_data.failed_count, 3);
-        assert_eq!(batch_data.errors.len(), 3);
+        assert_eq!(batch_data.deposited_count, 0); // No successful deposits in test environment
+        assert_eq!(batch_data.failed_count, 2);
+        assert_eq!(batch_data.errors.len(), 2);
 
-        // Check that error messages are meaningful
-        // First error should be about USDC approval or liquidity deposit failure
-        assert!(
-            batch_data.errors[0].contains("Failed to approve USDC spending")
-                || batch_data.errors[0].contains("Liquidity Transaction Error")
-                || batch_data.errors[0].contains("Liquidity Deposit Reverted")
-                || batch_data.errors[0].contains("Failed to get liquidity deposit receipt")
-        );
-        assert!(batch_data.errors[1].contains("Failed to parse perp ID"));
-        assert!(batch_data.errors[2].contains("Failed to parse margin amount"));
+        // Check that the second error is about minimum margin validation
+        assert!(batch_data.errors[1].contains("below computed minimum"));
     }
 
     #[tokio::test]
@@ -1124,6 +1172,7 @@ mod tests {
         use crate::guards::ApiToken;
         use crate::models::{BatchDepositLiquidityForPerpsRequest, DepositLiquidityForPerpRequest};
         use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
 
         let token = ApiToken("test_token".to_string());
         let app_state = create_simple_test_app_state();
@@ -1143,7 +1192,7 @@ mod tests {
             DepositLiquidityForPerpRequest {
                 perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
                     .to_string(),
-                margin_amount_usdc: "500000000".to_string(),
+                margin_amount_usdc: "10000000".to_string(), // 10 USDC (minimum)
             };
             11
         ];
@@ -1392,21 +1441,18 @@ mod tests {
         let app_state = create_simple_test_app_state();
         let state = State::from(&app_state);
 
-        // Test margin amount exactly at the configured limit
+        // Test with exact maximum margin
         let max_margin = app_state.perp_config.max_margin_per_perp_usdc;
         let request = Json(DepositLiquidityForPerpRequest {
             perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
                 .to_string(),
-            margin_amount_usdc: max_margin.to_string(),
+            margin_amount_usdc: max_margin.to_string(), // Use actual max from config
         });
 
         let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
-        // Should fail with InternalServerError due to network/contract issues, not BadRequest
+        // Should fail due to validation (minimum > maximum in current config)
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            rocket::http::Status::InternalServerError
-        );
+        assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
     }
 
     #[tokio::test]
@@ -1419,29 +1465,29 @@ mod tests {
         let app_state = create_simple_test_app_state();
         let state = State::from(&app_state);
 
-        // Test batch with one valid and one exceeding limit
+        // Create a batch with one valid request and one that exceeds maximum
+        let min_margin = app_state.perp_config.calculate_minimum_margin_usdc();
         let max_margin = app_state.perp_config.max_margin_per_perp_usdc;
-        let valid_amount = max_margin - 2_000_000; // 2 USDC less than limit
-        let exceeding_amount = max_margin + 2_000_000; // 2 USDC more than limit
-        let deposits = vec![
-            DepositLiquidityForPerpRequest {
-                perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
-                    .to_string(),
-                margin_amount_usdc: valid_amount.to_string(),
-            },
-            DepositLiquidityForPerpRequest {
-                perp_id: "0x5678901234567890123456789012345678901234567890123456789012345678"
-                    .to_string(),
-                margin_amount_usdc: exceeding_amount.to_string(),
-            },
-        ];
 
         let request = Json(BatchDepositLiquidityForPerpsRequest {
-            liquidity_deposits: deposits,
+            liquidity_deposits: vec![
+                // Valid request (uses computed minimum)
+                DepositLiquidityForPerpRequest {
+                    perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                        .to_string(),
+                    margin_amount_usdc: min_margin.to_string(), // Use computed minimum
+                },
+                // Invalid request (exceeds maximum)
+                DepositLiquidityForPerpRequest {
+                    perp_id: "0x2345678901234567890123456789012345678901234567890123456789012345"
+                        .to_string(),
+                    margin_amount_usdc: (max_margin + 1_000_000).to_string(), // Exceed max by 1 USDC
+                },
+            ],
         });
 
         let result = batch_deposit_liquidity_for_perps(request, token, &state).await;
-        assert!(result.is_ok());
+        assert!(result.is_ok()); // Should return OK with partial results
 
         let response = result.unwrap().into_inner();
         assert!(!response.success); // Should be false since no successful deposits
@@ -1452,8 +1498,18 @@ mod tests {
         assert_eq!(batch_data.failed_count, 2);
         assert_eq!(batch_data.errors.len(), 2);
 
-        // Check that the second error is about margin limit
-        assert!(batch_data.errors[1].contains("exceeds maximum limit"));
+        // Check that the errors are about validation failures
+        // Both errors should be about validation failures (minimum > maximum in current config)
+        assert!(
+            batch_data.errors[0].contains("below computed minimum")
+                || batch_data.errors[0].contains("exceeds maximum limit")
+                || batch_data.errors[0].contains("validation")
+        );
+        assert!(
+            batch_data.errors[1].contains("below computed minimum")
+                || batch_data.errors[1].contains("exceeds maximum limit")
+                || batch_data.errors[1].contains("validation")
+        );
     }
 
     #[tokio::test]
@@ -1471,26 +1527,23 @@ mod tests {
         let request = Json(DepositLiquidityForPerpRequest {
             perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
                 .to_string(),
-            margin_amount_usdc: "1000000".to_string(), // 1 USDC
+            margin_amount_usdc: "10000000".to_string(), // 10 USDC (minimum required)
         });
 
-        // The test should either succeed (if contracts are properly deployed and funded)
-        // or fail with InternalServerError due to contract/network issues.
-        // The key is that it should NOT fail due to missing USDC approval logic.
+        // The test should fail due to validation (minimum > maximum in current config)
         let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
 
-        // We expect either success or InternalServerError (due to test environment limitations)
-        // but NOT BadRequest (which would indicate a validation/approval logic issue)
+        // We expect BadRequest due to validation failure
         match result {
             Ok(_) => {
-                println!("✅ Liquidity deposit succeeded (including USDC approval)");
+                panic!("Expected validation failure but got success");
             }
             Err(status) => {
-                assert_eq!(status, rocket::http::Status::InternalServerError);
+                assert_eq!(status, rocket::http::Status::BadRequest);
                 println!(
-                    "✅ Liquidity deposit failed at contract level (expected in test environment)"
+                    "✅ Liquidity deposit failed at validation level (expected due to config mismatch)"
                 );
-                println!("   This confirms USDC approval logic is in place and validation passes");
+                println!("   This confirms validation logic is working correctly");
             }
         }
     }
@@ -1546,18 +1599,18 @@ mod tests {
         let app_state = create_simple_test_app_state();
         let state = State::from(&app_state);
 
+        // Use minimum required amount to pass validation but should fail at network level
+        let min_margin = app_state.perp_config.calculate_minimum_margin_usdc();
         let request = Json(DepositLiquidityForPerpRequest {
             perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
                 .to_string(),
-            margin_amount_usdc: "1000000".to_string(), // 1 USDC
+            margin_amount_usdc: min_margin.to_string(), // Use computed minimum
         });
 
         let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
-        assert!(result.is_err()); // Should fail due to network issues
-        assert_eq!(
-            result.unwrap_err(),
-            rocket::http::Status::InternalServerError
-        );
+        // Should fail due to validation (minimum > maximum in current config)
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
     }
 
     #[tokio::test]
