@@ -1,5 +1,4 @@
 use alloy::primitives::{Address, B256, Bytes};
-use alloy::providers::Provider;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
 use std::str::FromStr;
@@ -42,33 +41,17 @@ async fn create_beacon_via_factory(
 
     tracing::info!("Transaction sent, waiting for receipt...");
 
-    let tx_hash = pending_tx.watch().await.map_err(|e| {
-        let error_msg = format!("Failed to watch transaction: {e}");
+    // Use get_receipt() for faster polling instead of watch() + separate receipt call
+    let receipt = pending_tx.get_receipt().await.map_err(|e| {
+        let error_msg = format!("Failed to get beacon creation receipt: {e}");
         tracing::error!("{}", error_msg);
-        tracing::error!("Transaction watch error details: {:?}", e);
+        tracing::error!("Receipt error details: {:?}", e);
         sentry::capture_message(&error_msg, sentry::Level::Error);
         error_msg
     })?;
 
+    let tx_hash = receipt.transaction_hash;
     tracing::info!("Transaction confirmed with hash: {:?}", tx_hash);
-
-    // Get the full receipt for parsing events
-    let receipt = state
-        .provider
-        .get_transaction_receipt(tx_hash)
-        .await
-        .map_err(|e| {
-            let error_msg = format!("Failed to get transaction receipt: {e}");
-            tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
-            error_msg
-        })?
-        .ok_or_else(|| {
-            let error_msg = "Transaction receipt not found";
-            tracing::error!("{}", error_msg);
-            sentry::capture_message(error_msg, sentry::Level::Error);
-            error_msg.to_string()
-        })?;
 
     tracing::info!(
         "Beacon creation confirmed in block {:?}",
@@ -116,27 +99,21 @@ async fn register_beacon_with_registry(
 
     tracing::info!("Registration transaction sent, waiting for receipt...");
 
-    let tx_hash = pending_tx.watch().await.map_err(|e| {
-        let error_msg = format!("Failed to watch registration transaction: {e}");
+    // Use get_receipt() for faster confirmation instead of watch()
+    let receipt = pending_tx.get_receipt().await.map_err(|e| {
+        let error_msg = format!("Failed to get registration receipt: {e}");
         tracing::error!("{}", error_msg);
-        tracing::error!("Transaction watch error details: {:?}", e);
+        tracing::error!("Receipt error details: {:?}", e);
         sentry::capture_message(&error_msg, sentry::Level::Error);
         error_msg
     })?;
 
+    let tx_hash = receipt.transaction_hash;
     tracing::info!(
         "Registration transaction confirmed with hash: {:?}",
         tx_hash
     );
-
-    // Get the full receipt for debugging (optional, don't fail if it fails)
-    if let Ok(Some(receipt)) = state.provider.get_transaction_receipt(tx_hash).await {
-        tracing::debug!("Receipt details:");
-        tracing::debug!("  - Block number: {:?}", receipt.block_number);
-        tracing::debug!("  - Gas used: {:?}", receipt.gas_used);
-        tracing::debug!("  - Status: {:?}", receipt.status());
-        tracing::debug!("  - Logs count: {}", receipt.logs().len());
-    }
+    tracing::info!("Registration confirmed in block {:?}", receipt.block_number);
 
     sentry::capture_message(
         &format!("Beacon {beacon_address} registered with registry {registry_address}"),

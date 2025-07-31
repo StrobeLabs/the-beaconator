@@ -193,12 +193,12 @@ pub async fn fund_guest_wallet(
         .value(U256::from(eth_amount));
 
     let eth_tx_hash = match state.provider.send_transaction(tx_request).await {
-        Ok(pending) => match pending.watch().await {
-            Ok(hash) => hash,
+        Ok(pending) => match pending.get_receipt().await {
+            Ok(receipt) => receipt.transaction_hash,
             Err(e) => {
-                tracing::error!("Failed to confirm ETH transaction: {}", e);
+                tracing::error!("Failed to get ETH transaction receipt: {}", e);
                 sentry::capture_message(
-                    &format!("Failed to confirm ETH transaction: {e}"),
+                    &format!("Failed to get ETH transaction receipt: {e}"),
                     sentry::Level::Error,
                 );
                 return Err((
