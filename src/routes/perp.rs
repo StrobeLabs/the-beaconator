@@ -439,7 +439,10 @@ async fn deploy_perp_for_beacon(
     let perp_id = parse_perp_created_event(&receipt, state.perp_hook_address)?;
 
     tracing::info!("Successfully deployed perp with ID: {}", perp_id);
-    tracing::info!("Perp is managed by PerpHook contract: {}", state.perp_hook_address);
+    tracing::info!(
+        "Perp is managed by PerpHook contract: {}",
+        state.perp_hook_address
+    );
 
     Ok(DeployPerpForBeaconResponse {
         perp_id: perp_id.to_string(),
@@ -649,12 +652,13 @@ pub async fn deploy_perp_for_beacon_endpoint(
         Ok(response) => {
             let message = "Perp deployed successfully!";
             tracing::info!("{}", message);
-            tracing::info!("Perp address: {}", response.perp_address);
+            tracing::info!("Perp ID: {}", response.perp_id);
+            tracing::info!("PerpHook address: {}", response.perp_hook_address);
             tracing::info!("Transaction hash: {}", response.transaction_hash);
             sentry::capture_message(
                 &format!(
-                    "Perp deployed successfully for beacon {beacon_address}, perp address: {}",
-                    response.perp_address
+                    "Perp deployed successfully for beacon {beacon_address}, perp ID: {}",
+                    response.perp_id
                 ),
                 sentry::Level::Info,
             );
