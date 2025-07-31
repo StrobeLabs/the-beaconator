@@ -1,7 +1,10 @@
 use alloy::primitives::{Address, B256, Bytes};
+use alloy::providers::Provider;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
 use std::str::FromStr;
+use std::time::Duration;
+use tokio::time::timeout;
 use tracing;
 
 use super::{IBeacon, IBeaconFactory, IBeaconRegistry};
@@ -41,14 +44,88 @@ async fn create_beacon_via_factory(
 
     tracing::info!("Transaction sent, waiting for receipt...");
 
-    // Use get_receipt() for faster polling instead of watch() + separate receipt call
-    let receipt = pending_tx.get_receipt().await.map_err(|e| {
-        let error_msg = format!("Failed to get beacon creation receipt: {e}");
-        tracing::error!("{}", error_msg);
-        tracing::error!("Receipt error details: {:?}", e);
-        sentry::capture_message(&error_msg, sentry::Level::Error);
-        error_msg
-    })?;
+    // Get the transaction hash before calling get_receipt() (which takes ownership)
+    let tx_hash = *pending_tx.tx_hash();
+    tracing::info!("Transaction hash: {:?}", tx_hash);
+
+    // Use get_receipt() with timeout and fallback to on-chain check
+    let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
+        Ok(Ok(receipt)) => {
+            tracing::info!("Transaction confirmed via get_receipt()");
+            receipt
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("get_receipt() failed: {}", e);
+            tracing::info!("Falling back to on-chain transaction check...");
+
+            tracing::info!("Checking transaction {} on-chain...", tx_hash);
+
+            // Try to get the receipt directly from the provider with timeout
+            match timeout(
+                Duration::from_secs(30),
+                state.provider.get_transaction_receipt(tx_hash),
+            )
+            .await
+            {
+                Ok(Ok(Some(receipt))) => {
+                    tracing::info!("Transaction found on-chain via direct receipt lookup");
+                    receipt
+                }
+                Ok(Ok(None)) => {
+                    let error_msg =
+                        format!("Transaction {tx_hash} not found on-chain after timeout");
+                    tracing::error!("{}", error_msg);
+                    tracing::error!("This could indicate:");
+                    tracing::error!("  - Transaction was dropped/replaced");
+                    tracing::error!("  - Network issues prevented confirmation");
+                    tracing::error!("  - Transaction is still pending");
+                    sentry::capture_message(&error_msg, sentry::Level::Error);
+                    return Err(error_msg);
+                }
+                Ok(Err(e)) => {
+                    let error_msg = format!("Failed to check transaction {tx_hash} on-chain: {e}");
+                    tracing::error!("{}", error_msg);
+                    tracing::error!("Original get_receipt() error: {}", e);
+                    sentry::capture_message(&error_msg, sentry::Level::Error);
+                    return Err(error_msg);
+                }
+                Err(_) => {
+                    let error_msg = format!("Timeout checking transaction {tx_hash} on-chain");
+                    tracing::error!("{}", error_msg);
+                    tracing::error!("Network may be slow or unresponsive");
+                    sentry::capture_message(&error_msg, sentry::Level::Error);
+                    return Err(error_msg);
+                }
+            }
+        }
+        Err(_) => {
+            let error_msg = format!("Timeout waiting for transaction {tx_hash} confirmation");
+            tracing::error!("{}", error_msg);
+            tracing::error!("Transaction may still be pending or network is slow");
+            tracing::info!(
+                "Checking if transaction {} is already confirmed...",
+                tx_hash
+            );
+
+            // Final fallback: check if transaction is already confirmed
+            match is_transaction_confirmed(state, tx_hash).await {
+                Ok(Some(receipt)) => {
+                    tracing::info!("Transaction {} was already confirmed!", tx_hash);
+                    receipt
+                }
+                Ok(None) => {
+                    let error_msg =
+                        format!("Transaction {tx_hash} not found on-chain after timeout");
+                    tracing::error!("{}", error_msg);
+                    return Err(error_msg);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to check transaction status: {}", e);
+                    return Err(error_msg);
+                }
+            }
+        }
+    };
 
     let tx_hash = receipt.transaction_hash;
     tracing::info!("Transaction confirmed with hash: {:?}", tx_hash);
@@ -69,6 +146,77 @@ async fn create_beacon_via_factory(
     Ok(beacon_address)
 }
 
+// Helper function to check if a transaction is already confirmed on-chain
+async fn is_transaction_confirmed(
+    state: &AppState,
+    tx_hash: B256,
+) -> Result<Option<alloy::rpc::types::TransactionReceipt>, String> {
+    tracing::info!(
+        "Checking if transaction {} is already confirmed on-chain...",
+        tx_hash
+    );
+
+    match state.provider.get_transaction_receipt(tx_hash).await {
+        Ok(Some(receipt)) => {
+            tracing::info!(
+                "Transaction {} is confirmed in block {}",
+                tx_hash,
+                receipt.block_number.unwrap_or(0)
+            );
+            Ok(Some(receipt))
+        }
+        Ok(None) => {
+            tracing::info!(
+                "Transaction {} not found on-chain (may be pending or dropped)",
+                tx_hash
+            );
+            Ok(None)
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to check transaction {tx_hash} on-chain: {e}");
+            tracing::error!("{}", error_msg);
+            Err(error_msg)
+        }
+    }
+}
+
+// Helper function to check if a beacon is already registered
+async fn is_beacon_registered(
+    state: &AppState,
+    beacon_address: Address,
+    registry_address: Address,
+) -> Result<bool, String> {
+    tracing::info!(
+        "Checking if beacon {} is already registered...",
+        beacon_address
+    );
+
+    // Try to call the registry's beacons(address) function
+    let result = state
+        .provider
+        .call(
+            alloy::rpc::types::TransactionRequest::default()
+                .to(registry_address)
+                .input(alloy::primitives::hex!("8da5cb5b").to_vec().into()), // selector for beacons(address)
+        )
+        .await;
+
+    match result {
+        Ok(_) => {
+            tracing::warn!("Beacon {} appears to be already registered", beacon_address);
+            Ok(true)
+        }
+        Err(e) => {
+            tracing::info!(
+                "Beacon {} appears to be unregistered: {}",
+                beacon_address,
+                e
+            );
+            Ok(false)
+        }
+    }
+}
+
 // Helper function to register a beacon with a registry
 async fn register_beacon_with_registry(
     state: &AppState,
@@ -81,6 +229,44 @@ async fn register_beacon_with_registry(
         registry_address
     );
 
+    // Pre-registration validation
+    tracing::info!("Pre-registration validation:");
+    tracing::info!("  - Beacon address: {}", beacon_address);
+    tracing::info!("  - Registry address: {}", registry_address);
+    tracing::info!("  - Wallet address: {}", state.wallet_address);
+
+    // Check if beacon is already registered
+    tracing::info!("Checking if beacon is already registered...");
+    let is_registered = is_beacon_registered(state, beacon_address, registry_address).await?;
+
+    if is_registered {
+        let error_msg = format!(
+            "Beacon {beacon_address} is already registered with registry {registry_address}"
+        );
+        tracing::error!("{}", error_msg);
+        tracing::error!("Skipping registration to avoid revert");
+        return Err(error_msg);
+    }
+
+    // Validate beacon contract exists and has code
+    tracing::info!("Validating beacon contract...");
+    match state.provider.get_code_at(beacon_address).await {
+        Ok(code) => {
+            if code.is_empty() {
+                let error_msg = format!("Beacon address {beacon_address} has no deployed code");
+                tracing::error!("{}", error_msg);
+                return Err(error_msg);
+            } else {
+                tracing::info!("Beacon contract has {} bytes of code", code.len());
+            }
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to check beacon contract: {e}");
+            tracing::error!("{}", error_msg);
+            return Err(error_msg);
+        }
+    }
+
     // Create contract instance using the sol! generated interface
     let contract = IBeaconRegistry::new(registry_address, &*state.provider);
 
@@ -90,23 +276,142 @@ async fn register_beacon_with_registry(
         .send()
         .await
         .map_err(|e| {
+            let error_type = match e.to_string().as_str() {
+                s if s.contains("execution reverted") => "Contract Execution Reverted",
+                s if s.contains("insufficient funds") => "Insufficient Funds",
+                s if s.contains("gas") => "Gas Related Error",
+                s if s.contains("nonce") => "Nonce Error",
+                s if s.contains("connection") || s.contains("timeout") => {
+                    "Network Connection Error"
+                }
+                s if s.contains("unauthorized") || s.contains("forbidden") => "Authorization Error",
+                _ => "Unknown Transaction Error",
+            };
+
             let error_msg = format!("Failed to send registerBeacon transaction: {e}");
             tracing::error!("{}", error_msg);
+            tracing::error!("Error type: {}", error_type);
             tracing::error!("Transaction send error details: {:?}", e);
+
+            // Add specific troubleshooting hints based on error type
+            match error_type {
+                "Contract Execution Reverted" => {
+                    tracing::error!("Troubleshooting hints:");
+                    tracing::error!("  - Check if beacon is already registered");
+                    tracing::error!("  - Verify beacon contract is valid and deployed");
+                    tracing::error!("  - Check if registry contract is properly deployed");
+                    tracing::error!("  - Verify wallet has required permissions");
+                    tracing::error!("  - Check if beacon implements expected interface");
+                }
+                "Insufficient Funds" => {
+                    tracing::error!("Troubleshooting hints:");
+                    tracing::error!("  - Check wallet ETH balance for gas fees");
+                }
+                "Gas Related Error" => {
+                    tracing::error!("Troubleshooting hints:");
+                    tracing::error!("  - Try increasing gas limit");
+                    tracing::error!("  - Check current network gas prices");
+                }
+                _ => {
+                    tracing::error!("Troubleshooting hints:");
+                    tracing::error!("  - Check network connectivity");
+                    tracing::error!("  - Verify contract addresses are correct");
+                }
+            }
+
             sentry::capture_message(&error_msg, sentry::Level::Error);
             error_msg
         })?;
 
     tracing::info!("Registration transaction sent, waiting for receipt...");
 
-    // Use get_receipt() for faster confirmation instead of watch()
-    let receipt = pending_tx.get_receipt().await.map_err(|e| {
-        let error_msg = format!("Failed to get registration receipt: {e}");
-        tracing::error!("{}", error_msg);
-        tracing::error!("Receipt error details: {:?}", e);
-        sentry::capture_message(&error_msg, sentry::Level::Error);
-        error_msg
-    })?;
+    // Get the transaction hash before calling get_receipt() (which takes ownership)
+    let tx_hash = *pending_tx.tx_hash();
+    tracing::info!("Registration transaction hash: {:?}", tx_hash);
+
+    // Use get_receipt() with timeout and fallback to on-chain check
+    let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
+        Ok(Ok(receipt)) => {
+            tracing::info!("Registration confirmed via get_receipt()");
+            receipt
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("get_receipt() failed for registration: {}", e);
+            tracing::info!("Falling back to on-chain registration check...");
+
+            tracing::info!("Checking registration transaction {} on-chain...", tx_hash);
+
+            // Try to get the receipt directly from the provider with timeout
+            match timeout(
+                Duration::from_secs(30),
+                state.provider.get_transaction_receipt(tx_hash),
+            )
+            .await
+            {
+                Ok(Ok(Some(receipt))) => {
+                    tracing::info!("Registration found on-chain via direct receipt lookup");
+                    receipt
+                }
+                Ok(Ok(None)) => {
+                    let error_msg = format!(
+                        "Registration transaction {tx_hash} not found on-chain after timeout"
+                    );
+                    tracing::error!("{}", error_msg);
+                    tracing::error!("This could indicate:");
+                    tracing::error!("  - Registration transaction was dropped/replaced");
+                    tracing::error!("  - Network issues prevented confirmation");
+                    tracing::error!("  - Registration is still pending");
+                    sentry::capture_message(&error_msg, sentry::Level::Error);
+                    return Err(error_msg);
+                }
+                Ok(Err(e)) => {
+                    let error_msg =
+                        format!("Failed to check registration transaction {tx_hash} on-chain: {e}");
+                    tracing::error!("{}", error_msg);
+                    tracing::error!("Original get_receipt() error: {}", e);
+                    sentry::capture_message(&error_msg, sentry::Level::Error);
+                    return Err(error_msg);
+                }
+                Err(_) => {
+                    let error_msg =
+                        format!("Timeout checking registration transaction {tx_hash} on-chain");
+                    tracing::error!("{}", error_msg);
+                    tracing::error!("Network may be slow or unresponsive");
+                    sentry::capture_message(&error_msg, sentry::Level::Error);
+                    return Err(error_msg);
+                }
+            }
+        }
+        Err(_) => {
+            let error_msg =
+                format!("Timeout waiting for registration transaction {tx_hash} confirmation");
+            tracing::error!("{}", error_msg);
+            tracing::error!("Registration may still be pending or network is slow");
+            tracing::info!(
+                "Checking if registration transaction {} is already confirmed...",
+                tx_hash
+            );
+
+            // Final fallback: check if transaction is already confirmed
+            match is_transaction_confirmed(state, tx_hash).await {
+                Ok(Some(receipt)) => {
+                    tracing::info!("Registration transaction {tx_hash} was already confirmed!");
+                    receipt
+                }
+                Ok(None) => {
+                    let error_msg = format!(
+                        "Registration transaction {tx_hash} not found on-chain after timeout"
+                    );
+                    tracing::error!("{}", error_msg);
+                    return Err(error_msg);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to check registration status: {}", e);
+                    return Err(error_msg);
+                }
+            }
+        }
+    };
 
     let tx_hash = receipt.transaction_hash;
     tracing::info!(
