@@ -94,6 +94,13 @@ PERP_HOOK_ADDRESS=0x...                    # PerpHook contract address
 - Network calls fail gracefully in test environment
 - Serial test execution with `#[serial]` for stateful tests
 
+### Anvil Resource Optimization
+- Tests use shared Anvil instances to reduce memory overhead
+- Regular cleanup recommended after test runs using `scripts/anvil-cleanup.sh` or `clean-anvil` alias
+- For manual Anvil usage, use resource-optimized settings:
+  - `anvil --state-interval 0 --no-storage-caching --memory-limit 128`
+- Test Anvil instances use 1-second block times for faster execution
+
 ## Alloy Best Practices
 
 ### Modern Provider Pattern

@@ -699,7 +699,7 @@ async fn deposit_liquidity_for_perp(
     tracing::info!("USDC approval transaction hash: {:?}", approval_tx_hash);
 
     // Use get_receipt() with timeout and fallback like beacon endpoints
-    let approval_receipt = match timeout(Duration::from_secs(60), pending_approval.get_receipt())
+    let approval_receipt = match timeout(Duration::from_secs(90), pending_approval.get_receipt())
         .await
     {
         Ok(Ok(receipt)) => {
@@ -744,9 +744,50 @@ async fn deposit_liquidity_for_perp(
             }
         }
         Err(_) => {
-            let error_msg = "Timeout waiting for USDC approval receipt".to_string();
-            tracing::error!("{}", error_msg);
-            return Err(error_msg);
+            tracing::warn!("Initial get_receipt() timed out for USDC approval, trying fallback...");
+            tracing::info!(
+                "Checking USDC approval transaction {} on-chain...",
+                approval_tx_hash
+            );
+
+            // Fallback to direct provider check with extended timeout for approval transactions
+            match timeout(
+                Duration::from_secs(60),
+                state.provider.get_transaction_receipt(approval_tx_hash),
+            )
+            .await
+            {
+                Ok(Ok(Some(receipt))) => {
+                    tracing::info!("USDC approval found on-chain via fallback receipt lookup");
+                    receipt
+                }
+                Ok(Ok(None)) => {
+                    let error_msg = format!(
+                        "USDC approval transaction {approval_tx_hash} not found on-chain after timeout"
+                    );
+                    tracing::error!("{}", error_msg);
+                    tracing::error!("This could indicate:");
+                    tracing::error!("  - USDC approval transaction was dropped/replaced");
+                    tracing::error!("  - Network issues prevented confirmation");
+                    tracing::error!("  - Transaction is still pending (check gas price)");
+                    return Err(error_msg);
+                }
+                Ok(Err(e)) => {
+                    let error_msg = format!(
+                        "Failed to check USDC approval transaction {approval_tx_hash} on-chain: {e}"
+                    );
+                    tracing::error!("{}", error_msg);
+                    return Err(error_msg);
+                }
+                Err(_) => {
+                    let error_msg = format!(
+                        "Final timeout waiting for USDC approval receipt {approval_tx_hash}"
+                    );
+                    tracing::error!("{}", error_msg);
+                    tracing::error!("All fallback methods exhausted for USDC approval");
+                    return Err(error_msg);
+                }
+            }
         }
     };
 
