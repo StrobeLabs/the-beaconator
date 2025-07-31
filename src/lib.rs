@@ -193,6 +193,12 @@ pub async fn create_rocket() -> Rocket<Build> {
     // Load perp configuration
     let perp_config = load_perp_config();
 
+    // Validate perp configuration on startup
+    if let Err(e) = perp_config.validate() {
+        tracing::error!("PerpConfig validation failed: {}", e);
+        panic!("Invalid PerpConfig: {e}");
+    }
+
     // Log loaded configuration for debugging
     tracing::info!("Perp configuration loaded:");
     tracing::info!(
