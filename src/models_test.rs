@@ -7,16 +7,17 @@ mod tests {
         let config = PerpConfig::default();
         let result = config.validate();
         if let Err(e) = &result {
-            println!("Validation error: {}", e);
+            println!("Validation error: {e}");
         }
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_perp_config_validation_invalid_leverage_bounds() {
-        let mut config = PerpConfig::default();
-        config.min_opening_leverage_x96 = 100 * 2_u128.pow(96); // 100x
-        config.max_opening_leverage_x96 = 10 * 2_u128.pow(96); // 10x (less than min)
+        let config = PerpConfig {
+            min_opening_leverage_x96: 100 * 2_u128.pow(96), // 100x
+            ..Default::default()
+        };
 
         let result = config.validate();
         assert!(result.is_err());
@@ -25,9 +26,10 @@ mod tests {
 
     #[test]
     fn test_perp_config_validation_invalid_margin_bounds() {
-        let mut config = PerpConfig::default();
-        config.min_margin_usdc = 1_000_000_000; // 1000 USDC
-        config.max_margin_usdc = 100_000_000; // 100 USDC (less than min)
+        let config = PerpConfig {
+            min_margin_usdc: 1_500_000_000, // 1500 USDC (exceeds max of 1000 USDC)
+            ..Default::default()
+        };
 
         let result = config.validate();
         assert!(result.is_err());
@@ -36,9 +38,11 @@ mod tests {
 
     #[test]
     fn test_perp_config_validation_liquidation_leverage_too_low() {
-        let mut config = PerpConfig::default();
-        config.max_opening_leverage_x96 = 10 * 2_u128.pow(96); // 10x
-        config.liquidation_leverage_x96 = 5 * 2_u128.pow(96); // 5x (less than max opening)
+        let config = PerpConfig {
+            max_opening_leverage_x96: 10 * 2_u128.pow(96), // 10x
+            liquidation_leverage_x96: 5 * 2_u128.pow(96),  // 5x (less than max opening)
+            ..Default::default()
+        };
 
         let result = config.validate();
         assert!(result.is_err());
@@ -51,9 +55,11 @@ mod tests {
 
     #[test]
     fn test_perp_config_validation_invalid_tick_range() {
-        let mut config = PerpConfig::default();
-        config.default_tick_lower = 100;
-        config.default_tick_upper = 100; // Same as lower
+        let config = PerpConfig {
+            default_tick_lower: 100,
+            default_tick_upper: 100, // Same as lower
+            ..Default::default()
+        };
 
         let result = config.validate();
         assert!(result.is_err());
@@ -62,10 +68,12 @@ mod tests {
 
     #[test]
     fn test_perp_config_validation_unaligned_ticks() {
-        let mut config = PerpConfig::default();
-        config.tick_spacing = 30;
-        config.default_tick_lower = -23015; // Not aligned to 30
-        config.default_tick_upper = 23010;
+        let config = PerpConfig {
+            tick_spacing: 30,
+            default_tick_lower: -23015, // Not aligned to 30
+            default_tick_upper: 23010,
+            ..Default::default()
+        };
 
         let result = config.validate();
         assert!(result.is_err());
@@ -74,8 +82,10 @@ mod tests {
 
     #[test]
     fn test_perp_config_validation_calculated_min_exceeds_max() {
-        let mut config = PerpConfig::default();
-        config.max_margin_per_perp_usdc = 5_000_000; // 5 USDC (less than calculated minimum of 10)
+        let config = PerpConfig {
+            max_margin_per_perp_usdc: 5_000_000, // 5 USDC (less than calculated minimum of 10)
+            ..Default::default()
+        };
 
         let result = config.validate();
         assert!(result.is_err());
@@ -86,9 +96,11 @@ mod tests {
 
     #[test]
     fn test_perp_config_validation_excessive_leverage_with_min_margin() {
-        let mut config = PerpConfig::default();
-        // Set a very high scaling factor that would produce excessive leverage
-        config.liquidity_scaling_factor = 450_000_000_000; // 1000x higher than reasonable
+        let config = PerpConfig {
+            // Set a very high scaling factor that would produce excessive leverage
+            liquidity_scaling_factor: 450_000_000_000, // 1000x higher than reasonable
+            ..Default::default()
+        };
 
         let result = config.validate();
         // With the new pragmatic leverage calculation, this might not fail
@@ -126,25 +138,16 @@ mod tests {
         for (margin, label) in test_cases {
             let leverage = config
                 .calculate_expected_leverage(margin)
-                .expect(&format!("Should calculate leverage for {}", label));
-
-            println!("{} -> {:.2}x leverage", label, leverage);
-
-            // Verify leverage decreases as margin increases
+                .unwrap_or_else(|| panic!("Should calculate leverage for {label}"));
+            println!("{label} -> {leverage:.2}x leverage");
             assert!(
                 leverage < previous_leverage,
-                "{} leverage ({:.2}x) should be less than previous ({:.2}x)",
-                label,
-                leverage,
-                previous_leverage
+                "{label} leverage ({leverage:.2}x) should be less than previous ({previous_leverage:.2}x)"
             );
-
-            // Verify leverage is within reasonable bounds
-            assert!(leverage > 0.0, "{} leverage should be positive", label);
+            assert!(leverage > 0.0, "{label} leverage should be positive");
             assert!(
                 leverage <= 1000.0,
-                "{} leverage should not exceed 1000x cap",
-                label
+                "{label} leverage should not exceed 1000x cap"
             );
 
             previous_leverage = leverage;

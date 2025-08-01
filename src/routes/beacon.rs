@@ -7,7 +7,10 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tracing;
 
-use super::{IBeacon, IBeaconFactory, IBeaconRegistry, sync_wallet_nonce, get_fresh_nonce_from_alternate, is_nonce_error, execute_transaction_serialized};
+use super::{
+    IBeacon, IBeaconFactory, IBeaconRegistry, execute_transaction_serialized,
+    get_fresh_nonce_from_alternate, is_nonce_error, sync_wallet_nonce,
+};
 use crate::guards::ApiToken;
 use crate::models::{
     ApiResponse, AppState, BatchCreatePerpcityBeaconRequest, BatchCreatePerpcityBeaconResponse,
@@ -55,12 +58,12 @@ async fn create_beacon_via_factory(
                 // Try alternate RPC if available
                 if let Some(alternate_provider) = &state.alternate_provider {
                     tracing::info!("Trying beacon creation with alternate RPC");
-                    
+
                     // Get fresh nonce from alternate RPC to avoid nonce conflicts
                     if let Err(nonce_error) = get_fresh_nonce_from_alternate(state).await {
                         tracing::warn!("Could not sync nonce with alternate RPC: {}", nonce_error);
                     }
-                    
+
                     let alt_contract = IBeaconFactory::new(factory_address, &**alternate_provider);
 
                     match alt_contract.createBeacon(owner_address).send().await {
@@ -391,12 +394,12 @@ async fn register_beacon_with_registry(
                 // Try alternate RPC if available
                 if let Some(alternate_provider) = &state.alternate_provider {
                     tracing::info!("Trying beacon registration with alternate RPC");
-                    
+
                     // Get fresh nonce from alternate RPC to avoid nonce conflicts
                     if let Err(nonce_error) = get_fresh_nonce_from_alternate(state).await {
                         tracing::warn!("Could not sync nonce with alternate RPC: {}", nonce_error);
                     }
-                    
+
                     let alt_contract =
                         IBeaconRegistry::new(registry_address, &**alternate_provider);
 
@@ -923,7 +926,6 @@ pub async fn update_beacon(
     }))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1024,14 +1026,14 @@ mod tests {
 
         // Test count = 0 (invalid)
         let request = Json(BatchCreatePerpcityBeaconRequest { count: 0 });
-        let result = batch_create_perpcity_beacon(request, token, &state).await;
+        let result = batch_create_perpcity_beacon(request, token, state).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
 
         // Test count > 100 (invalid)
         let token2 = ApiToken("test_token".to_string());
         let request2 = Json(BatchCreatePerpcityBeaconRequest { count: 101 });
-        let result2 = batch_create_perpcity_beacon(request2, token2, &state).await;
+        let result2 = batch_create_perpcity_beacon(request2, token2, state).await;
         assert!(result2.is_err());
         assert_eq!(result2.unwrap_err(), rocket::http::Status::BadRequest);
     }
@@ -1049,7 +1051,7 @@ mod tests {
 
         // Test valid count - this will fail at network level but should return partial results
         let request = Json(BatchCreatePerpcityBeaconRequest { count: 3 });
-        let result = batch_create_perpcity_beacon(request, token, &state).await;
+        let result = batch_create_perpcity_beacon(request, token, state).await;
 
         // Should return OK with failure details, not InternalServerError
         assert!(result.is_ok());
@@ -1128,7 +1130,7 @@ mod tests {
         assert!(balance > alloy::primitives::U256::ZERO);
 
         // Test the endpoint - this will fail because we don't have actual contracts deployed
-        let result = create_perpcity_beacon(token, &state).await;
+        let result = create_perpcity_beacon(token, state).await;
         assert!(result.is_err());
         // The error should be InternalServerError (contract call failed)
         assert_eq!(
@@ -1281,7 +1283,7 @@ mod tests {
         let state = State::from(&app_state);
 
         let request = Json(BatchCreatePerpcityBeaconRequest { count: 2 });
-        let result = batch_create_perpcity_beacon(request, token, &state).await;
+        let result = batch_create_perpcity_beacon(request, token, state).await;
 
         // Should return OK with failure details from fallback attempts
         assert!(result.is_ok());

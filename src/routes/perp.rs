@@ -7,7 +7,10 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tracing;
 
-use super::{IERC20, IPerpHook, sync_wallet_nonce, get_fresh_nonce_from_alternate, is_nonce_error, execute_transaction_serialized};
+use super::{
+    IERC20, IPerpHook, execute_transaction_serialized, get_fresh_nonce_from_alternate,
+    is_nonce_error, sync_wallet_nonce,
+};
 use crate::guards::ApiToken;
 use crate::models::{
     ApiResponse, AppState, BatchDepositLiquidityForPerpsRequest,
@@ -375,7 +378,8 @@ async fn deploy_perp_for_beacon(
             sentry::capture_message(&error_msg, sentry::Level::Error);
             error_msg
         })
-    }).await?;
+    })
+    .await?;
 
     tracing::info!("Transaction sent successfully, waiting for confirmation...");
     let pending_tx_hash = *pending_tx.tx_hash();
@@ -598,7 +602,7 @@ impl ContractErrorDecoder {
             // Two parameters: address and uint256
             let pool_id_hex = &params_data[0..64];
             let param2_hex = &params_data[64..128];
-            
+
             if let Ok(pool_address) = Address::from_str(&format!("0x{}", &pool_id_hex[24..])) {
                 let param2_value = u128::from_str_radix(param2_hex, 16).unwrap_or(0);
                 Some(format!(
@@ -618,7 +622,9 @@ impl ContractErrorDecoder {
                 Some("Unknown contract error (0xfb8f41b2) with parameters. Check contract logs for details.".to_string())
             }
         } else {
-            Some("Unknown contract error (0xfb8f41b2). Check contract logs for details.".to_string())
+            Some(
+                "Unknown contract error (0xfb8f41b2). Check contract logs for details.".to_string(),
+            )
         }
     }
 }
@@ -747,12 +753,12 @@ async fn deposit_liquidity_for_perp(
                 // Try alternate RPC if available
                 if let Some(alternate_provider) = &state.alternate_provider {
                     tracing::info!("Trying USDC approval with alternate RPC");
-                    
+
                     // Get fresh nonce from alternate RPC to avoid nonce conflicts
                     if let Err(nonce_error) = get_fresh_nonce_from_alternate(state).await {
                         tracing::warn!("Could not sync nonce with alternate RPC: {}", nonce_error);
                     }
-                    
+
                     let alt_usdc_contract = IERC20::new(state.usdc_address, &**alternate_provider);
 
                     match alt_usdc_contract
@@ -957,12 +963,12 @@ async fn deposit_liquidity_for_perp(
                 // Try alternate RPC if available
                 if let Some(alternate_provider) = &state.alternate_provider {
                     tracing::info!("Trying openMakerPosition with alternate RPC");
-                    
+
                     // Get fresh nonce from alternate RPC to avoid nonce conflicts
                     if let Err(nonce_error) = get_fresh_nonce_from_alternate(state).await {
                         tracing::warn!("Could not sync nonce with alternate RPC: {}", nonce_error);
                     }
-                    
+
                     let alt_contract =
                         IPerpHook::new(state.perp_hook_address, &**alternate_provider);
 
@@ -1398,13 +1404,25 @@ pub async fn deposit_liquidity_for_perp_endpoint(
                 tracing::error!("     - Invalid perp configuration or state");
                 tracing::error!("     - Contract access control or validation failure");
                 tracing::error!("     - Custom business logic restriction in PerpHook");
-                
+
                 // Add specific troubleshooting for this error
                 tracing::error!("   Troubleshooting steps:");
-                tracing::error!("     1. Verify USDC balance for wallet: {}", state.wallet_address);
-                tracing::error!("     2. Check USDC allowance for PerpHook: {}", state.perp_hook_address);
-                tracing::error!("     3. Verify perp {} exists and is active", request.perp_id);
-                tracing::error!("     4. Check if margin amount {} USDC is within perp limits", margin_amount as f64 / 1_000_000.0);
+                tracing::error!(
+                    "     1. Verify USDC balance for wallet: {}",
+                    state.wallet_address
+                );
+                tracing::error!(
+                    "     2. Check USDC allowance for PerpHook: {}",
+                    state.perp_hook_address
+                );
+                tracing::error!(
+                    "     3. Verify perp {} exists and is active",
+                    request.perp_id
+                );
+                tracing::error!(
+                    "     4. Check if margin amount {} USDC is within perp limits",
+                    margin_amount as f64 / 1_000_000.0
+                );
                 tracing::error!("     5. Contact protocol team to identify this custom error");
             }
 
@@ -1655,7 +1673,7 @@ mod tests {
             margin_amount_usdc: "500000000".to_string(),
         });
 
-        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+        let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
     }
@@ -1677,7 +1695,7 @@ mod tests {
             margin_amount_usdc: "not_a_number".to_string(),
         });
 
-        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+        let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
     }
@@ -1699,7 +1717,7 @@ mod tests {
             margin_amount_usdc: "0".to_string(), // 0 USDC
         });
 
-        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+        let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
         assert!(result.is_err());
         // Should fail with BadRequest due to minimum margin validation
         assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
@@ -1720,7 +1738,7 @@ mod tests {
             beacon_address: "not_a_valid_address".to_string(),
         });
 
-        let result = deploy_perp_for_beacon_endpoint(request, token, &state).await;
+        let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
     }
@@ -1740,7 +1758,7 @@ mod tests {
             beacon_address: "0x1234".to_string(),
         });
 
-        let result = deploy_perp_for_beacon_endpoint(request, token, &state).await;
+        let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
     }
@@ -1774,7 +1792,7 @@ mod tests {
             ],
         });
 
-        let result = batch_deposit_liquidity_for_perps(request, token, &state).await;
+        let result = batch_deposit_liquidity_for_perps(request, token, state).await;
         assert!(result.is_ok()); // Should return OK with partial results
 
         let response = result.unwrap().into_inner();
@@ -1805,7 +1823,7 @@ mod tests {
         let request = Json(BatchDepositLiquidityForPerpsRequest {
             liquidity_deposits: vec![],
         });
-        let result = batch_deposit_liquidity_for_perps(request, token, &state).await;
+        let result = batch_deposit_liquidity_for_perps(request, token, state).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
 
@@ -1822,7 +1840,7 @@ mod tests {
         let request2 = Json(BatchDepositLiquidityForPerpsRequest {
             liquidity_deposits: deposits,
         });
-        let result2 = batch_deposit_liquidity_for_perps(request2, token2, &state).await;
+        let result2 = batch_deposit_liquidity_for_perps(request2, token2, state).await;
         assert!(result2.is_err());
         assert_eq!(result2.unwrap_err(), rocket::http::Status::BadRequest);
     }
@@ -1934,12 +1952,12 @@ mod tests {
 
         // This should either succeed or fail with InternalServerError depending on whether
         // contracts are deployed. Both are valid since we have a real blockchain connection.
-        let result = deploy_perp_for_beacon_endpoint(request, token, &state).await;
+        let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
         // We just test that we get a deterministic response (either success or failure)
         // The important thing is that we have a real blockchain connection
         assert!(result.is_ok() || result.is_err());
 
-        println!("Deploy perp result: {:?}", result);
+        println!("Deploy perp result: {result:?}");
     }
 
     #[tokio::test]
@@ -1968,10 +1986,10 @@ mod tests {
 
         // This should either succeed or fail depending on contract deployment status
         // The important thing is we have a real blockchain connection with proper multi-account setup
-        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+        let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
         assert!(result.is_ok() || result.is_err());
 
-        println!("Deposit liquidity result: {:?}", result);
+        println!("Deposit liquidity result: {result:?}");
         println!("Using account: {}", app_state.wallet_address);
     }
 
@@ -1996,7 +2014,7 @@ mod tests {
         // Test contract deployment mocking
         let deployment = mock_contract_deployment("PerpHook").await;
         assert_ne!(deployment.address, Address::ZERO);
-        println!("Mock deployment result: {:?}", deployment);
+        println!("Mock deployment result: {deployment:?}");
 
         // Test that ABIs are loaded correctly
         assert!(!app_state.beacon_abi.functions.is_empty());
@@ -2049,7 +2067,7 @@ mod tests {
             margin_amount_usdc: exceeding_amount.to_string(),
         });
 
-        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+        let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
     }
@@ -2072,7 +2090,7 @@ mod tests {
             margin_amount_usdc: max_margin.to_string(), // Use actual max from config
         });
 
-        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+        let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
         // Should fail due to validation or network issues
         assert!(result.is_err());
         let status = result.unwrap_err();
@@ -2114,7 +2132,7 @@ mod tests {
             ],
         });
 
-        let result = batch_deposit_liquidity_for_perps(request, token, &state).await;
+        let result = batch_deposit_liquidity_for_perps(request, token, state).await;
         assert!(result.is_ok()); // Should return OK with partial results
 
         let response = result.unwrap().into_inner();
@@ -2164,7 +2182,7 @@ mod tests {
         });
 
         // The test should fail due to validation or network issues
-        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+        let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
 
         // We expect BadRequest due to validation failure or InternalServerError due to network issues
         match result {
@@ -2216,7 +2234,7 @@ mod tests {
             beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
         });
 
-        let result = deploy_perp_for_beacon_endpoint(request, token, &state).await;
+        let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
         assert!(result.is_err()); // Should fail due to network issues
         assert_eq!(
             result.unwrap_err(),
@@ -2243,7 +2261,7 @@ mod tests {
             margin_amount_usdc: min_margin.to_string(), // Use computed minimum
         });
 
-        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+        let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
         // Should fail due to validation or network issues
         assert!(result.is_err());
         let status = result.unwrap_err();
@@ -2322,7 +2340,7 @@ mod tests {
         assert!(decoded_msg.contains("1137.24x leverage")); // Expected leverage from original error
         assert!(decoded_msg.contains("9.97x")); // Max allowed leverage
 
-        println!("Decoded error: {}", decoded_msg);
+        println!("Decoded error: {decoded_msg}");
     }
 
     #[tokio::test]
@@ -2342,7 +2360,7 @@ mod tests {
             margin_amount_usdc: "100000000".to_string(), // 100 USDC
         });
 
-        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+        let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
 
         // With new scaling factor, this should now pass validation and fail at network level
         assert!(result.is_err());
@@ -2369,18 +2387,16 @@ mod tests {
             .calculate_expected_leverage(margin_10_usdc)
             .expect("Should calculate leverage for 10 USDC");
 
-        println!("10 USDC margin -> {:.2}x leverage", leverage_10);
+        println!("10 USDC margin -> {leverage_10:.2}x leverage");
 
         // With conservative scaling factor, 10 USDC should produce reasonable leverage within bounds
         assert!(
             leverage_10 <= 10.0,
-            "10 USDC margin produces {:.2}x leverage, which exceeds maximum 10x",
-            leverage_10
+            "10 USDC margin produces {leverage_10:.2}x leverage, which exceeds maximum 10x"
         );
         assert!(
             leverage_10 >= 1.0,
-            "10 USDC margin produces only {:.2}x leverage, which is too low",
-            leverage_10
+            "10 USDC margin produces only {leverage_10:.2}x leverage, which is too low"
         );
 
         // Verify the validation passes for 10 USDC
@@ -2400,19 +2416,16 @@ mod tests {
             .calculate_expected_leverage(margin_100_usdc)
             .expect("Should calculate leverage for 100 USDC");
 
-        println!("100 USDC margin -> {:.2}x leverage", leverage_100);
+        println!("100 USDC margin -> {leverage_100:.2}x leverage");
 
         // 100 USDC should produce lower leverage than 10 USDC
         assert!(
             leverage_100 < leverage_10,
-            "100 USDC leverage ({:.2}x) should be less than 10 USDC leverage ({:.2}x)",
-            leverage_100,
-            leverage_10
+            "100 USDC leverage ({leverage_100:.2}x) should be less than 10 USDC leverage ({leverage_10:.2}x)"
         );
         assert!(
             leverage_100 <= 10.0,
-            "100 USDC margin produces {:.2}x leverage, which exceeds maximum 10x",
-            leverage_100
+            "100 USDC margin produces {leverage_100:.2}x leverage, which exceeds maximum 10x"
         );
 
         // Test 3: Verify 1000 USDC margin produces even lower leverage
@@ -2422,13 +2435,11 @@ mod tests {
             .calculate_expected_leverage(margin_1000_usdc)
             .expect("Should calculate leverage for 1000 USDC");
 
-        println!("1000 USDC margin -> {:.2}x leverage", leverage_1000);
+        println!("1000 USDC margin -> {leverage_1000:.2}x leverage");
 
         assert!(
             leverage_1000 < leverage_100,
-            "1000 USDC leverage ({:.2}x) should be less than 100 USDC leverage ({:.2}x)",
-            leverage_1000,
-            leverage_100
+            "1000 USDC leverage ({leverage_1000:.2}x) should be less than 100 USDC leverage ({leverage_100:.2}x)"
         );
 
         // Test 4: Verify minimum margin calculation
@@ -2450,9 +2461,9 @@ mod tests {
         );
 
         println!("\n=== Leverage Summary ===");
-        println!("  10 USDC -> {:.2}x leverage", leverage_10);
-        println!(" 100 USDC -> {:.2}x leverage", leverage_100);
-        println!("1000 USDC -> {:.2}x leverage", leverage_1000);
+        println!("  10 USDC -> {leverage_10:.2}x leverage");
+        println!(" 100 USDC -> {leverage_100:.2}x leverage");
+        println!("1000 USDC -> {leverage_1000:.2}x leverage");
     }
 
     #[tokio::test]
@@ -2481,7 +2492,7 @@ mod tests {
             "0x24775e060000000000000000000000000000000000000000000000000000000000000001";
         let decoded = ContractErrorDecoder::decode_error_data(overflow_error);
         if decoded.is_none() {
-            println!("SafeCast error decode failed for: {}", overflow_error);
+            println!("SafeCast error decode failed for: {overflow_error}");
         }
         assert!(decoded.is_some());
         assert!(decoded.unwrap().contains("SafeCastOverflowedUintToInt"));
@@ -2536,7 +2547,7 @@ mod tests {
         println!("\n=== LEVERAGE ANALYSIS ===");
         let max_leverage =
             app_state.perp_config.max_opening_leverage_x96 as f64 / (2_u128.pow(96) as f64);
-        println!("Maximum allowed leverage: {:.2}x", max_leverage);
+        println!("Maximum allowed leverage: {max_leverage:.2}x");
 
         // Test leverage calculation with different amounts
         let test_amounts = vec![
@@ -2714,13 +2725,12 @@ mod tests {
         let min_leverage = config.min_opening_leverage_x96 as f64 / (2_u128.pow(96) as f64);
 
         println!("\nLeverage bounds:");
-        println!("  - Min leverage: {:.2}x", min_leverage);
-        println!("  - Max leverage: {:.2}x", max_leverage);
+        println!("  - Min leverage: {min_leverage:.2}x");
+        println!("  - Max leverage: {max_leverage:.2}x");
 
         if min_leverage >= max_leverage {
             errors.push(format!(
-                "CRITICAL: Min leverage ({:.2}x) >= Max leverage ({:.2}x)",
-                min_leverage, max_leverage
+                "CRITICAL: Min leverage ({min_leverage:.2}x) >= Max leverage ({max_leverage:.2}x)"
             ));
         }
 
@@ -2844,7 +2854,7 @@ mod tests {
         // Convert Q96 to approximate price
         let price_approx =
             (config.starting_sqrt_price_x96 as f64 / (2_u128.pow(96) as f64)).powi(2);
-        println!("  - Approximate starting price: {:.2}", price_approx);
+        println!("  - Approximate starting price: {price_approx:.2}");
 
         // Report results
         println!("\n=== VALIDATION RESULTS ===");
@@ -2855,14 +2865,14 @@ mod tests {
             if !errors.is_empty() {
                 println!("CRITICAL ERRORS:");
                 for error in &errors {
-                    println!("  - {}", error);
+                    println!("  - {error}");
                 }
             }
 
             if !warnings.is_empty() {
                 println!("WARNINGS:");
                 for warning in &warnings {
-                    println!("  - {}", warning);
+                    println!("  - {warning}");
                 }
             }
         }
@@ -2870,8 +2880,7 @@ mod tests {
         // Assert that there are no critical errors
         assert!(
             errors.is_empty(),
-            "Configuration has critical errors: {:?}",
-            errors
+            "Configuration has critical errors: {errors:?}"
         );
 
         // Log warnings but don't fail the test
@@ -2911,7 +2920,7 @@ mod tests {
             ],
         });
 
-        let result = batch_deposit_liquidity_for_perps(request, token, &state).await;
+        let result = batch_deposit_liquidity_for_perps(request, token, state).await;
         assert!(result.is_ok()); // Should return OK with error details
 
         let response = result.unwrap().into_inner();
@@ -2979,7 +2988,7 @@ mod tests {
         });
 
         // This should fail on primary and attempt fallback
-        let result = deploy_perp_for_beacon_endpoint(request, token, &state).await;
+        let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
 
         // Should get an error but via fallback path (contract level, not connection level)
         assert!(result.is_err());
@@ -3024,7 +3033,7 @@ mod tests {
         });
 
         // This should fail on primary and attempt fallback for both USDC approval and liquidity deposit
-        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+        let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
 
         // Should get an error but via fallback path
         assert!(result.is_err());
@@ -3079,7 +3088,7 @@ mod tests {
             ],
         });
 
-        let result = batch_deposit_liquidity_for_perps(request, token, &state).await;
+        let result = batch_deposit_liquidity_for_perps(request, token, state).await;
 
         // Should return OK with failure details from fallback attempts
         assert!(result.is_ok());
@@ -3181,7 +3190,7 @@ mod tests {
         let nonce = result.unwrap();
 
         // If we got here, nonce synchronization worked
-        println!("Synchronized nonce: {}", nonce);
+        println!("Synchronized nonce: {nonce}");
     }
 
     #[tokio::test]
@@ -3216,7 +3225,7 @@ mod tests {
         });
 
         // Execute with fallback
-        let _result = deploy_perp_for_beacon_endpoint(request, token, &state).await;
+        let _result = deploy_perp_for_beacon_endpoint(request, token, state).await;
 
         // In a real test with tracing subscriber, we would verify log messages
         // For now, just ensure the function completes without panic
@@ -3259,7 +3268,7 @@ mod tests {
             margin_amount_usdc: min_margin.to_string(),
         });
 
-        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+        let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
 
         // Should fail but prove fallback mechanism is working
         assert!(result.is_err());
@@ -3314,7 +3323,4 @@ mod tests {
     }
 }
 
-
-
 // Helper function to check if an error is a nonce-related error
-

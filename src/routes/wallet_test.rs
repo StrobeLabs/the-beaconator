@@ -22,7 +22,7 @@ mod tests {
         });
 
         let result = fund_guest_wallet(
-            &state,
+            state,
             request,
             crate::guards::ApiToken("test_token".to_string()),
         )
@@ -53,7 +53,7 @@ mod tests {
 
         // In a real test environment without actual funds, this should fail
         let result = fund_guest_wallet(
-            &state,
+            state,
             request,
             crate::guards::ApiToken("test_token".to_string()),
         )
@@ -89,7 +89,7 @@ mod tests {
         });
 
         let result = fund_guest_wallet(
-            &state,
+            state,
             request,
             crate::guards::ApiToken("test_token".to_string()),
         )
@@ -109,7 +109,7 @@ mod tests {
         });
 
         let result = fund_guest_wallet(
-            &state,
+            state,
             request,
             crate::guards::ApiToken("test_token".to_string()),
         )
@@ -139,7 +139,7 @@ mod tests {
         });
 
         let result = fund_guest_wallet(
-            &state,
+            state,
             request,
             crate::guards::ApiToken("test_token".to_string()),
         )
@@ -198,7 +198,7 @@ mod tests {
         });
 
         let result = fund_guest_wallet(
-            &state,
+            state,
             request,
             crate::guards::ApiToken("test_token".to_string()),
         )
@@ -228,7 +228,7 @@ mod tests {
         });
 
         let result = fund_guest_wallet(
-            &state,
+            state,
             request,
             crate::guards::ApiToken("test_token".to_string()),
         )
@@ -258,7 +258,7 @@ mod tests {
         });
 
         let result = fund_guest_wallet(
-            &state,
+            state,
             request,
             crate::guards::ApiToken("test_token".to_string()),
         )
@@ -288,7 +288,7 @@ mod tests {
         });
 
         let result = fund_guest_wallet(
-            &state,
+            state,
             request,
             crate::guards::ApiToken("test_token".to_string()),
         )
@@ -308,7 +308,7 @@ mod tests {
         });
 
         let result2 = fund_guest_wallet(
-            &state,
+            state,
             request2,
             crate::guards::ApiToken("test_token".to_string()),
         )

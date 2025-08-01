@@ -313,7 +313,7 @@ pub async fn create_test_app_state() -> AppState {
         perpcity_registry_address: deployment.beacon_registry,
         perp_hook_address: deployment.perp_hook,
         usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
-        usdc_transfer_limit: 1000_000_000,          // 1000 USDC
+        usdc_transfer_limit: 1_000_000_000,         // 1000 USDC
         eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
         access_token: "test_token".to_string(),
         perp_config: PerpConfig::default(),
@@ -348,7 +348,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
         perpcity_registry_address: deployment.beacon_registry,
         perp_hook_address: deployment.perp_hook,
         usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
-        usdc_transfer_limit: 1000_000_000,          // 1000 USDC
+        usdc_transfer_limit: 1_000_000_000,         // 1000 USDC
         eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
         access_token: "test_token".to_string(),
         perp_config: PerpConfig::default(),
@@ -491,7 +491,7 @@ pub fn create_simple_test_app_state() -> AppState {
             .unwrap(),
         perp_hook_address: Address::from_str("0x3456789012345678901234567890123456789012").unwrap(),
         usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
-        usdc_transfer_limit: 1000_000_000,          // 1000 USDC
+        usdc_transfer_limit: 1_000_000_000,         // 1000 USDC
         eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
         access_token: "test_token".to_string(),
         perp_config: PerpConfig::default(),

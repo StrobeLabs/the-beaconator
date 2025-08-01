@@ -174,7 +174,7 @@ where
 // Helper function to detect nonce-related errors
 pub fn is_nonce_error(error_msg: &str) -> bool {
     error_msg.contains("nonce too low")
-        || error_msg.contains("nonce too high")  
+        || error_msg.contains("nonce too high")
         || error_msg.contains("invalid nonce")
         || error_msg.contains("replacement transaction underpriced")
 }
