@@ -7,7 +7,7 @@ async fn rocket() -> _ {
 
     // Set up logging with RUST_LOG environment variable support
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,the_beaconator=debug,rocket=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("info,the_beaconator=info,rocket=warn"));
 
     fmt()
         .with_env_filter(filter)

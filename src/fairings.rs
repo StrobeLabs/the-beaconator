@@ -23,13 +23,9 @@ impl Fairing for RequestLogger {
 
         tracing::info!("Incoming request: {} {} from {}", method, uri, remote);
 
-        // Log headers for debugging
-        for header in request.headers().iter() {
-            if header.name == "authorization" {
-                tracing::debug!("Header: {} = [REDACTED]", header.name);
-            } else {
-                tracing::debug!("Header: {} = {}", header.name, header.value);
-            }
+        // Log authentication header presence only
+        if request.headers().get_one("authorization").is_some() {
+            tracing::trace!("Request includes authorization header");
         }
     }
 

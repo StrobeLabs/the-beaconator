@@ -43,8 +43,7 @@ make build-release # Build project (release)
 **Production-Ready:**
 - `POST /create_perpcity_beacon` - Create single beacon
 - `POST /batch_create_perpcity_beacon` - Batch create beacons (1-100 limit)
-- `POST /deploy_perp_for_beacon` - Deploy perp for single beacon  
-- `POST /batch_deploy_perps_for_beacons` - Batch deploy perps (1-10 limit)
+- `POST /deploy_perp_for_beacon` - Deploy perp for single beacon
 - `POST /update_beacon` - Update beacon with ZK proof
 
 **Placeholder (not implemented):**
@@ -95,16 +94,23 @@ PERP_HOOK_ADDRESS=0x...                    # PerpHook contract address
 - Network calls fail gracefully in test environment
 - Serial test execution with `#[serial]` for stateful tests
 
+### Anvil Resource Optimization
+- Tests use shared Anvil instances to reduce memory overhead
+- Regular cleanup recommended after test runs using `scripts/anvil-cleanup.sh` or `clean-anvil` alias
+- For manual Anvil usage, use resource-optimized settings:
+  - `anvil --state-interval 0 --no-storage-caching --memory-limit 128`
+- Test Anvil instances use 1-second block times for faster execution
+
 ## Alloy Best Practices
 
 ### Modern Provider Pattern
 ```rust
-// ✅ CORRECT - Current Alloy v1.0+ pattern
+// CORRECT - Current Alloy v1.0+ pattern
 let provider = ProviderBuilder::new()
     .wallet(wallet)
     .connect_http(url);
 
-// ❌ AVOID - Deprecated pattern
+// AVOID - Deprecated pattern
 let provider = ProviderBuilder::new()
     .wallet(wallet)  
     .on_http(url);     // Deprecated in v1.0+
@@ -112,7 +118,7 @@ let provider = ProviderBuilder::new()
 
 ### Contract Interface Pattern
 ```rust
-// ✅ CORRECT - Use sol! macro for type safety
+// CORRECT - Use sol! macro for type safety
 sol! {
     interface IBeacon {
         function updateData(bytes calldata proof, bytes calldata publicSignals) external;

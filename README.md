@@ -57,16 +57,41 @@ make dev
 The project includes a Makefile with useful development commands:
 
 ```bash
-make help           # Show all available commands
-make quality        # Run all quality checks (format, lint, test)
-make lint           # Run clippy linter with strict warnings
+make help               # Show all available commands
+make test               # Run all tests (unit parallel, integration single-threaded)
+make test-unit          # Run unit tests only (fast)
+make test-integration   # Run integration tests only (single-threaded)
+make quality            # Run all quality checks (format, lint, test)
+make lint               # Run clippy linter with strict warnings
 ```
+
+**Testing Notes:**
+- Unit tests run in parallel for speed (12 tests)
+- Integration tests run single-threaded to prevent race conditions (93 tests)
+- Use `./scripts/anvil-cleanup.sh` if tests behave unexpectedly
 
 The server will start on `http://localhost:8000`
 
 ### Docker Deployment
 
-The project includes a Dockerfile optimized for Railway deployment with proper caching.
+The project uses a single `Dockerfile` optimized for Railway deployment that builds everything from scratch for reliability.
+
+#### CI/CD Optimizations
+
+The GitHub Actions workflow is heavily optimized for speed through comprehensive caching:
+
+**🚀 Key Optimizations:**
+- **Rust toolchain caching** - Avoids downloading Rust/Cargo on every run
+- **Cargo dependency caching** - Caches downloaded crates and compiled dependencies
+- **Build artifact caching** - Reuses compiled code between test and Docker jobs
+- **Docker layer caching** - Speeds up Docker builds by caching intermediate layers
+- **Parallel job execution** - Tests and Docker build run independently for speed
+
+**📊 Expected Performance:**
+- First run: ~8-12 minutes (cold cache) 
+- Subsequent runs: ~3-5 minutes (warm cache)
+- Code-only changes: ~2-3 minutes
+- Dependency changes: ~4-6 minutes
 
 #### Local Docker Build
 ```bash

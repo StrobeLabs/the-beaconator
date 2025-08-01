@@ -134,17 +134,11 @@ use alloy::{
     providers::{Provider, ProviderBuilder},
     signers::{Signer, local::PrivateKeySigner},
 };
-use once_cell::sync::Lazy;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::OnceCell;
 
-/// Static Anvil instance for shared test blockchain
-#[allow(dead_code)]
-static ANVIL_INSTANCE: Lazy<Mutex<Option<AnvilInstance>>> = Lazy::new(|| Mutex::new(None));
-
 /// Anvil configuration and utilities
-#[allow(dead_code)]
 pub struct AnvilConfig {
     pub instance: AnvilInstance,
     pub rpc_url: String,
@@ -183,12 +177,6 @@ impl AnvilConfig {
         self.accounts[0]
     }
 
-    /// Get the second test account (user)
-    #[allow(dead_code)]
-    pub fn user_account(&self) -> Address {
-        self.accounts[1]
-    }
-
     /// Get the first key as a PrivateKeySigner
     pub fn deployer_signer(&self) -> PrivateKeySigner {
         // Get the key directly from anvil and create a signer
@@ -198,7 +186,6 @@ impl AnvilConfig {
     }
 
     /// Get a specific key as a PrivateKeySigner
-    #[allow(dead_code)]
     pub fn get_signer(&self, index: usize) -> PrivateKeySigner {
         PrivateKeySigner::from_slice(self.instance.keys()[index].to_bytes().as_slice())
             .expect("Failed to create signer from key")
@@ -221,16 +208,6 @@ impl AnvilManager {
             })
             .await
             .clone()
-    }
-
-    /// Shutdown the Anvil instance (for cleanup)
-    #[allow(dead_code)]
-    pub fn shutdown() {
-        let mut instance = ANVIL_INSTANCE.lock().unwrap();
-        if let Some(anvil) = instance.take() {
-            drop(anvil);
-            tracing::info!("Anvil instance shut down");
-        }
     }
 }
 
@@ -303,19 +280,24 @@ pub async fn create_test_app_state() -> AppState {
 
     AppState {
         provider: deployment.provider,
+        alternate_provider: None,
         wallet_address: deployment.deployer,
         beacon_abi,
         beacon_factory_abi,
         beacon_registry_abi,
         perp_hook_abi,
+        multicall3_abi: load_test_abi("Multicall3"),
         beacon_factory_address: deployment.beacon_factory,
         perpcity_registry_address: deployment.beacon_registry,
         perp_hook_address: deployment.perp_hook,
         usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
-        usdc_transfer_limit: 1000_000_000,          // 1000 USDC
+        usdc_transfer_limit: 1_000_000_000,         // 1000 USDC
         eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
         access_token: "test_token".to_string(),
         perp_config: PerpConfig::default(),
+        multicall3_address: Some(
+            Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
+        ), // Standard multicall3 address for tests
     }
 }
 
@@ -337,24 +319,28 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
 
     AppState {
         provider,
+        alternate_provider: None,
         wallet_address: anvil.accounts[account_index],
         beacon_abi: load_test_abi("Beacon"),
         beacon_factory_abi: load_test_abi("BeaconFactory"),
         beacon_registry_abi: load_test_abi("BeaconRegistry"),
         perp_hook_abi: load_test_abi("PerpHook"),
+        multicall3_abi: load_test_abi("Multicall3"),
         beacon_factory_address: deployment.beacon_factory,
         perpcity_registry_address: deployment.beacon_registry,
         perp_hook_address: deployment.perp_hook,
         usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
-        usdc_transfer_limit: 1000_000_000,          // 1000 USDC
+        usdc_transfer_limit: 1_000_000_000,         // 1000 USDC
         eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
         access_token: "test_token".to_string(),
         perp_config: PerpConfig::default(),
+        multicall3_address: Some(
+            Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
+        ), // Standard multicall3 address for tests
     }
 }
 
 /// Test utilities for blockchain interactions
-#[allow(dead_code)]
 pub struct TestUtils;
 
 impl TestUtils {
@@ -374,75 +360,17 @@ impl TestUtils {
         let balance = provider.get_balance(address).await?;
         Ok(balance)
     }
-
-    /// Fund an account with ETH (for testing)
-    #[allow(dead_code)]
-    pub async fn fund_account(
-        _provider: &crate::AlloyProvider,
-        to: Address,
-        amount: U256,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // In a real implementation, this would use anvil_setBalance RPC call
-        // For now, we'll skip this since accounts are pre-funded
-        tracing::info!("Funding account {} with {} ETH", to, amount);
-        Ok(())
-    }
-
-    /// Fast forward blockchain time (for testing time-dependent contracts)
-    #[allow(dead_code)]
-    pub async fn fast_forward_time(
-        _provider: &crate::AlloyProvider,
-        seconds: u64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // In a real implementation, this would use anvil_increaseTime RPC call
-        tracing::info!("Fast forwarding time by {} seconds", seconds);
-        Ok(())
-    }
-
-    /// Mine blocks (for testing block-dependent contracts)
-    #[allow(dead_code)]
-    pub async fn mine_blocks(
-        _provider: &crate::AlloyProvider,
-        blocks: u64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // In a real implementation, this would use anvil_mine RPC call
-        tracing::info!("Mining {} blocks", blocks);
-        Ok(())
-    }
-}
-
-/// Test cleanup utilities
-#[allow(dead_code)]
-pub struct TestCleanup;
-
-impl TestCleanup {
-    /// Reset Anvil state (for isolated tests)
-    #[allow(dead_code)]
-    pub async fn reset_anvil() -> Result<(), Box<dyn std::error::Error>> {
-        // This would use anvil_reset RPC call
-        tracing::info!("Resetting Anvil state");
-        Ok(())
-    }
-
-    /// Shutdown all test resources
-    #[allow(dead_code)]
-    pub fn shutdown_all() {
-        AnvilManager::shutdown();
-    }
 }
 
 /// Test fixture for contract deployment results
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ContractDeploymentResult {
     pub address: Address,
     pub transaction_hash: String,
-    pub block_number: u64,
     pub gas_used: u64,
 }
 
 /// Mock contract deployment (for testing without actual deployment)
-#[allow(dead_code)]
 pub async fn mock_contract_deployment(name: &str) -> ContractDeploymentResult {
     // Generate deterministic addresses for testing
     let address = match name {
@@ -459,13 +387,11 @@ pub async fn mock_contract_deployment(name: &str) -> ContractDeploymentResult {
         address,
         transaction_hash: "0x1234567890123456789012345678901234567890123456789012345678901234"
             .to_string(),
-        block_number: 1,
         gas_used: 1000000,
     }
 }
 
 /// Create a synchronous test AppState for simple tests (fallback)
-#[allow(dead_code)]
 pub fn create_simple_test_app_state() -> AppState {
     // Create mock provider with wallet for testing - this won't work for real network calls
     let signer = alloy::signers::local::PrivateKeySigner::random();
@@ -477,21 +403,26 @@ pub fn create_simple_test_app_state() -> AppState {
 
     AppState {
         provider: Arc::new(provider),
+        alternate_provider: None,
         wallet_address: Address::from_str("0x1111111111111111111111111111111111111111").unwrap(),
         beacon_abi: JsonAbi::new(),
         beacon_factory_abi: JsonAbi::new(),
         beacon_registry_abi: JsonAbi::new(),
         perp_hook_abi: JsonAbi::new(),
+        multicall3_abi: JsonAbi::new(),
         beacon_factory_address: Address::from_str("0x1234567890123456789012345678901234567890")
             .unwrap(),
         perpcity_registry_address: Address::from_str("0x2345678901234567890123456789012345678901")
             .unwrap(),
         perp_hook_address: Address::from_str("0x3456789012345678901234567890123456789012").unwrap(),
         usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
-        usdc_transfer_limit: 1000_000_000,          // 1000 USDC
+        usdc_transfer_limit: 1_000_000_000,         // 1000 USDC
         eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
         access_token: "test_token".to_string(),
         perp_config: PerpConfig::default(),
+        multicall3_address: Some(
+            Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
+        ), // Standard multicall3 address for tests
     }
 }
 

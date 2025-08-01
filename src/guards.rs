@@ -12,7 +12,6 @@ impl<'r> FromRequest<'r> for ApiToken {
 
     async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
         let endpoint = request.uri().to_string();
-        tracing::debug!("ApiToken guard checking authentication for: {}", endpoint);
 
         let state = request.guard::<&State<AppState>>().await;
         match state {
@@ -22,7 +21,6 @@ impl<'r> FromRequest<'r> for ApiToken {
                     Some(header) if header.starts_with("Bearer ") => {
                         let token = &header[7..]; // Remove "Bearer " prefix
                         if token == state.access_token {
-                            tracing::debug!("Authentication successful for: {}", endpoint);
                             Outcome::Success(ApiToken(token.to_string()))
                         } else {
                             tracing::warn!("Invalid API token provided for: {}", endpoint);

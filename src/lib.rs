@@ -86,10 +86,6 @@ fn load_perp_config() -> PerpConfig {
             "PERP_TRADING_FEE_BPS",
             default_config.trading_fee_bps,
         ),
-        trading_fee_creator_split_x96: parse_env_or_default(
-            "PERP_TRADING_FEE_CREATOR_SPLIT_X96",
-            default_config.trading_fee_creator_split_x96,
-        ),
         min_margin_usdc: parse_env_or_default(
             "PERP_MIN_MARGIN_USDC",
             default_config.min_margin_usdc,
@@ -160,6 +156,7 @@ pub async fn create_rocket() -> Rocket<Build> {
     let beacon_factory_abi = load_abi("BeaconFactory");
     let beacon_registry_abi = load_abi("BeaconRegistry");
     let perp_hook_abi = load_abi("PerpHook");
+    let multicall3_abi = load_abi("Multicall3");
 
     // Load contract addresses
     let beacon_factory_address = Address::from_str(
@@ -184,6 +181,17 @@ pub async fn create_rocket() -> Rocket<Build> {
     )
     .expect("Failed to parse USDC address");
 
+    // Optional multicall3 address for batch operations
+    let multicall3_address = env::var("MULTICALL3_ADDRESS")
+        .ok()
+        .map(|addr_str| Address::from_str(&addr_str).expect("Failed to parse MULTICALL3_ADDRESS"));
+
+    if let Some(multicall_addr) = multicall3_address {
+        tracing::info!("Multicall3 address configured: {:?}", multicall_addr);
+    } else {
+        tracing::warn!("MULTICALL3_ADDRESS not set - batch operations will be disabled");
+    }
+
     let usdc_transfer_limit = env::var("USDC_TRANSFER_LIMIT")
         .unwrap_or_else(|_| "1000000000".to_string()) // Default 1000 USDC
         .parse::<u128>()
@@ -196,6 +204,12 @@ pub async fn create_rocket() -> Rocket<Build> {
 
     // Load perp configuration
     let perp_config = load_perp_config();
+
+    // Validate perp configuration on startup
+    if let Err(e) = perp_config.validate() {
+        tracing::error!("PerpConfig validation failed: {}", e);
+        panic!("Invalid PerpConfig: {e}");
+    }
 
     // Log loaded configuration for debugging
     tracing::info!("Perp configuration loaded:");
@@ -274,13 +288,41 @@ pub async fn create_rocket() -> Rocket<Build> {
 
     let provider = Arc::new(provider_impl);
 
+    // Setup alternate provider if BEACONATOR_ALTERNATE_RPC is provided
+    let alternate_provider = if let Ok(alternate_rpc_url) = env::var("BEACONATOR_ALTERNATE_RPC") {
+        tracing::info!("Setting up alternate RPC provider: {}", alternate_rpc_url);
+
+        // Create alternate provider with same wallet
+        let alternate_signer = private_key
+            .parse::<PrivateKeySigner>()
+            .expect("Failed to parse private key for alternate provider")
+            .with_chain_id(Some(chain_id));
+
+        let alternate_wallet = EthereumWallet::from(alternate_signer);
+
+        let provider = ProviderBuilder::new()
+            .wallet(alternate_wallet)
+            .connect_http(
+                alternate_rpc_url
+                    .parse()
+                    .expect("Invalid alternate RPC URL"),
+            );
+        tracing::info!("Alternate RPC provider setup successful");
+        Some(Arc::new(provider))
+    } else {
+        tracing::info!("No alternate RPC configured (BEACONATOR_ALTERNATE_RPC not set)");
+        None
+    };
+
     let app_state = AppState {
         provider,
+        alternate_provider,
         wallet_address,
         beacon_abi,
         beacon_factory_abi,
         beacon_registry_abi,
         perp_hook_abi,
+        multicall3_abi,
         beacon_factory_address,
         perpcity_registry_address,
         perp_hook_address,
@@ -289,6 +331,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         eth_transfer_limit,
         access_token,
         perp_config,
+        multicall3_address,
     };
 
     rocket::build()
@@ -305,10 +348,10 @@ pub async fn create_rocket() -> Rocket<Build> {
                 routes::create_perpcity_beacon,
                 routes::batch_create_perpcity_beacon,
                 routes::deploy_perp_for_beacon_endpoint,
-                routes::batch_deploy_perps_for_beacons,
                 routes::deposit_liquidity_for_perp_endpoint,
                 routes::batch_deposit_liquidity_for_perps,
                 routes::update_beacon,
+                routes::batch_update_beacon,
                 routes::fund_guest_wallet
             ],
         )
