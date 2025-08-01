@@ -25,39 +25,8 @@ jobs:
         run: cargo clippy --all -- -D warnings
       - name: Format
         run: cargo fmt --all -- --check
-      - name: Make cleanup script executable
-        run: chmod +x scripts/anvil-cleanup.sh
-      - name: Clean up Anvil processes
-        run: ./scripts/anvil-cleanup.sh
-      - name: Run unit tests (parallel)
-        run: |
-          echo "Running unit tests in parallel..."
-          cargo test models::models_test -- --nocapture
-          echo "Unit tests completed successfully ✅"
-      - name: Clean up before integration tests
-        run: ./scripts/anvil-cleanup.sh
-      - name: Run integration tests (single-threaded)
-        run: |
-          echo "Running integration tests with single thread to avoid race conditions..."
-          cargo test routes -- --nocapture --test-threads=1
-          echo "Integration tests completed successfully ✅"
-      - name: Verify all tests were run
-        run: |
-          echo "Verifying test coverage..."
-          TOTAL_TESTS=$(cargo test -- --list | grep -c ": test$" || echo "0")
-          UNIT_TESTS=$(cargo test models::models_test -- --list | grep -c ": test$" || echo "0")
-          INTEGRATION_TESTS=$(cargo test routes -- --list | grep -c ": test$" || echo "0")
-          echo "Total tests found: $TOTAL_TESTS"
-          echo "Unit tests: $UNIT_TESTS"
-          echo "Integration tests: $INTEGRATION_TESTS"
-          COVERED=$((UNIT_TESTS + INTEGRATION_TESTS))
-          echo "Tests covered by CI: $COVERED"
-          if [ "$TOTAL_TESTS" -ne "$COVERED" ]; then
-            echo "⚠️  Warning: Some tests may not be covered by CI patterns"
-            echo "Missing tests: $((TOTAL_TESTS - COVERED))"
-          else
-            echo "✅ All tests are covered by CI"
-          fi
+      - name: Run all tests (single-threaded)
+        run: cargo test -- --nocapture --test-threads=1
 
   docker-build:
     runs-on: ubuntu-latest
