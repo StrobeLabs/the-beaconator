@@ -1,18 +1,7 @@
 FROM rustlang/rust:nightly AS builder
 WORKDIR /app
 
-# Install cargo-chef for better Docker layer caching
-RUN cargo install cargo-chef
-
-# Copy manifests first for dependency caching
-COPY Cargo.toml Cargo.lock ./
-COPY src/lib.rs src/lib.rs
-
-# This step caches dependencies
-RUN cargo chef prepare --recipe-path recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-
-# Now copy source code and build
+# Copy all source files
 COPY . .
 RUN cargo build --release
 

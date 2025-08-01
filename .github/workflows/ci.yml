@@ -70,16 +70,6 @@ jobs:
       
       - name: Run all tests (single-threaded)
         run: cargo test -- --nocapture --test-threads=1
-      
-      # Cache build artifacts for Docker job
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: rust-build-artifacts
-          path: |
-            target/release/the-beaconator
-            abis/
-          retention-days: 1
 
   docker:
     runs-on: ubuntu-latest
