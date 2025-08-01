@@ -591,18 +591,32 @@ impl ContractErrorDecoder {
     }
 
     fn decode_unknown_custom_error(params_data: &str) -> Option<String> {
-        if params_data.len() < 64 {
-            return Some("PoolNotInitialized: Pool has not been initialized yet".to_string());
-        }
-
-        // If there are parameters, try to decode the pool ID
-        let pool_id_hex = &params_data[0..64];
-        if let Ok(pool_address) = Address::from_str(&format!("0x{}", &pool_id_hex[24..])) {
-            Some(format!(
-                "PoolNotInitialized: Pool {pool_address} has not been initialized yet. Please initialize the pool before attempting to deposit liquidity."
-            ))
+        // Try to decode parameters if present
+        if params_data.len() >= 128 {
+            // Two parameters: address and uint256
+            let pool_id_hex = &params_data[0..64];
+            let param2_hex = &params_data[64..128];
+            
+            if let Ok(pool_address) = Address::from_str(&format!("0x{}", &pool_id_hex[24..])) {
+                let param2_value = u128::from_str_radix(param2_hex, 16).unwrap_or(0);
+                Some(format!(
+                    "Unknown contract error (0xfb8f41b2) - pool: {pool_address}, value: {param2_value}. This error signature is not recognized in the PerpHook contract."
+                ))
+            } else {
+                Some("Unknown contract error (0xfb8f41b2) with parameters. Check contract logs for details.".to_string())
+            }
+        } else if params_data.len() >= 64 {
+            // Single address parameter
+            let pool_id_hex = &params_data[0..64];
+            if let Ok(pool_address) = Address::from_str(&format!("0x{}", &pool_id_hex[24..])) {
+                Some(format!(
+                    "Unknown contract error (0xfb8f41b2) with pool address: {pool_address}. Check contract logs for details."
+                ))
+            } else {
+                Some("Unknown contract error (0xfb8f41b2) with parameters. Check contract logs for details.".to_string())
+            }
         } else {
-            Some("PoolNotInitialized: Pool has not been initialized yet. Please initialize the pool before attempting to deposit liquidity.".to_string())
+            Some("Unknown contract error (0xfb8f41b2). Check contract logs for details.".to_string())
         }
     }
 }
