@@ -180,18 +180,52 @@ pub async fn get_fresh_nonce_from_alternate(state: &AppState) -> Result<u64, Str
     }
 }
 
-// Serialized transaction execution wrapper
+// Serialized transaction execution wrapper with nonce synchronization
 // All blockchain transactions should use this to prevent nonce conflicts
-pub async fn execute_transaction_serialized<F, T>(operation: F) -> T
+pub async fn execute_transaction_serialized<F, T, P>(
+    provider: &P,
+    wallet_address: alloy::primitives::Address,
+    operation: F,
+) -> T
 where
     F: std::future::Future<Output = T>,
+    P: alloy::providers::Provider,
 {
     let mutex = get_transaction_mutex();
     let _lock = mutex.lock().await;
     tracing::debug!("Acquired transaction lock - executing blockchain operation serially");
+
+    // Sync wallet nonce before executing the operation to ensure we have the correct nonce
+    if let Err(sync_error) = sync_wallet_nonce_direct(provider, wallet_address).await {
+        tracing::warn!("Nonce sync failed before transaction: {}", sync_error);
+    }
+
     let result = operation.await;
     tracing::debug!("Released transaction lock - blockchain operation completed");
     result
+}
+
+// Direct nonce sync helper function
+async fn sync_wallet_nonce_direct<P>(
+    provider: &P,
+    wallet_address: alloy::primitives::Address,
+) -> Result<u64, String>
+where
+    P: alloy::providers::Provider,
+{
+    tracing::info!("Syncing wallet nonce with on-chain state...");
+
+    match provider.get_transaction_count(wallet_address).await {
+        Ok(nonce) => {
+            tracing::info!("Current on-chain nonce: {}", nonce);
+            Ok(nonce)
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to get current nonce: {e}");
+            tracing::error!("{}", error_msg);
+            Err(error_msg)
+        }
+    }
 }
 
 // Helper function to detect nonce-related errors

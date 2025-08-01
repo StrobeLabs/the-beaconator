@@ -141,7 +141,9 @@ mod nonce_synchronization_tests {
         for i in 0..10 {
             join_set.spawn(async move {
                 let operation_start = Instant::now();
-                let result = execute_transaction_serialized(async move {
+                let mock_provider = create_mock_app_state().await.provider;
+                let mock_wallet = create_mock_app_state().await.wallet_address;
+                let result = execute_transaction_serialized(&*mock_provider, mock_wallet, async move {
                     // Simulate transaction processing time
                     tokio::time::sleep(Duration::from_millis(50)).await;
                     
@@ -266,7 +268,9 @@ mod nonce_synchronization_tests {
         // Test with many concurrent operations to ensure performance is acceptable
         for i in 0..50 {
             join_set.spawn(async move {
-                execute_transaction_serialized(async move {
+                let mock_provider = create_mock_app_state().await.provider;
+                let mock_wallet = create_mock_app_state().await.wallet_address;
+                execute_transaction_serialized(&*mock_provider, mock_wallet, async move {
                     // Very short operation to test overhead
                     tokio::time::sleep(Duration::from_millis(10)).await;
                     i
