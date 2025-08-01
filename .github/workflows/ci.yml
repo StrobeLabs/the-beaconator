@@ -9,6 +9,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Enable more aggressive caching
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
 
 jobs:
   test:
@@ -16,48 +20,57 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      # Cache Rust toolchain and registry
-      - name: Cache Rust toolchain
-        uses: actions/cache@v3
+      # Aggressive Cargo registry caching - this is the big win
+      - name: Cache Cargo registry and index
+        uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.rustup
-          key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('**/Cargo.lock') }}
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-toolchain-
+            cargo-registry-
+      
+      # Cache Rust toolchain installation
+      - name: Cache Rust toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup/toolchains/
+            ~/.rustup/update-hashes/
+            ~/.rustup/settings.toml
+          key: rust-toolchain-${{ runner.os }}-nightly
+          restore-keys: |
+            rust-toolchain-${{ runner.os }}-
       
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy, rustfmt
       
-      # Cache Foundry
+      # Cache Foundry installation  
       - name: Cache Foundry
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.foundry
-          key: ${{ runner.os }}-foundry-${{ hashFiles('foundry.toml') }}
+          key: foundry-${{ runner.os }}-nightly
           restore-keys: |
-            ${{ runner.os }}-foundry-
+            foundry-${{ runner.os }}-
       
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
       
-      # Cache Cargo build artifacts
+      # Cache target directory - separate by Cargo.lock for dependency changes
       - name: Cache Cargo build
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
-          path: |
-            target/
-            ~/.cargo/bin/
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/*.rs') }}
+          path: target/
+          key: cargo-build-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-
-            ${{ runner.os }}-cargo-build-
+            cargo-build-${{ runner.os }}-
       
       - name: Check format
         run: cargo fmt --all -- --check
@@ -77,40 +90,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      # Cache Rust toolchain for Docker build
-      - name: Cache Rust toolchain for Docker
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.rustup
-          key: ${{ runner.os }}-rust-docker-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-rust-docker-
-            ${{ runner.os }}-rust-toolchain-
-      
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
-      # Docker layer caching - this will cache the Rust compilation layers
+      # Use GitHub Container Registry for Docker layer caching
       - name: Cache Docker layers
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-docker-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/*.rs') }}
+          key: docker-buildx-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-docker-${{ hashFiles('**/Cargo.lock') }}-
-            ${{ runner.os }}-docker-
+            docker-buildx-
       
-      - name: Build Docker image
-        run: |
-          docker buildx build \
-            --cache-from type=local,src=/tmp/.buildx-cache \
-            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
-            --load \
-            -t the-beaconator \
-            .
+      - name: Build Docker image with aggressive caching
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: the-beaconator:latest
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+          platforms: linux/amd64
       
       - name: Test Docker image
         run: |
@@ -124,12 +124,12 @@ jobs:
             -e PERPCITY_REGISTRY_ADDRESS=0x3456789012345678901234567890123456789012 \
             -e PERP_HOOK_ADDRESS=0x5678901234567890123456789012345678901234 \
             -e USDC_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 \
-            the-beaconator
+            the-beaconator:latest
           sleep 10
           curl -f http://localhost:8000/ || exit 1
           docker stop test-beaconator
       
-      # Update cache
+      # Move cache for next run
       - name: Move cache
         run: |
           rm -rf /tmp/.buildx-cache
