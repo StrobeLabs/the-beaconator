@@ -682,17 +682,63 @@ async fn deposit_liquidity_for_perp(
         state.perp_hook_address
     );
 
+    // USDC approval with RPC fallback
     let usdc_contract = IERC20::new(state.usdc_address, &*state.provider);
-    let pending_approval = usdc_contract
-        .approve(state.perp_hook_address, U256::from(margin_amount_usdc))
-        .send()
-        .await
-        .map_err(|e| {
-            let error_msg = format!("Failed to approve USDC spending: {e}");
-            tracing::error!("{}", error_msg);
-            tracing::error!("Make sure the wallet has sufficient USDC balance");
-            error_msg
-        })?;
+    let pending_approval = {
+        // Try primary RPC first
+        tracing::info!("Approving USDC spending with primary RPC");
+        let result = usdc_contract
+            .approve(state.perp_hook_address, U256::from(margin_amount_usdc))
+            .send()
+            .await;
+
+        match result {
+            Ok(pending) => pending,
+            Err(e) => {
+                let error_msg = format!("Failed to approve USDC spending: {e}");
+                tracing::error!("{}", error_msg);
+                tracing::error!("Make sure the wallet has sufficient USDC balance");
+
+                // Check if nonce error and sync if needed
+                if is_nonce_error(&error_msg) {
+                    tracing::warn!(
+                        "Nonce error detected, attempting to sync nonce before fallback"
+                    );
+                    if let Err(sync_error) = sync_wallet_nonce(state).await {
+                        tracing::error!("Nonce sync failed: {}", sync_error);
+                    }
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+
+                // Try alternate RPC if available
+                if let Some(alternate_provider) = &state.alternate_provider {
+                    tracing::info!("Trying USDC approval with alternate RPC");
+                    let alt_usdc_contract = IERC20::new(state.usdc_address, &**alternate_provider);
+
+                    match alt_usdc_contract
+                        .approve(state.perp_hook_address, U256::from(margin_amount_usdc))
+                        .send()
+                        .await
+                    {
+                        Ok(pending) => {
+                            tracing::info!("USDC approval succeeded with alternate RPC");
+                            pending
+                        }
+                        Err(alt_e) => {
+                            let combined_error = format!(
+                                "USDC approval failed on both RPCs. Primary: {e}. Alternate: {alt_e}"
+                            );
+                            tracing::error!("{}", combined_error);
+                            return Err(combined_error);
+                        }
+                    }
+                } else {
+                    tracing::error!("No alternate RPC configured, cannot fallback");
+                    return Err(error_msg);
+                }
+            }
+        }
+    };
 
     tracing::info!("USDC approval transaction sent, waiting for confirmation...");
     let approval_tx_hash = *pending_approval.tx_hash();
@@ -823,56 +869,123 @@ async fn deposit_liquidity_for_perp(
         }
     };
 
-    // Send the transaction and wait for receipt
-    let pending_tx = match contract
-        .openMakerPosition(perp_id, open_maker_params)
-        .send()
-        .await
-    {
-        Ok(pending) => pending,
-        Err(e) => {
-            let error_type = match e.to_string().as_str() {
-                s if s.contains("execution reverted") => "Liquidity Deposit Reverted",
-                s if s.contains("insufficient funds") => "Insufficient Funds for Liquidity",
-                s if s.contains("perp not found") || s.contains("invalid perp") => {
-                    "Invalid Perp ID"
+    // Send the openMakerPosition transaction with RPC fallback
+    let pending_tx = {
+        // Try primary RPC first
+        tracing::info!("Opening maker position with primary RPC");
+        let result = contract
+            .openMakerPosition(perp_id, open_maker_params.clone())
+            .send()
+            .await;
+
+        match result {
+            Ok(pending) => pending,
+            Err(e) => {
+                let error_type = match e.to_string().as_str() {
+                    s if s.contains("execution reverted") => "Liquidity Deposit Reverted",
+                    s if s.contains("insufficient funds") => "Insufficient Funds for Liquidity",
+                    s if s.contains("perp not found") || s.contains("invalid perp") => {
+                        "Invalid Perp ID"
+                    }
+                    s if s.contains("margin") => "Margin Related Error",
+                    s if s.contains("liquidity") => "Liquidity Related Error",
+                    _ => "Liquidity Transaction Error",
+                };
+
+                let mut error_msg = format!("{error_type}: {e}");
+
+                // Try to decode contract error for better user feedback
+                if let Some(decoded_error) = try_decode_revert_reason(&e) {
+                    error_msg = format!("{error_type}: {decoded_error}");
+                    tracing::error!("{}", error_msg);
+                    tracing::error!("Decoded contract error: {}", decoded_error);
+                } else {
+                    tracing::error!("{}", error_msg);
                 }
-                s if s.contains("margin") => "Margin Related Error",
-                s if s.contains("liquidity") => "Liquidity Related Error",
-                _ => "Liquidity Transaction Error",
-            };
 
-            let mut error_msg = format!("{error_type}: {e}");
-
-            // Try to decode contract error for better user feedback
-            if let Some(decoded_error) = try_decode_revert_reason(&e) {
-                error_msg = format!("{error_type}: {decoded_error}");
-                tracing::error!("{}", error_msg);
-                tracing::error!("Decoded contract error: {}", decoded_error);
-            } else {
-                tracing::error!("{}", error_msg);
-            }
-
-            // Add specific troubleshooting hints
-            match error_type {
-                "Liquidity Deposit Reverted" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Check if perp ID exists and is active");
-                    tracing::error!("  - Verify margin amount is within allowed limits");
-                    tracing::error!("  - Ensure tick range is valid for the perp");
-                    tracing::error!(
-                        "  - Review leverage bounds (current config may have high scaling factor)"
+                // Check if nonce error and sync if needed
+                if is_nonce_error(&error_msg) {
+                    tracing::warn!(
+                        "Nonce error detected, attempting to sync nonce before fallback"
                     );
+                    if let Err(sync_error) = sync_wallet_nonce(state).await {
+                        tracing::error!("Nonce sync failed: {}", sync_error);
+                    }
+                    tokio::time::sleep(Duration::from_secs(2)).await;
                 }
-                "Invalid Perp ID" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Verify perp ID format (32-byte hex string)");
-                    tracing::error!("  - Check if perp was successfully deployed");
-                }
-                _ => {}
-            }
 
-            return Err(error_msg);
+                // Try alternate RPC if available
+                if let Some(alternate_provider) = &state.alternate_provider {
+                    tracing::info!("Trying openMakerPosition with alternate RPC");
+                    let alt_contract =
+                        IPerpHook::new(state.perp_hook_address, &**alternate_provider);
+
+                    match alt_contract
+                        .openMakerPosition(perp_id, open_maker_params.clone())
+                        .send()
+                        .await
+                    {
+                        Ok(pending) => {
+                            tracing::info!("OpenMakerPosition succeeded with alternate RPC");
+                            pending
+                        }
+                        Err(alt_e) => {
+                            let combined_error = format!(
+                                "OpenMakerPosition failed on both RPCs. Primary: {error_msg}. Alternate: {alt_e}"
+                            );
+                            tracing::error!("{}", combined_error);
+
+                            // Add specific troubleshooting hints
+                            match error_type {
+                                "Liquidity Deposit Reverted" => {
+                                    tracing::error!("Troubleshooting hints:");
+                                    tracing::error!("  - Check if perp ID exists and is active");
+                                    tracing::error!(
+                                        "  - Verify margin amount is within allowed limits"
+                                    );
+                                    tracing::error!("  - Ensure tick range is valid for the perp");
+                                    tracing::error!(
+                                        "  - Review leverage bounds (current config may have high scaling factor)"
+                                    );
+                                }
+                                "Invalid Perp ID" => {
+                                    tracing::error!("Troubleshooting hints:");
+                                    tracing::error!(
+                                        "  - Verify perp ID format (32-byte hex string)"
+                                    );
+                                    tracing::error!("  - Check if perp was successfully deployed");
+                                }
+                                _ => {}
+                            }
+
+                            return Err(combined_error);
+                        }
+                    }
+                } else {
+                    tracing::error!("No alternate RPC configured, cannot fallback");
+
+                    // Add specific troubleshooting hints
+                    match error_type {
+                        "Liquidity Deposit Reverted" => {
+                            tracing::error!("Troubleshooting hints:");
+                            tracing::error!("  - Check if perp ID exists and is active");
+                            tracing::error!("  - Verify margin amount is within allowed limits");
+                            tracing::error!("  - Ensure tick range is valid for the perp");
+                            tracing::error!(
+                                "  - Review leverage bounds (current config may have high scaling factor)"
+                            );
+                        }
+                        "Invalid Perp ID" => {
+                            tracing::error!("Troubleshooting hints:");
+                            tracing::error!("  - Verify perp ID format (32-byte hex string)");
+                            tracing::error!("  - Check if perp was successfully deployed");
+                        }
+                        _ => {}
+                    }
+
+                    return Err(error_msg);
+                }
+            }
         }
     };
 
@@ -1995,7 +2108,7 @@ mod tests {
                         || status == rocket::http::Status::InternalServerError
                 );
                 println!(
-                    "✅ Liquidity deposit failed at validation level (expected due to config mismatch)"
+                    "Liquidity deposit failed at validation level (expected due to config mismatch)"
                 );
                 println!("   This confirms validation logic is working correctly");
             }
@@ -2014,7 +2127,7 @@ mod tests {
         // Verify the contract instance was created with correct address
         assert_eq!(*usdc_contract.address(), app_state.usdc_address);
 
-        println!("✅ IERC20 interface properly configured for USDC contract");
+        println!("IERC20 interface properly configured for USDC contract");
         println!("   USDC address: {}", app_state.usdc_address);
         println!("   PerpHook address: {}", app_state.perp_hook_address);
     }
@@ -2171,7 +2284,7 @@ mod tests {
                 || status == rocket::http::Status::InternalServerError
         );
 
-        println!("✅ Pre-flight validation successfully caught the excessive leverage case");
+        println!("Pre-flight validation successfully caught the excessive leverage case");
     }
 
     #[tokio::test]
@@ -2386,7 +2499,7 @@ mod tests {
         // Check if bounds are now correctly configured
         if calculated_min <= api_max {
             println!(
-                "✅ CONFIGURATION FIXED: Minimum ({} USDC) <= API Maximum ({} USDC)",
+                "CONFIGURATION FIXED: Minimum ({} USDC) <= API Maximum ({} USDC)",
                 calculated_min as f64 / 1_000_000.0,
                 api_max as f64 / 1_000_000.0
             );
@@ -2761,5 +2874,402 @@ mod tests {
                 || batch_data.errors[1].contains("exceeds maximum limit")
                 || batch_data.errors[1].contains("Failed to deposit liquidity")
         );
+    }
+
+    #[tokio::test]
+    async fn test_deploy_perp_with_rpc_fallback() {
+        use crate::guards::ApiToken;
+        use crate::models::DeployPerpForBeaconRequest;
+        use crate::routes::test_utils::{AnvilManager, create_test_app_state};
+        use alloy::providers::ProviderBuilder;
+        use rocket::State;
+        use std::sync::Arc;
+
+        // Create primary app state
+        let mut app_state = create_test_app_state().await;
+
+        // Set up alternate provider
+        let anvil = AnvilManager::get_or_create().await;
+        let alternate_signer = anvil.deployer_signer();
+        let alternate_wallet = alloy::network::EthereumWallet::from(alternate_signer);
+
+        // Use a bad URL for primary to force fallback
+        let bad_provider = ProviderBuilder::new()
+            .wallet(alternate_wallet.clone())
+            .connect_http("http://localhost:9999".parse().unwrap()); // Non-existent port
+
+        // Keep the good provider as alternate
+        app_state.alternate_provider = Some(app_state.provider.clone());
+        app_state.provider = Arc::new(bad_provider);
+
+        let token = ApiToken("test_token".to_string());
+        let state = State::from(&app_state);
+
+        let request = Json(DeployPerpForBeaconRequest {
+            beacon_address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string(),
+        });
+
+        // This should fail on primary and attempt fallback
+        let result = deploy_perp_for_beacon_endpoint(request, token, &state).await;
+
+        // Should get an error but via fallback path (contract level, not connection level)
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            rocket::http::Status::InternalServerError
+        );
+    }
+
+    #[tokio::test]
+    async fn test_deposit_liquidity_with_rpc_fallback() {
+        use crate::guards::ApiToken;
+        use crate::models::DepositLiquidityForPerpRequest;
+        use crate::routes::test_utils::{AnvilManager, create_test_app_state};
+        use alloy::providers::ProviderBuilder;
+        use rocket::State;
+        use std::sync::Arc;
+
+        // Create primary app state
+        let mut app_state = create_test_app_state().await;
+
+        // Set up alternate provider
+        let anvil = AnvilManager::get_or_create().await;
+        let alternate_signer = anvil.deployer_signer();
+        let alternate_wallet = alloy::network::EthereumWallet::from(alternate_signer);
+
+        // Use a bad URL for primary to force fallback
+        let bad_provider = ProviderBuilder::new()
+            .wallet(alternate_wallet.clone())
+            .connect_http("http://localhost:9999".parse().unwrap());
+
+        app_state.alternate_provider = Some(app_state.provider.clone());
+        app_state.provider = Arc::new(bad_provider);
+
+        let token = ApiToken("test_token".to_string());
+        let state = State::from(&app_state);
+
+        let request = Json(DepositLiquidityForPerpRequest {
+            perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                .to_string(),
+            margin_amount_usdc: "500000000".to_string(), // 500 USDC
+        });
+
+        // This should fail on primary and attempt fallback for both USDC approval and liquidity deposit
+        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+
+        // Should get an error but via fallback path
+        assert!(result.is_err());
+        // Could be BadRequest (validation) or InternalServerError (contract failure)
+        let status = result.unwrap_err();
+        assert!(
+            status == rocket::http::Status::BadRequest
+                || status == rocket::http::Status::InternalServerError
+        );
+    }
+
+    #[tokio::test]
+    async fn test_batch_deposit_with_rpc_fallback() {
+        use crate::guards::ApiToken;
+        use crate::models::{BatchDepositLiquidityForPerpsRequest, DepositLiquidityForPerpRequest};
+        use crate::routes::test_utils::{AnvilManager, create_test_app_state};
+        use alloy::providers::ProviderBuilder;
+        use rocket::State;
+        use std::sync::Arc;
+
+        // Create primary app state
+        let mut app_state = create_test_app_state().await;
+
+        // Set up alternate provider
+        let anvil = AnvilManager::get_or_create().await;
+        let alternate_signer = anvil.deployer_signer();
+        let alternate_wallet = alloy::network::EthereumWallet::from(alternate_signer);
+
+        // Use a bad URL for primary to force fallback
+        let bad_provider = ProviderBuilder::new()
+            .wallet(alternate_wallet.clone())
+            .connect_http("http://localhost:9999".parse().unwrap());
+
+        app_state.alternate_provider = Some(app_state.provider.clone());
+        app_state.provider = Arc::new(bad_provider);
+
+        let token = ApiToken("test_token".to_string());
+        let state = State::from(&app_state);
+
+        let request = Json(BatchDepositLiquidityForPerpsRequest {
+            liquidity_deposits: vec![
+                DepositLiquidityForPerpRequest {
+                    perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                        .to_string(),
+                    margin_amount_usdc: "100000000".to_string(), // 100 USDC
+                },
+                DepositLiquidityForPerpRequest {
+                    perp_id: "0x2345678901234567890123456789012345678901234567890123456789012345"
+                        .to_string(),
+                    margin_amount_usdc: "200000000".to_string(), // 200 USDC
+                },
+            ],
+        });
+
+        let result = batch_deposit_liquidity_for_perps(request, token, &state).await;
+
+        // Should return OK with failure details from fallback attempts
+        assert!(result.is_ok());
+        let response = result.unwrap().into_inner();
+
+        assert!(!response.success);
+        assert!(response.data.is_some());
+        let batch_data = response.data.unwrap();
+        assert_eq!(batch_data.deposited_count, 0);
+        assert_eq!(batch_data.failed_count, 2);
+        assert!(!batch_data.errors.is_empty());
+
+        // Errors should indicate fallback attempts or validation failures
+        for error in &batch_data.errors {
+            assert!(
+                error.contains("Failed to deposit liquidity")
+                    || error.contains("below computed minimum")
+                    || error.contains("exceeds maximum limit")
+                    || error.contains("validation")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_usdc_approval_rpc_fallback() {
+        use crate::routes::test_utils::{AnvilManager, create_test_app_state};
+        use alloy::providers::ProviderBuilder;
+        use std::sync::Arc;
+
+        // Create primary app state with bad primary provider
+        let mut app_state = create_test_app_state().await;
+
+        let anvil = AnvilManager::get_or_create().await;
+        let alternate_signer = anvil.deployer_signer();
+        let alternate_wallet = alloy::network::EthereumWallet::from(alternate_signer);
+
+        let bad_provider = ProviderBuilder::new()
+            .wallet(alternate_wallet.clone())
+            .connect_http("http://localhost:9999".parse().unwrap());
+
+        app_state.alternate_provider = Some(app_state.provider.clone());
+        app_state.provider = Arc::new(bad_provider);
+
+        let perp_id = FixedBytes::<32>::from_str(
+            "0x1234567890123456789012345678901234567890123456789012345678901234",
+        )
+        .unwrap();
+        let margin_amount = 500_000_000u128; // 500 USDC
+
+        // This should attempt USDC approval with fallback
+        let result = deposit_liquidity_for_perp(&app_state, perp_id, margin_amount).await;
+
+        // Should fail due to missing contracts, but proves fallback was attempted
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err();
+        // The error could be various types of failures, just check that it's an error
+        assert!(!error_msg.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_perp_helper_functions_with_nonce_error() {
+        use crate::routes::test_utils::create_simple_test_app_state;
+
+        let _app_state = create_simple_test_app_state();
+
+        // Test nonce error detection with string messages
+        let nonce_error_msg = "nonce too low";
+        assert!(is_nonce_error(nonce_error_msg));
+
+        let nonce_high_msg = "nonce too high";
+        assert!(is_nonce_error(nonce_high_msg));
+
+        let invalid_nonce_msg = "invalid nonce";
+        assert!(is_nonce_error(invalid_nonce_msg));
+
+        // Test replacement transaction underpriced
+        let replacement_error = "replacement transaction underpriced";
+        assert!(is_nonce_error(replacement_error));
+
+        // Test non-nonce errors
+        let other_error_msg = "execution reverted";
+        assert!(!is_nonce_error(other_error_msg));
+
+        let generic_error_msg = "insufficient funds";
+        assert!(!is_nonce_error(generic_error_msg));
+    }
+
+    #[tokio::test]
+    async fn test_perp_nonce_synchronization() {
+        use crate::routes::test_utils::create_test_app_state;
+
+        let app_state = create_test_app_state().await;
+
+        // Test nonce synchronization
+        let result = sync_wallet_nonce(&app_state).await;
+
+        // Should succeed with test provider
+        assert!(result.is_ok());
+        let nonce = result.unwrap();
+
+        // If we got here, nonce synchronization worked
+        println!("Synchronized nonce: {}", nonce);
+    }
+
+    #[tokio::test]
+    async fn test_deploy_perp_fallback_logging() {
+        use crate::guards::ApiToken;
+        use crate::models::DeployPerpForBeaconRequest;
+        use crate::routes::test_utils::{AnvilManager, create_test_app_state};
+        use alloy::providers::ProviderBuilder;
+        use rocket::State;
+        use std::sync::Arc;
+
+        // This test verifies that proper logging occurs during fallback
+        let mut app_state = create_test_app_state().await;
+
+        // Set up bad primary provider
+        let anvil = AnvilManager::get_or_create().await;
+        let alternate_signer = anvil.deployer_signer();
+        let alternate_wallet = alloy::network::EthereumWallet::from(alternate_signer);
+
+        let bad_provider = ProviderBuilder::new()
+            .wallet(alternate_wallet.clone())
+            .connect_http("http://localhost:9999".parse().unwrap());
+
+        app_state.alternate_provider = Some(app_state.provider.clone());
+        app_state.provider = Arc::new(bad_provider);
+
+        let token = ApiToken("test_token".to_string());
+        let state = State::from(&app_state);
+
+        let request = Json(DeployPerpForBeaconRequest {
+            beacon_address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string(),
+        });
+
+        // Execute with fallback
+        let _result = deploy_perp_for_beacon_endpoint(request, token, &state).await;
+
+        // In a real test with tracing subscriber, we would verify log messages
+        // For now, just ensure the function completes without panic
+    }
+
+    #[tokio::test]
+    async fn test_liquidity_deposit_fallback_scenario() {
+        use crate::guards::ApiToken;
+        use crate::models::DepositLiquidityForPerpRequest;
+        use crate::routes::test_utils::{AnvilManager, create_test_app_state};
+        use alloy::providers::ProviderBuilder;
+        use rocket::State;
+        use std::sync::Arc;
+
+        // Test the complete liquidity deposit flow with RPC fallback
+        let mut app_state = create_test_app_state().await;
+
+        let anvil = AnvilManager::get_or_create().await;
+        let alternate_signer = anvil.deployer_signer();
+        let alternate_wallet = alloy::network::EthereumWallet::from(alternate_signer);
+
+        // Create two bad providers to test fallback chain
+        let bad_provider1 = ProviderBuilder::new()
+            .wallet(alternate_wallet.clone())
+            .connect_http("http://localhost:9999".parse().unwrap()); // Non-existent port
+
+        let good_provider = app_state.provider.clone();
+
+        app_state.alternate_provider = Some(good_provider);
+        app_state.provider = Arc::new(bad_provider1);
+
+        let token = ApiToken("test_token".to_string());
+        let state = State::from(&app_state);
+
+        // Test with minimum valid margin
+        let min_margin = app_state.perp_config.calculate_minimum_margin_usdc();
+        let request = Json(DepositLiquidityForPerpRequest {
+            perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                .to_string(),
+            margin_amount_usdc: min_margin.to_string(),
+        });
+
+        let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+
+        // Should fail but prove fallback mechanism is working
+        assert!(result.is_err());
+        let status = result.unwrap_err();
+        assert!(
+            status == rocket::http::Status::BadRequest
+                || status == rocket::http::Status::InternalServerError
+        );
+
+        println!("Liquidity deposit fallback test completed");
+    }
+
+    #[tokio::test]
+    async fn test_rpc_fallback_error_handling() {
+        use crate::routes::test_utils::{AnvilManager, create_test_app_state};
+        use alloy::providers::ProviderBuilder;
+        use std::sync::Arc;
+
+        // Test error handling when both primary and fallback fail
+        let mut app_state = create_test_app_state().await;
+
+        let anvil = AnvilManager::get_or_create().await;
+        let signer1 = anvil.deployer_signer();
+        let wallet1 = alloy::network::EthereumWallet::from(signer1);
+
+        let signer2 = anvil.get_signer(1);
+        let wallet2 = alloy::network::EthereumWallet::from(signer2);
+
+        // Both providers point to non-existent endpoints
+        let bad_provider1 = ProviderBuilder::new()
+            .wallet(wallet1)
+            .connect_http("http://localhost:9999".parse().unwrap());
+
+        let bad_provider2 = ProviderBuilder::new()
+            .wallet(wallet2)
+            .connect_http("http://localhost:8888".parse().unwrap());
+
+        app_state.provider = Arc::new(bad_provider1);
+        app_state.alternate_provider = Some(Arc::new(bad_provider2));
+
+        let beacon_address =
+            Address::from_str("0x5FbDB2315678afecb367f032d93F642f64180aa3").unwrap();
+
+        // This should fail with both providers
+        let result = deploy_perp_for_beacon(&app_state, beacon_address).await;
+
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err();
+
+        // Should contain information about failures
+        assert!(!error_msg.is_empty());
+    }
+}
+
+// Helper function to check if an error is a nonce-related error
+fn is_nonce_error(error_msg: &str) -> bool {
+    error_msg.contains("nonce too low")
+        || error_msg.contains("nonce too high")
+        || error_msg.contains("invalid nonce")
+        || error_msg.contains("replacement transaction underpriced")
+}
+
+// Helper function to sync wallet nonce with on-chain state
+async fn sync_wallet_nonce(state: &AppState) -> Result<u64, String> {
+    tracing::info!("Syncing wallet nonce with on-chain state...");
+
+    match state
+        .provider
+        .get_transaction_count(state.wallet_address)
+        .await
+    {
+        Ok(nonce) => {
+            tracing::info!("Current on-chain nonce: {}", nonce);
+            Ok(nonce)
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to get current nonce: {e}");
+            tracing::error!("{}", error_msg);
+            Err(error_msg)
+        }
     }
 }

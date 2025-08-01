@@ -303,6 +303,7 @@ pub async fn create_test_app_state() -> AppState {
 
     AppState {
         provider: deployment.provider,
+        alternate_provider: None,
         wallet_address: deployment.deployer,
         beacon_abi,
         beacon_factory_abi,
@@ -337,6 +338,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
 
     AppState {
         provider,
+        alternate_provider: None,
         wallet_address: anvil.accounts[account_index],
         beacon_abi: load_test_abi("Beacon"),
         beacon_factory_abi: load_test_abi("BeaconFactory"),
@@ -477,6 +479,7 @@ pub fn create_simple_test_app_state() -> AppState {
 
     AppState {
         provider: Arc::new(provider),
+        alternate_provider: None,
         wallet_address: Address::from_str("0x1111111111111111111111111111111111111111").unwrap(),
         beacon_abi: JsonAbi::new(),
         beacon_factory_abi: JsonAbi::new(),

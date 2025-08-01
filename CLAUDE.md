@@ -105,12 +105,12 @@ PERP_HOOK_ADDRESS=0x...                    # PerpHook contract address
 
 ### Modern Provider Pattern
 ```rust
-// ✅ CORRECT - Current Alloy v1.0+ pattern
+// CORRECT - Current Alloy v1.0+ pattern
 let provider = ProviderBuilder::new()
     .wallet(wallet)
     .connect_http(url);
 
-// ❌ AVOID - Deprecated pattern
+// AVOID - Deprecated pattern
 let provider = ProviderBuilder::new()
     .wallet(wallet)  
     .on_http(url);     // Deprecated in v1.0+
@@ -118,7 +118,7 @@ let provider = ProviderBuilder::new()
 
 ### Contract Interface Pattern
 ```rust
-// ✅ CORRECT - Use sol! macro for type safety
+// CORRECT - Use sol! macro for type safety
 sol! {
     interface IBeacon {
         function updateData(bytes calldata proof, bytes calldata publicSignals) external;

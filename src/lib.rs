@@ -276,8 +276,35 @@ pub async fn create_rocket() -> Rocket<Build> {
 
     let provider = Arc::new(provider_impl);
 
+    // Setup alternate provider if BEACONATOR_ALTERNATE_RPC is provided
+    let alternate_provider = if let Ok(alternate_rpc_url) = env::var("BEACONATOR_ALTERNATE_RPC") {
+        tracing::info!("Setting up alternate RPC provider: {}", alternate_rpc_url);
+
+        // Create alternate provider with same wallet
+        let alternate_signer = private_key
+            .parse::<PrivateKeySigner>()
+            .expect("Failed to parse private key for alternate provider")
+            .with_chain_id(Some(chain_id));
+
+        let alternate_wallet = EthereumWallet::from(alternate_signer);
+
+        let provider = ProviderBuilder::new()
+            .wallet(alternate_wallet)
+            .connect_http(
+                alternate_rpc_url
+                    .parse()
+                    .expect("Invalid alternate RPC URL"),
+            );
+        tracing::info!("Alternate RPC provider setup successful");
+        Some(Arc::new(provider))
+    } else {
+        tracing::info!("No alternate RPC configured (BEACONATOR_ALTERNATE_RPC not set)");
+        None
+    };
+
     let app_state = AppState {
         provider,
+        alternate_provider,
         wallet_address,
         beacon_abi,
         beacon_factory_abi,

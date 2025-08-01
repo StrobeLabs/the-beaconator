@@ -35,7 +35,7 @@ fmt-check: ## Check if code is properly formatted
 
 check: ## Run cargo check and anvil cleanup (faster than build)
 	cargo check
-	@echo "🧹 Running anvil cleanup..."
+	@echo "Running anvil cleanup..."
 	./scripts/anvil-cleanup.sh
 
 # Comprehensive quality check
@@ -68,8 +68,8 @@ install: ## Install required tools
 
 # Pre-commit hook simulation
 pre-commit: quality ## Run all pre-commit checks
-	@echo "✅ All pre-commit checks passed!"
+	@echo "All pre-commit checks passed!"
 
 # Release preparation
 release-prep: clean quality build-release ## Prepare for release (clean, check quality, build)
-	@echo "✅ Ready for release!" 
+	@echo "Ready for release!" 

@@ -464,6 +464,7 @@ impl Default for PerpConfig {
 
 pub struct AppState {
     pub provider: Arc<AlloyProvider>,
+    pub alternate_provider: Option<Arc<AlloyProvider>>,
     pub wallet_address: Address,
     pub beacon_abi: JsonAbi,
     pub beacon_factory_abi: JsonAbi,
