@@ -57,10 +57,18 @@ make dev
 The project includes a Makefile with useful development commands:
 
 ```bash
-make help           # Show all available commands
-make quality        # Run all quality checks (format, lint, test)
-make lint           # Run clippy linter with strict warnings
+make help               # Show all available commands
+make test               # Run all tests (unit parallel, integration single-threaded)
+make test-unit          # Run unit tests only (fast)
+make test-integration   # Run integration tests only (single-threaded)
+make quality            # Run all quality checks (format, lint, test)
+make lint               # Run clippy linter with strict warnings
 ```
+
+**Testing Notes:**
+- Unit tests run in parallel for speed (12 tests)
+- Integration tests run single-threaded to prevent race conditions (93 tests)
+- Use `./scripts/anvil-cleanup.sh` if tests behave unexpectedly
 
 The server will start on `http://localhost:8000`
 

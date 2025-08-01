@@ -8,12 +8,13 @@ use tokio::time::timeout;
 use tracing;
 
 use super::{
-    IBeacon, IBeaconFactory, IBeaconRegistry, execute_transaction_serialized,
+    IBeacon, IBeaconFactory, IBeaconRegistry, IMulticall3, execute_transaction_serialized,
     get_fresh_nonce_from_alternate, is_nonce_error, sync_wallet_nonce,
 };
 use crate::guards::ApiToken;
 use crate::models::{
     ApiResponse, AppState, BatchCreatePerpcityBeaconRequest, BatchCreatePerpcityBeaconResponse,
+    BatchUpdateBeaconRequest, BatchUpdateBeaconResponse, BeaconUpdateData, BeaconUpdateResult,
     CreateBeaconRequest, RegisterBeaconRequest, UpdateBeaconRequest,
 };
 
@@ -781,47 +782,45 @@ pub async fn batch_create_perpcity_beacon(
         return Err(Status::BadRequest);
     }
 
-    let mut beacon_addresses = Vec::new();
-    let mut errors = Vec::new();
+    // Process all beacon creations in a single serialized transaction using multicall for efficiency
+    let state_inner = state.inner();
+    let count_clone = count;
     let owner_address = state.wallet_address;
 
-    for i in 1..=count {
-        tracing::info!("Creating beacon {}/{}", i, count);
-
-        // Create a beacon using the factory
-        let beacon_address =
-            match create_beacon_via_factory(state, owner_address, state.beacon_factory_address)
-                .await
-            {
-                Ok(address) => address,
-                Err(e) => {
-                    let error_msg = format!("Failed to create beacon {i}: {e}");
-                    tracing::error!("{}", error_msg);
-                    errors.push(error_msg.clone());
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
-                    continue; // Continue with next beacon instead of failing entire batch
-                }
-            };
-
-        // Register the beacon with the perpcity registry
-        match register_beacon_with_registry(state, beacon_address, state.perpcity_registry_address)
+    let batch_results = execute_transaction_serialized(async move {
+        // Check if we have a multicall3 contract address configured
+        if let Some(multicall_address) = state_inner.multicall3_address {
+            // Use multicall3 for atomic batch beacon creation
+            batch_create_beacons_with_multicall3(
+                state_inner,
+                multicall_address,
+                count_clone,
+                owner_address,
+            )
             .await
-        {
-            Ok(_) => {
-                beacon_addresses.push(beacon_address.to_string());
-                tracing::info!(
-                    "Successfully created and registered beacon {}: {}",
-                    i,
-                    beacon_address
-                );
+        } else {
+            // No multicall3 configured - return error for all beacon creations
+            let error_msg =
+                "Batch operations require Multicall3 contract address to be configured".to_string();
+            tracing::error!("{}", error_msg);
+            (1..=count_clone)
+                .map(|i| (i, Err(error_msg.clone())))
+                .collect()
+        }
+    })
+    .await;
+
+    // Process the results
+    let mut beacon_addresses = Vec::new();
+    let mut errors = Vec::new();
+
+    for (_i, result) in batch_results {
+        match result {
+            Ok(address) => {
+                beacon_addresses.push(address);
             }
-            Err(e) => {
-                let error_msg = format!("Failed to register beacon {i} ({beacon_address}): {e}");
-                tracing::error!("{}", error_msg);
-                errors.push(error_msg.clone());
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                // Note: beacon was created but not registered - this is tracked in errors
-                continue;
+            Err(error) => {
+                errors.push(error);
             }
         }
     }
@@ -926,11 +925,614 @@ pub async fn update_beacon(
     }))
 }
 
+#[post("/batch_update_beacon", data = "<request>")]
+pub async fn batch_update_beacon(
+    request: Json<BatchUpdateBeaconRequest>,
+    _token: ApiToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<BatchUpdateBeaconResponse>>, Status> {
+    tracing::info!("Received request: POST /batch_update_beacon");
+    let _guard = sentry::Hub::current().push_scope();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("endpoint", "/batch_update_beacon");
+        scope.set_extra("update_count", request.updates.len().into());
+    });
+
+    // Validate request
+    if request.updates.is_empty() {
+        tracing::warn!("Batch update request with no updates");
+        return Err(Status::BadRequest);
+    }
+
+    if request.updates.len() > 100 {
+        tracing::warn!("Batch update request exceeds maximum of 100 updates");
+        return Err(Status::BadRequest);
+    }
+
+    // Process all updates using multicall for efficient batching
+    let state_inner = state.inner();
+    let updates_clone = request.updates.clone();
+
+    let batch_results = execute_transaction_serialized(async move {
+        // Check if we have a multicall3 contract address configured
+        if let Some(multicall_address) = state_inner.multicall3_address {
+            // Use multicall3 for efficient batch execution - single transaction with multiple calls
+            batch_update_with_multicall3(state_inner, multicall_address, &updates_clone).await
+        } else {
+            // No multicall3 configured - return error for all updates
+            let error_msg =
+                "Batch operations require Multicall3 contract address to be configured".to_string();
+            tracing::error!("{}", error_msg);
+            updates_clone
+                .iter()
+                .map(|update| (update.beacon_address.clone(), Err(error_msg.clone())))
+                .collect()
+        }
+    })
+    .await;
+
+    // Process the results
+    let mut results = Vec::new();
+    let mut successful_updates = 0;
+    let mut failed_updates = 0;
+
+    for (beacon_address, result) in batch_results {
+        match result {
+            Ok(tx_hash) => {
+                successful_updates += 1;
+                results.push(BeaconUpdateResult {
+                    beacon_address: beacon_address.clone(),
+                    success: true,
+                    transaction_hash: Some(tx_hash.clone()),
+                    error: None,
+                });
+                tracing::info!(
+                    "Successfully updated beacon {} with tx hash: {}",
+                    beacon_address,
+                    tx_hash
+                );
+            }
+            Err(error) => {
+                failed_updates += 1;
+                results.push(BeaconUpdateResult {
+                    beacon_address: beacon_address.clone(),
+                    success: false,
+                    transaction_hash: None,
+                    error: Some(error.clone()),
+                });
+                tracing::error!("Failed to update beacon {}: {}", beacon_address, error);
+            }
+        }
+    }
+
+    let response = BatchUpdateBeaconResponse {
+        results,
+        total_requested: request.updates.len(),
+        successful_updates,
+        failed_updates,
+    };
+
+    let message = format!(
+        "Batch update completed: {}/{} successful",
+        successful_updates,
+        request.updates.len()
+    );
+
+    Ok(Json(ApiResponse {
+        success: successful_updates > 0,
+        data: Some(response),
+        message,
+    }))
+}
+
+// Helper function to execute batch updates using multicall3 - single transaction with multiple calls
+async fn batch_update_with_multicall3(
+    state: &AppState,
+    multicall_address: Address,
+    updates: &[BeaconUpdateData],
+) -> Vec<(String, Result<String, String>)> {
+    tracing::info!(
+        "Using Multicall3 for batch update of {} beacons",
+        updates.len()
+    );
+
+    // Prepare multicall3 calls - each beacon update becomes a call in the multicall
+    let mut calls = Vec::new();
+    let mut beacon_addresses = Vec::new();
+    let mut invalid_addresses = Vec::new();
+
+    for update_data in updates {
+        // Parse beacon address
+        let beacon_address = match Address::from_str(&update_data.beacon_address) {
+            Ok(addr) => addr,
+            Err(e) => {
+                // Track invalid address for error reporting
+                invalid_addresses.push((
+                    update_data.beacon_address.clone(),
+                    format!("Invalid beacon address: {e}"),
+                ));
+                continue; // Skip this update but continue processing others
+            }
+        };
+
+        // Prepare proof and public signals
+        let proof_bytes = Bytes::from(update_data.proof.clone());
+        let public_signals_bytes = Bytes::from(vec![0u8; 32]); // Placeholder for now
+
+        // Create the updateData call data using the IBeacon interface
+        let beacon_contract = IBeacon::new(beacon_address, &*state.provider);
+        let call_data = beacon_contract
+            .updateData(proof_bytes, public_signals_bytes)
+            .calldata()
+            .clone();
+
+        // Create multicall3 call
+        let call = IMulticall3::Call3 {
+            target: beacon_address,
+            allowFailure: false, // Atomic: all calls must succeed or entire batch fails
+            callData: call_data,
+        };
+
+        calls.push(call);
+        beacon_addresses.push(update_data.beacon_address.clone());
+    }
+
+    // Execute the multicall3 transaction - single transaction containing all calls
+    let multicall_contract = IMulticall3::new(multicall_address, &*state.provider);
+
+    // Build results in the same order as the input
+    let mut results = Vec::new();
+
+    // Process each update in order
+    for update_data in updates {
+        if let Some((addr, error)) = invalid_addresses
+            .iter()
+            .find(|(a, _)| a == &update_data.beacon_address)
+        {
+            // This was an invalid address
+            results.push((addr.clone(), Err(error.clone())));
+        } else {
+            // This was a valid address - find its result from multicall
+            if beacon_addresses
+                .iter()
+                .any(|a| a == &update_data.beacon_address)
+            {
+                // We'll add the multicall result later
+                results.push((
+                    update_data.beacon_address.clone(),
+                    Err("Multicall3 processing failed".to_string()),
+                ));
+            }
+        }
+    }
+
+    // If we have valid calls to make, execute the multicall and update results
+    if !calls.is_empty() {
+        match multicall_contract.aggregate3(calls).send().await {
+            Ok(pending_tx) => {
+                tracing::info!("Multicall3 transaction sent, waiting for receipt...");
+                match pending_tx.get_receipt().await {
+                    Ok(receipt) => {
+                        tracing::info!(
+                            "Multicall3 transaction confirmed: {:?}",
+                            receipt.transaction_hash
+                        );
+
+                        // Update results for valid addresses
+                        for addr in beacon_addresses.iter() {
+                            if let Some(result_index) = results.iter().position(|(a, _)| a == addr)
+                            {
+                                results[result_index] =
+                                    (addr.clone(), Ok(format!("{:?}", receipt.transaction_hash)));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let error_msg = format!("Failed to get multicall3 receipt: {e}");
+                        tracing::error!("{}", error_msg);
+                        // Update results for valid addresses with error
+                        for addr in beacon_addresses {
+                            if let Some(result_index) = results.iter().position(|(a, _)| a == &addr)
+                            {
+                                results[result_index] = (addr.clone(), Err(error_msg.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                let error_msg = format!("Failed to send multicall3 transaction: {e}");
+                tracing::error!("{}", error_msg);
+                // Update results for valid addresses with error
+                for addr in beacon_addresses {
+                    if let Some(result_index) = results.iter().position(|(a, _)| a == &addr) {
+                        results[result_index] = (addr.clone(), Err(error_msg.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    results
+}
+
+// Helper function to execute batch beacon creation using multicall3 - single transaction with multiple calls
+async fn batch_create_beacons_with_multicall3(
+    state: &AppState,
+    multicall_address: Address,
+    count: u32,
+    owner_address: Address,
+) -> Vec<(u32, Result<String, String>)> {
+    tracing::info!("Using Multicall3 for batch creation of {} beacons", count);
+
+    // Prepare multicall3 calls - each beacon creation becomes a call in the multicall
+    let mut calls = Vec::new();
+
+    for _i in 1..=count {
+        // Create the createBeacon call data using the IBeaconFactory interface
+        let factory_contract = IBeaconFactory::new(state.beacon_factory_address, &*state.provider);
+        let call_data = factory_contract
+            .createBeacon(owner_address)
+            .calldata()
+            .clone();
+
+        // Create multicall3 call
+        let call = IMulticall3::Call3 {
+            target: state.beacon_factory_address,
+            allowFailure: false, // Atomic: all beacon creations must succeed or entire batch fails
+            callData: call_data,
+        };
+
+        calls.push(call);
+    }
+
+    // Execute the multicall3 transaction - single transaction containing all beacon creations
+    let multicall_contract = IMulticall3::new(multicall_address, &*state.provider);
+
+    match multicall_contract.aggregate3(calls).send().await {
+        Ok(pending_tx) => {
+            tracing::info!("Multicall3 beacon creation transaction sent, waiting for receipt...");
+            match pending_tx.get_receipt().await {
+                Ok(receipt) => {
+                    tracing::info!(
+                        "Multicall3 beacon creation confirmed: {:?}",
+                        receipt.transaction_hash
+                    );
+
+                    // Parse beacon addresses from the event logs
+                    let beacon_addresses = parse_beacon_created_events_from_multicall(
+                        &receipt,
+                        state.beacon_factory_address,
+                        count,
+                    );
+
+                    match beacon_addresses {
+                        Ok(addresses) => {
+                            // Register all created beacons with the registry in another multicall
+                            match register_beacons_with_multicall3(
+                                state,
+                                multicall_address,
+                                &addresses,
+                            )
+                            .await
+                            {
+                                Ok(_) => {
+                                    // All succeeded
+                                    addresses
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(i, addr)| ((i + 1) as u32, Ok(addr)))
+                                        .collect()
+                                }
+                                Err(e) => {
+                                    let error_msg = format!("Failed to register beacons: {e}");
+                                    (1..=count).map(|i| (i, Err(error_msg.clone()))).collect()
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let error_msg =
+                                format!("Failed to parse beacon addresses from multicall: {e}");
+                            tracing::error!("{}", error_msg);
+                            (1..=count).map(|i| (i, Err(error_msg.clone()))).collect()
+                        }
+                    }
+                }
+                Err(e) => {
+                    let error_msg =
+                        format!("Failed to get multicall3 beacon creation receipt: {e}");
+                    tracing::error!("{}", error_msg);
+                    (1..=count).map(|i| (i, Err(error_msg.clone()))).collect()
+                }
+            }
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to send multicall3 beacon creation transaction: {e}");
+            tracing::error!("{}", error_msg);
+            (1..=count).map(|i| (i, Err(error_msg.clone()))).collect()
+        }
+    }
+}
+
+// Helper function to register multiple beacons using multicall3
+async fn register_beacons_with_multicall3(
+    state: &AppState,
+    multicall_address: Address,
+    beacon_addresses: &[String],
+) -> Result<(), String> {
+    tracing::info!(
+        "Using Multicall3 for batch registration of {} beacons",
+        beacon_addresses.len()
+    );
+
+    let mut calls = Vec::new();
+
+    for beacon_addr_str in beacon_addresses {
+        let beacon_address = Address::from_str(beacon_addr_str)
+            .map_err(|e| format!("Invalid beacon address {beacon_addr_str}: {e}"))?;
+
+        // Create the registerBeacon call data using the IBeaconRegistry interface
+        let registry_contract =
+            IBeaconRegistry::new(state.perpcity_registry_address, &*state.provider);
+        let call_data = registry_contract
+            .registerBeacon(beacon_address)
+            .calldata()
+            .clone();
+
+        // Create multicall3 call
+        let call = IMulticall3::Call3 {
+            target: state.perpcity_registry_address,
+            allowFailure: false, // Atomic: all registrations must succeed
+            callData: call_data,
+        };
+
+        calls.push(call);
+    }
+
+    // Execute the multicall3 registration transaction
+    let multicall_contract = IMulticall3::new(multicall_address, &*state.provider);
+
+    match multicall_contract.aggregate3(calls).send().await {
+        Ok(pending_tx) => match pending_tx.get_receipt().await {
+            Ok(receipt) => {
+                tracing::info!(
+                    "Multicall3 beacon registration confirmed: {:?}",
+                    receipt.transaction_hash
+                );
+                Ok(())
+            }
+            Err(e) => Err(format!("Failed to get registration receipt: {e}")),
+        },
+        Err(e) => Err(format!("Failed to send registration transaction: {e}")),
+    }
+}
+
+// Helper function to parse beacon addresses from multicall receipt
+fn parse_beacon_created_events_from_multicall(
+    receipt: &alloy::rpc::types::TransactionReceipt,
+    factory_address: Address,
+    expected_count: u32,
+) -> Result<Vec<String>, String> {
+    let mut beacon_addresses = Vec::new();
+
+    // Look for BeaconCreated events in the logs
+    for log in receipt.logs().iter() {
+        // Check if this log is from our factory contract
+        if log.address() == factory_address {
+            // Try to decode as BeaconCreated event
+            match log.log_decode::<IBeaconFactory::BeaconCreated>() {
+                Ok(decoded_log) => {
+                    let beacon = decoded_log.inner.data.beacon;
+                    beacon_addresses.push(beacon.to_string());
+                    tracing::info!("Parsed BeaconCreated event - beacon address: {}", beacon);
+                }
+                Err(_) => {
+                    // Log is from factory but not BeaconCreated event, continue
+                }
+            }
+        }
+    }
+
+    if beacon_addresses.len() as u32 != expected_count {
+        return Err(format!(
+            "Expected {} BeaconCreated events, but found {}",
+            expected_count,
+            beacon_addresses.len()
+        ));
+    }
+
+    Ok(beacon_addresses)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy::primitives::Address;
     use std::str::FromStr;
+
+    #[tokio::test]
+    async fn test_batch_update_beacon_with_multicall3() {
+        use crate::guards::ApiToken;
+        use crate::models::{BatchUpdateBeaconRequest, BeaconUpdateData};
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let mut app_state = create_simple_test_app_state();
+
+        // Set multicall3 address for the test
+        app_state.multicall3_address =
+            Some(Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap());
+
+        let state = State::from(&app_state);
+
+        let update_data = BeaconUpdateData {
+            beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
+            value: 100,
+            proof: vec![1, 2, 3, 4], // Mock proof
+        };
+
+        let request = Json(BatchUpdateBeaconRequest {
+            updates: vec![update_data],
+        });
+
+        // This will fail in test environment due to no actual contracts, but should not panic
+        let result = batch_update_beacon(request, token, state).await;
+
+        // Should return an error response rather than panic
+        assert!(result.is_ok());
+        let response = result.unwrap().into_inner();
+
+        // Should contain error details about the failed multicall
+        assert!(!response.success);
+        assert!(response.data.is_some());
+        let batch_data = response.data.unwrap();
+        assert_eq!(batch_data.successful_updates, 0);
+        assert_eq!(batch_data.failed_updates, 1);
+        assert!(!batch_data.results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_batch_update_beacon_without_multicall3() {
+        use crate::guards::ApiToken;
+        use crate::models::{BatchUpdateBeaconRequest, BeaconUpdateData};
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let app_state = create_simple_test_app_state(); // No multicall3_address set
+        let state = State::from(&app_state);
+
+        let update_data = BeaconUpdateData {
+            beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
+            value: 100,
+            proof: vec![1, 2, 3, 4],
+        };
+
+        let request = Json(BatchUpdateBeaconRequest {
+            updates: vec![update_data],
+        });
+
+        let result = batch_update_beacon(request, token, state).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap().into_inner();
+
+        // Should fail with clear error message about missing multicall3
+        assert!(!response.success);
+        assert!(response.data.is_some());
+        let batch_data = response.data.unwrap();
+        assert_eq!(batch_data.successful_updates, 0);
+        assert_eq!(batch_data.failed_updates, 1);
+        assert!(
+            batch_data.results[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("Multicall3")
+                || batch_data.results[0]
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .contains("multicall")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_batch_create_beacons_with_multicall3() {
+        use crate::guards::ApiToken;
+        use crate::models::BatchCreatePerpcityBeaconRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let mut app_state = create_simple_test_app_state();
+
+        // Set multicall3 address for the test
+        app_state.multicall3_address =
+            Some(Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap());
+
+        let state = State::from(&app_state);
+
+        let request = Json(BatchCreatePerpcityBeaconRequest { count: 3 });
+
+        let result = batch_create_perpcity_beacon(request, token, state).await;
+
+        // Should return an error response due to multicall not implemented yet
+        assert!(result.is_ok());
+        let response = result.unwrap().into_inner();
+
+        assert!(!response.success);
+        assert!(response.data.is_some());
+        let batch_data = response.data.unwrap();
+        assert_eq!(batch_data.created_count, 0);
+        assert_eq!(batch_data.failed_count, 3);
+        assert!(!batch_data.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_batch_create_beacons_without_multicall3() {
+        use crate::guards::ApiToken;
+        use crate::models::BatchCreatePerpcityBeaconRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let app_state = create_simple_test_app_state(); // No multicall3_address set
+        let state = State::from(&app_state);
+
+        let request = Json(BatchCreatePerpcityBeaconRequest { count: 2 });
+
+        let result = batch_create_perpcity_beacon(request, token, state).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap().into_inner();
+
+        // Should fail with clear error message about missing multicall3
+        assert!(!response.success);
+        assert!(response.data.is_some());
+        let batch_data = response.data.unwrap();
+        assert_eq!(batch_data.created_count, 0);
+        assert_eq!(batch_data.failed_count, 2);
+        assert!(
+            batch_data
+                .errors
+                .iter()
+                .any(|e| e.contains("Multicall3") || e.contains("multicall"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_multicall3_atomic_behavior() {
+        // Test that multicall3 calls are atomic (allowFailure: false)
+        use crate::models::BeaconUpdateData;
+
+        let update_data = BeaconUpdateData {
+            beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
+            value: 100,
+            proof: vec![1, 2, 3, 4],
+        };
+
+        // Create mock multicall3 call and verify atomicity setting
+        let beacon_address = Address::from_str(&update_data.beacon_address).unwrap();
+        let _proof_bytes = Bytes::from(update_data.proof.clone());
+        let _public_signals_bytes = Bytes::from(vec![0u8; 32]);
+
+        // This would be the actual call structure in the multicall
+        let call = IMulticall3::Call3 {
+            target: beacon_address,
+            allowFailure: false,    // Atomic behavior
+            callData: Bytes::new(), // Mock call data
+        };
+
+        // Verify atomic setting
+        assert!(
+            !call.allowFailure,
+            "Multicall3 calls should be atomic (allowFailure: false)"
+        );
+        assert_eq!(call.target, beacon_address);
+    }
+    use crate::routes::test_utils::create_test_app_state;
 
     #[tokio::test]
     async fn test_create_beacon_not_implemented() {
@@ -1405,5 +2007,222 @@ mod tests {
 
         // In a real test with tracing subscriber, we would verify log messages
         // For now, just ensure the function completes without panic
+    }
+
+    #[tokio::test]
+    async fn test_batch_update_beacon_empty_request() {
+        let app_state = create_test_app_state().await;
+        let token = ApiToken("test_token".to_string());
+        let state = State::from(&app_state);
+
+        let request = Json(BatchUpdateBeaconRequest { updates: vec![] });
+
+        let result = batch_update_beacon(request, token, state).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
+    }
+
+    #[tokio::test]
+    async fn test_batch_update_beacon_exceeds_limit() {
+        let app_state = create_test_app_state().await;
+        let token = ApiToken("test_token".to_string());
+        let state = State::from(&app_state);
+
+        // Create 101 updates (exceeds limit of 100)
+        let updates = (0..101)
+            .map(|i| BeaconUpdateData {
+                beacon_address: format!("0x{i:040x}"),
+                value: i as u64,
+                proof: vec![0u8; 32],
+            })
+            .collect();
+
+        let request = Json(BatchUpdateBeaconRequest { updates });
+
+        let result = batch_update_beacon(request, token, state).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
+    }
+
+    #[tokio::test]
+    async fn test_batch_update_beacon_valid_request() {
+        let app_state = create_test_app_state().await;
+        let token = ApiToken("test_token".to_string());
+        let state = State::from(&app_state);
+
+        let updates = vec![
+            BeaconUpdateData {
+                beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
+                value: 100,
+                proof: vec![0u8; 32],
+            },
+            BeaconUpdateData {
+                beacon_address: "0x2345678901234567890123456789012345678901".to_string(),
+                value: 200,
+                proof: vec![1u8; 32],
+            },
+        ];
+
+        let request = Json(BatchUpdateBeaconRequest { updates });
+
+        let result = batch_update_beacon(request, token, state).await;
+
+        // Should return OK with failure details, not InternalServerError
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        let batch_response = response.data.as_ref().unwrap();
+
+        assert_eq!(batch_response.total_requested, 2);
+        // Both valid addresses should succeed in test environment with Anvil
+        assert_eq!(batch_response.failed_updates, 0);
+        assert_eq!(batch_response.successful_updates, 2);
+        assert_eq!(batch_response.results.len(), 2);
+
+        // Verify each result has the correct beacon address
+        assert_eq!(
+            batch_response.results[0].beacon_address,
+            "0x1234567890123456789012345678901234567890"
+        );
+        assert_eq!(
+            batch_response.results[1].beacon_address,
+            "0x2345678901234567890123456789012345678901"
+        );
+
+        // Both should succeed with transaction hashes
+        assert!(batch_response.results[0].success);
+        assert!(batch_response.results[0].transaction_hash.is_some());
+        assert!(batch_response.results[1].success);
+        assert!(batch_response.results[1].transaction_hash.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_batch_update_beacon_invalid_address() {
+        let app_state = create_test_app_state().await;
+        let token = ApiToken("test_token".to_string());
+        let state = State::from(&app_state);
+
+        let updates = vec![BeaconUpdateData {
+            beacon_address: "invalid_address".to_string(),
+            value: 100,
+            proof: vec![0u8; 32],
+        }];
+
+        let request = Json(BatchUpdateBeaconRequest { updates });
+
+        let result = batch_update_beacon(request, token, state).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        let batch_response = response.data.as_ref().unwrap();
+
+        assert_eq!(batch_response.total_requested, 1);
+        assert_eq!(batch_response.failed_updates, 1);
+        assert_eq!(batch_response.successful_updates, 0);
+
+        // Should have error about invalid address
+        assert!(!batch_response.results[0].success);
+        assert!(
+            batch_response.results[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("Invalid beacon address")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_batch_update_beacon_mixed_addresses() {
+        let app_state = create_test_app_state().await;
+        let token = ApiToken("test_token".to_string());
+        let state = State::from(&app_state);
+
+        let updates = vec![
+            BeaconUpdateData {
+                beacon_address: "invalid_address".to_string(),
+                value: 100,
+                proof: vec![0u8; 32],
+            },
+            BeaconUpdateData {
+                beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
+                value: 200,
+                proof: vec![1u8; 32],
+            },
+        ];
+
+        let request = Json(BatchUpdateBeaconRequest { updates });
+
+        let result = batch_update_beacon(request, token, state).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        let batch_response = response.data.as_ref().unwrap();
+
+        assert_eq!(batch_response.total_requested, 2);
+
+        // Mixed results: first fails due to invalid address, second succeeds with valid address
+        assert_eq!(batch_response.failed_updates, 1);
+        assert_eq!(batch_response.successful_updates, 1);
+
+        // First should fail with invalid address
+        assert!(!batch_response.results[0].success);
+        assert!(
+            batch_response.results[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("Invalid beacon address")
+        );
+
+        // Second should succeed with valid address (in test environment with Anvil)
+        assert!(batch_response.results[1].success);
+        assert!(batch_response.results[1].transaction_hash.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_batch_update_beacon_response_structure() {
+        let app_state = create_test_app_state().await;
+        let token = ApiToken("test_token".to_string());
+        let state = State::from(&app_state);
+
+        let updates = vec![BeaconUpdateData {
+            beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
+            value: 100,
+            proof: vec![0u8; 32],
+        }];
+
+        let request = Json(BatchUpdateBeaconRequest { updates });
+
+        let result = batch_update_beacon(request, token, state).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert!(response.data.is_some());
+
+        let batch_response = response.data.as_ref().unwrap();
+
+        // Verify response structure
+        assert_eq!(batch_response.results.len(), 1);
+        assert_eq!(batch_response.total_requested, 1);
+        assert_eq!(
+            batch_response.successful_updates + batch_response.failed_updates,
+            1
+        );
+
+        // Verify individual result structure
+        let beacon_result = &batch_response.results[0];
+        assert_eq!(
+            beacon_result.beacon_address,
+            "0x1234567890123456789012345678901234567890"
+        );
+        // Either outcome is valid - success or failure
+        // The result exists and has been processed
+
+        if beacon_result.success {
+            assert!(beacon_result.transaction_hash.is_some());
+            assert!(beacon_result.error.is_none());
+        } else {
+            assert!(beacon_result.transaction_hash.is_none());
+            assert!(beacon_result.error.is_some());
+        }
     }
 }

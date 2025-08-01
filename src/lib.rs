@@ -156,6 +156,7 @@ pub async fn create_rocket() -> Rocket<Build> {
     let beacon_factory_abi = load_abi("BeaconFactory");
     let beacon_registry_abi = load_abi("BeaconRegistry");
     let perp_hook_abi = load_abi("PerpHook");
+    let multicall3_abi = load_abi("Multicall3");
 
     // Load contract addresses
     let beacon_factory_address = Address::from_str(
@@ -179,6 +180,17 @@ pub async fn create_rocket() -> Rocket<Build> {
         &env::var("USDC_ADDRESS").expect("USDC_ADDRESS environment variable not set"),
     )
     .expect("Failed to parse USDC address");
+
+    // Optional multicall3 address for batch operations
+    let multicall3_address = env::var("MULTICALL3_ADDRESS")
+        .ok()
+        .map(|addr_str| Address::from_str(&addr_str).expect("Failed to parse MULTICALL3_ADDRESS"));
+
+    if let Some(multicall_addr) = multicall3_address {
+        tracing::info!("Multicall3 address configured: {:?}", multicall_addr);
+    } else {
+        tracing::warn!("MULTICALL3_ADDRESS not set - batch operations will be disabled");
+    }
 
     let usdc_transfer_limit = env::var("USDC_TRANSFER_LIMIT")
         .unwrap_or_else(|_| "1000000000".to_string()) // Default 1000 USDC
@@ -310,6 +322,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         beacon_factory_abi,
         beacon_registry_abi,
         perp_hook_abi,
+        multicall3_abi,
         beacon_factory_address,
         perpcity_registry_address,
         perp_hook_address,
@@ -318,6 +331,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         eth_transfer_limit,
         access_token,
         perp_config,
+        multicall3_address,
     };
 
     rocket::build()
@@ -337,6 +351,7 @@ pub async fn create_rocket() -> Rocket<Build> {
                 routes::deposit_liquidity_for_perp_endpoint,
                 routes::batch_deposit_liquidity_for_perps,
                 routes::update_beacon,
+                routes::batch_update_beacon,
                 routes::fund_guest_wallet
             ],
         )

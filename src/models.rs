@@ -470,6 +470,7 @@ pub struct AppState {
     pub beacon_factory_abi: JsonAbi,
     pub beacon_registry_abi: JsonAbi,
     pub perp_hook_abi: JsonAbi,
+    pub multicall3_abi: JsonAbi,
     pub beacon_factory_address: Address,
     pub perpcity_registry_address: Address,
     pub perp_hook_address: Address,
@@ -478,6 +479,7 @@ pub struct AppState {
     pub eth_transfer_limit: u128,
     pub access_token: String,
     pub perp_config: PerpConfig,
+    pub multicall3_address: Option<Address>, // Optional multicall3 contract for batch operations
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -492,6 +494,34 @@ pub struct UpdateBeaconRequest {
     pub beacon_address: String,
     pub value: u64,
     pub proof: Vec<u8>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BeaconUpdateData {
+    pub beacon_address: String,
+    pub value: u64,
+    pub proof: Vec<u8>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchUpdateBeaconRequest {
+    pub updates: Vec<BeaconUpdateData>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BeaconUpdateResult {
+    pub beacon_address: String,
+    pub success: bool,
+    pub transaction_hash: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchUpdateBeaconResponse {
+    pub results: Vec<BeaconUpdateResult>,
+    pub total_requested: usize,
+    pub successful_updates: usize,
+    pub failed_updates: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

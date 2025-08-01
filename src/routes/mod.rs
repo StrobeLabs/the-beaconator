@@ -43,6 +43,29 @@ sol! {
     }
 
     #[sol(rpc)]
+    interface IMulticall3 {
+        struct Call {
+            address target;
+            bytes callData;
+        }
+
+        struct Call3 {
+            address target;
+            bool allowFailure;
+            bytes callData;
+        }
+
+        struct Result {
+            bool success;
+            bytes returnData;
+        }
+
+        function aggregate(Call[] calldata calls) external payable returns (uint256 blockNumber, bytes[] memory returnData);
+        function aggregate3(Call3[] calldata calls) external payable returns (Result[] memory returnData);
+        function tryAggregate(bool requireSuccess, Call[] calldata calls) external payable returns (Result[] memory returnData);
+    }
+
+    #[sol(rpc)]
     interface IPerpHook {
         // This struct matches the DEPLOYED PerpHook contract on Base Sepolia
         // Note: tradingFeeCreatorSplitX96 is NOT included in the deployed version
