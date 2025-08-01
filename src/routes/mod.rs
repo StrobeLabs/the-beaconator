@@ -64,6 +64,15 @@ sol! {
         function createPerp(CreatePerpParams memory params) external returns (bytes32 perpId);
         event PerpCreated(bytes32 perpId, address beacon, uint256 markPriceX96);
 
+        // Perp info struct - simplified version for checking if perp exists
+        struct PerpInfo {
+            address beacon;
+            uint128 maxOpeningMargin;
+            uint128 minOpeningMargin;
+        }
+
+        function perps(bytes32 perpId) external view returns (PerpInfo memory);
+
         struct OpenMakerPositionParams {
             uint128 margin;
             uint128 liquidity;

@@ -1259,10 +1259,10 @@ mod tests {
         let token = ApiToken("test_token".to_string());
         let state = State::from(&app_state);
 
-        // This should fail on primary and succeed on fallback
+        // This should fail on primary and attempt fallback
         let result = create_perpcity_beacon(token, state).await;
 
-        // Should fail since both providers are bad, but we're testing the fallback mechanism
+        // Should fail at contract level after trying fallback mechanism
         assert!(result.is_err());
         let status = result.unwrap_err();
         assert_eq!(status, rocket::http::Status::InternalServerError);
