@@ -468,7 +468,7 @@ impl ContractErrorDecoder {
     const LIVE_POSITION_DETAILS: &'static str = "0xd2aa461f";
     const INVALID_CLOSE: &'static str = "0x2c328f64";
     const SAFECAST_OVERFLOW: &'static str = "0x24775e06";
-    const POOL_NOT_INITIALIZED: &'static str = "0xfb8f41b2";
+    const UNKNOWN_CUSTOM_ERROR: &'static str = "0xfb8f41b2";
 
     fn decode_error_data(error_data: &str) -> Option<String> {
         if error_data.len() < 10 {
@@ -489,7 +489,7 @@ impl ContractErrorDecoder {
             Self::LIVE_POSITION_DETAILS => Self::decode_live_position_details(params_data),
             Self::INVALID_CLOSE => Self::decode_invalid_close(params_data),
             Self::SAFECAST_OVERFLOW => Self::decode_safecast_overflow(params_data),
-            Self::POOL_NOT_INITIALIZED => Self::decode_pool_not_initialized(params_data),
+            Self::UNKNOWN_CUSTOM_ERROR => Self::decode_unknown_custom_error(params_data),
             _ => Some(format!("Unknown contract error: {selector}")),
         }
     }
@@ -590,7 +590,7 @@ impl ContractErrorDecoder {
         ))
     }
 
-    fn decode_pool_not_initialized(params_data: &str) -> Option<String> {
+    fn decode_unknown_custom_error(params_data: &str) -> Option<String> {
         if params_data.len() < 64 {
             return Some("PoolNotInitialized: Pool has not been initialized yet".to_string());
         }
@@ -1357,32 +1357,27 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             tracing::error!("  - PerpHook address: {}", state.perp_hook_address);
             tracing::error!("  - Wallet address: {}", state.wallet_address);
 
-            // Check if this is a pool not initialized error and attempt to auto-fix
-            if e.contains("0xfb8f41b2") || e.contains("PoolNotInitialized") {
-                tracing::warn!("Pool not initialized detected, attempting automatic initialization...");
-                match attempt_pool_initialization(state, perp_id).await {
-                    Ok(_) => {
-                        tracing::info!("Pool initialized successfully, retrying liquidity deposit");
-                        // Retry the original operation
-                        match deposit_liquidity_for_perp(state, perp_id, margin_amount).await {
-                            Ok(response) => {
-                                tracing::info!("Liquidity deposit successful after pool initialization");
-                                return Ok(Json(ApiResponse {
-                                    success: true,
-                                    data: Some(response),
-                                    message: "Liquidity deposited successfully (pool was auto-initialized)".to_string(),
-                                }));
-                            }
-                            Err(retry_error) => {
-                                tracing::error!("Retry after pool initialization failed: {}", retry_error);
-                            }
-                        }
-                    }
-                    Err(init_error) => {
-                        tracing::error!("Failed to initialize pool: {}", init_error);
-                        tracing::error!("   This may require manual intervention or the perp may not exist");
-                    }
-                }
+            // Check for the specific unknown error 0xfb8f41b2 and provide detailed analysis
+            if e.contains("0xfb8f41b2") {
+                tracing::error!("Unknown contract error 0xfb8f41b2 detected");
+                tracing::error!("   This error is NOT related to pool initialization");
+                tracing::error!("   Error parameters suggest:");
+                tracing::error!("     - Contract: {} (PerpHook)", state.perp_hook_address);
+                tracing::error!("     - Position/ID: 0 (may indicate new position)");
+                tracing::error!("     - Amount: {} USDC", margin_amount as f64 / 1_000_000.0);
+                tracing::error!("   Possible causes:");
+                tracing::error!("     - Insufficient USDC balance or allowance");
+                tracing::error!("     - Invalid perp configuration or state");
+                tracing::error!("     - Contract access control or validation failure");
+                tracing::error!("     - Custom business logic restriction in PerpHook");
+                
+                // Add specific troubleshooting for this error
+                tracing::error!("   Troubleshooting steps:");
+                tracing::error!("     1. Verify USDC balance for wallet: {}", state.wallet_address);
+                tracing::error!("     2. Check USDC allowance for PerpHook: {}", state.perp_hook_address);
+                tracing::error!("     3. Verify perp {} exists and is active", request.perp_id);
+                tracing::error!("     4. Check if margin amount {} USDC is within perp limits", margin_amount as f64 / 1_000_000.0);
+                tracing::error!("     5. Contact protocol team to identify this custom error");
             }
 
             // Provide actionable next steps
@@ -3291,78 +3286,7 @@ mod tests {
     }
 }
 
-/// Attempts to initialize a pool that exists but is not initialized
-/// This can happen when a perp was deployed but the pool initialization failed
-async fn attempt_pool_initialization(
-    state: &AppState,
-    perp_id: FixedBytes<32>,
-) -> Result<(), String> {
-    tracing::info!("Attempting to initialize pool for perp ID: {}", perp_id);
 
-    // Get the perp configuration from the PerpHook contract
-    let perp_hook_contract = IPerpHook::new(state.perp_hook_address, &*state.provider);
-
-    // First, check if the perp exists by trying to get its info
-    match perp_hook_contract.perps(perp_id).call().await {
-        Ok(_perp_info) => {
-            tracing::info!("Perp exists, attempting to re-initialize its pool...");
-            
-            // Unfortunately, there's no direct "initialize pool" function in PerpHook
-            // The pool should have been initialized during createPerp
-            // If it's not initialized, it means the createPerp call didn't complete properly
-            
-            // We can try to call the PoolManager directly to initialize the pool
-            match reinitialize_pool_via_manager(state, perp_id).await {
-                Ok(_) => {
-                    tracing::info!("Pool reinitialized successfully via PoolManager");
-                    Ok(())
-                }
-                Err(e) => {
-                    tracing::error!("Failed to reinitialize pool via PoolManager: {}", e);
-                    Err(format!("Pool reinitialization failed: {e}"))
-                }
-            }
-        }
-        Err(e) => {
-            let error_msg = format!("Perp {perp_id} does not exist or is inaccessible: {e}");
-            tracing::error!("{}", error_msg);
-            Err(error_msg)
-        }
-    }
-}
-
-/// Attempts to reinitialize the pool directly via the PoolManager
-/// This is a fallback method when the perp exists but its pool is not initialized
-async fn reinitialize_pool_via_manager(
-    state: &AppState,
-    perp_id: FixedBytes<32>,
-) -> Result<(), String> {
-    tracing::warn!("Attempting direct pool reinitialization - this is a recovery operation");
-
-    // Get the starting sqrt price from our perp config (this should match what was used during createPerp)
-    let starting_sqrt_price = U256::from(state.perp_config.starting_sqrt_price_x96);
-
-    tracing::info!("Using starting sqrt price: {}", starting_sqrt_price);
-    tracing::info!("Pool ID to reinitialize: {}", perp_id);
-
-    // Note: This is a simplified approach. In a production system, you would need to:
-    // 1. Get the exact PoolKey that was used during createPerp
-    // 2. Call poolManager.initialize(poolKey, startingSqrtPriceX96)
-    // 
-    // Since we don't have direct access to the PoolKey here, and the PoolManager
-    // interface would require us to reconstruct the exact key, this is more complex.
-    
-    // For now, we'll return an error suggesting manual intervention
-    let suggestion = format!(
-        "Pool {perp_id} requires manual reinitialization. Please:\n  \
-        1. Use the PerpHook.createPerp() function with the correct parameters\n  \
-        2. Or contact the protocol admin to reinitialize this specific pool\n  \
-        3. The pool exists but was not properly initialized during deployment"
-    );
-
-    tracing::error!("{}", suggestion);
-    Err(suggestion)
-}
 
 // Helper function to check if an error is a nonce-related error
 fn is_nonce_error(error_msg: &str) -> bool {
