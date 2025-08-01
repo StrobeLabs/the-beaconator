@@ -16,18 +16,19 @@ fi
 
 # Kill any running Anvil processes
 echo "Checking for running Anvil processes..."
-ANVIL_PIDS=$(pgrep -f "anvil" || true)
+ANVIL_PIDS=$(pgrep -x "anvil" || true)
 
 if [ -n "$ANVIL_PIDS" ]; then
     echo "Found running Anvil processes: $ANVIL_PIDS"
-    kill $ANVIL_PIDS
+    # First attempt graceful termination
+    pkill -TERM -x anvil || true
     sleep 2
     
     # Force kill if still running
-    REMAINING_PIDS=$(pgrep -f "anvil" || true)
+    REMAINING_PIDS=$(pgrep -x "anvil" || true)
     if [ -n "$REMAINING_PIDS" ]; then
         echo "Force killing remaining processes: $REMAINING_PIDS"
-        kill -9 $REMAINING_PIDS
+        pkill -KILL -x anvil || true
     fi
     echo "Anvil processes terminated"
 else

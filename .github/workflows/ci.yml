@@ -6,36 +6,122 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
+      # Cache Rust toolchain and registry
+      - name: Cache Rust toolchain
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.rustup
+          key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-toolchain-
+      
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy, rustfmt
+      
+      # Cache Foundry
+      - name: Cache Foundry
+        uses: actions/cache@v3
+        with:
+          path: ~/.foundry
+          key: ${{ runner.os }}-foundry-${{ hashFiles('foundry.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-foundry-
+      
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
-      - name: Build
-        run: cargo build --all --release
+      
+      # Cache Cargo build artifacts
+      - name: Cache Cargo build
+        uses: actions/cache@v3
+        with:
+          path: |
+            target/
+            ~/.cargo/bin/
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-build-
+      
+      - name: Check format
+        run: cargo fmt --all -- --check
+      
       - name: Lint
         run: cargo clippy --all -- -D warnings
-      - name: Format
-        run: cargo fmt --all -- --check
+      
+      - name: Build
+        run: cargo build --all --release
+      
       - name: Run all tests (single-threaded)
         run: cargo test -- --nocapture --test-threads=1
+      
+      # Cache build artifacts for Docker job
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: rust-build-artifacts
+          path: |
+            target/release/the-beaconator
+            abis/
+          retention-days: 1
 
-  docker-build:
+  docker:
     runs-on: ubuntu-latest
+    needs: test
     steps:
       - uses: actions/checkout@v4
+      
+      # Cache Rust toolchain for Docker build
+      - name: Cache Rust toolchain for Docker
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.rustup
+          key: ${{ runner.os }}-rust-docker-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-docker-
+            ${{ runner.os }}-rust-toolchain-
+      
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+      
+      # Docker layer caching - this will cache the Rust compilation layers
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-docker-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-docker-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-docker-
+      
       - name: Build Docker image
-        run: docker build -t the-beaconator .
+        run: |
+          docker buildx build \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --load \
+            -t the-beaconator \
+            .
+      
       - name: Test Docker image
         run: |
           docker run --rm -d --name test-beaconator -p 8000:8000 \
@@ -51,4 +137,10 @@ jobs:
             the-beaconator
           sleep 10
           curl -f http://localhost:8000/ || exit 1
-          docker stop test-beaconator 
+          docker stop test-beaconator
+      
+      # Update cache
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache 

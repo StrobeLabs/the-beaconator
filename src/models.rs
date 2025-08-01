@@ -99,6 +99,13 @@ impl ApiEndpoints {
             },
             EndpointInfo {
                 method: "POST".to_string(),
+                path: "/batch_update_beacon".to_string(),
+                description: "Batch update multiple beacons with zero-knowledge proofs".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
                 path: "/fund_guest_wallet".to_string(),
                 description: "Fund a guest wallet with specified USDC + ETH amounts (with limits)"
                     .to_string(),

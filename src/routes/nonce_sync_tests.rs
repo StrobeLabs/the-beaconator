@@ -222,7 +222,7 @@ mod nonce_synchronization_tests {
             ("", false), // Empty string
             ("random error message", false),
             ("nonce", false), // Just the word "nonce" without context
-            ("NONCE TOO LOW", true), // Case insensitive check (current implementation is case sensitive)
+            ("NONCE TOO LOW", true), // Case insensitive check
             ("transaction nonce too low: expected 100", true),
             ("nonce too low: account nonce is 50, transaction nonce is 45", true),
             ("invalid nonce value", true),
@@ -234,11 +234,6 @@ mod nonce_synchronization_tests {
             if expected {
                 assert!(is_nonce, "Should detect '{error_msg}' as nonce error");
             } else {
-                // Note: Some of these might fail due to case sensitivity - that's expected
-                if error_msg == "NONCE TOO LOW" {
-                    // Skip case sensitivity test for now as current implementation is case sensitive
-                    continue;
-                }
                 assert!(!is_nonce, "Should NOT detect '{error_msg}' as nonce error");
             }
         }

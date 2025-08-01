@@ -72,13 +72,19 @@ mod tests {
             .collect();
         assert!(endpoint_paths.contains(&"/"));
         assert!(endpoint_paths.contains(&"/all_beacons"));
+        assert!(endpoint_paths.contains(&"/create_beacon"));
+        assert!(endpoint_paths.contains(&"/register_beacon"));
         assert!(endpoint_paths.contains(&"/create_perpcity_beacon"));
         assert!(endpoint_paths.contains(&"/batch_create_perpcity_beacon"));
         assert!(endpoint_paths.contains(&"/deploy_perp_for_beacon"));
         assert!(endpoint_paths.contains(&"/deposit_liquidity_for_perp"));
         assert!(endpoint_paths.contains(&"/batch_deposit_liquidity_for_perps"));
         assert!(endpoint_paths.contains(&"/update_beacon"));
+        assert!(endpoint_paths.contains(&"/batch_update_beacon"));
         assert!(endpoint_paths.contains(&"/fund_guest_wallet"));
+        
+        // Verify non-existent endpoints are not present
+        assert!(!endpoint_paths.contains(&"/batch_deploy_perps"));
     }
 
     #[tokio::test]

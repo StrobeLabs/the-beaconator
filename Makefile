@@ -89,11 +89,37 @@ clean-all: clean ## Clean everything including target directory
 docker-build: ## Build Docker image
 	docker build -t the-beaconator .
 
+docker-build-cached: ## Build Docker image with BuildKit caching (faster for development)
+	DOCKER_BUILDKIT=1 docker build --progress=plain -t the-beaconator .
+
 docker-run: ## Run Docker container (requires env vars)
 	docker run --env-file .env -p 8000:8000 the-beaconator
 
 docker-run-local: ## Run Docker container with local env file
 	docker run --env-file .env.local -p 8000:8000 the-beaconator
+
+docker-test: ## Test Docker image build and run (simulates CI)
+	@echo "Testing Docker build (same as CI)..."
+	$(MAKE) docker-build
+	@echo "Testing container startup..."
+	docker run --rm -d --name test-beaconator -p 8001:8000 \
+		-e RPC_URL=https://mainnet.base.org \
+		-e PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
+		-e SENTRY_DSN=https://test@test.ingest.sentry.io/test \
+		-e ENV=localnet \
+		-e BEACONATOR_ACCESS_TOKEN=test_token_123 \
+		-e BEACON_FACTORY_ADDRESS=0x1234567890123456789012345678901234567890 \
+		-e PERPCITY_REGISTRY_ADDRESS=0x3456789012345678901234567890123456789012 \
+		-e PERP_HOOK_ADDRESS=0x5678901234567890123456789012345678901234 \
+		-e USDC_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 \
+		the-beaconator
+	@sleep 5
+	@if curl -f http://localhost:8001/ > /dev/null 2>&1; then \
+		echo "✅ Docker container is running successfully!"; \
+	else \
+		echo "❌ Docker container failed to start properly"; \
+	fi
+	@docker stop test-beaconator || true
 
 # Documentation
 docs: ## Generate and open documentation
