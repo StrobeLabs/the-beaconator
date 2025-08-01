@@ -98,3 +98,83 @@ sol! {
         event MakerPositionOpened(bytes32 perpId, uint256 makerPosId, MakerInfo makerPos, uint256 markPriceX96);
     }
 }
+
+// Shared transaction serialization utilities
+use crate::models::AppState;
+use alloy::providers::Provider;
+use std::sync::{Arc, OnceLock};
+use tokio::sync::Mutex;
+
+// Global transaction mutex to serialize ALL blockchain transactions
+// This prevents nonce conflicts by ensuring only one transaction is submitted at a time
+static TRANSACTION_MUTEX: OnceLock<Arc<Mutex<()>>> = OnceLock::new();
+
+fn get_transaction_mutex() -> &'static Arc<Mutex<()>> {
+    TRANSACTION_MUTEX.get_or_init(|| Arc::new(Mutex::new(())))
+}
+
+// Helper function to sync wallet nonce with on-chain state
+pub async fn sync_wallet_nonce(state: &AppState) -> Result<u64, String> {
+    tracing::info!("Syncing wallet nonce with on-chain state...");
+
+    match state
+        .provider
+        .get_transaction_count(state.wallet_address)
+        .await
+    {
+        Ok(nonce) => {
+            tracing::info!("Current on-chain nonce: {}", nonce);
+            Ok(nonce)
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to get current nonce: {e}");
+            tracing::error!("{}", error_msg);
+            Err(error_msg)
+        }
+    }
+}
+
+// Helper function to get fresh nonce from alternate provider
+pub async fn get_fresh_nonce_from_alternate(state: &AppState) -> Result<u64, String> {
+    if let Some(alternate_provider) = &state.alternate_provider {
+        tracing::info!("Getting fresh nonce from alternate RPC...");
+        match alternate_provider
+            .get_transaction_count(state.wallet_address)
+            .await
+        {
+            Ok(nonce) => {
+                tracing::info!("Fresh nonce from alternate RPC: {}", nonce);
+                Ok(nonce)
+            }
+            Err(e) => {
+                let error_msg = format!("Failed to get nonce from alternate RPC: {e}");
+                tracing::error!("{}", error_msg);
+                Err(error_msg)
+            }
+        }
+    } else {
+        Err("No alternate provider available".to_string())
+    }
+}
+
+// Serialized transaction execution wrapper
+// All blockchain transactions should use this to prevent nonce conflicts
+pub async fn execute_transaction_serialized<F, T>(operation: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    let mutex = get_transaction_mutex();
+    let _lock = mutex.lock().await;
+    tracing::debug!("Acquired transaction lock - executing blockchain operation serially");
+    let result = operation.await;
+    tracing::debug!("Released transaction lock - blockchain operation completed");
+    result
+}
+
+// Helper function to detect nonce-related errors
+pub fn is_nonce_error(error_msg: &str) -> bool {
+    error_msg.contains("nonce too low")
+        || error_msg.contains("nonce too high")  
+        || error_msg.contains("invalid nonce")
+        || error_msg.contains("replacement transaction underpriced")
+}

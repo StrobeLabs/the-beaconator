@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tracing;
 
-use super::{IERC20, IPerpHook};
+use super::{IERC20, IPerpHook, sync_wallet_nonce, get_fresh_nonce_from_alternate, is_nonce_error, execute_transaction_serialized};
 use crate::guards::ApiToken;
 use crate::models::{
     ApiResponse, AppState, BatchDepositLiquidityForPerpsRequest,
@@ -296,13 +296,14 @@ async fn deploy_perp_for_beacon(
     tracing::info!("CreatePerpParams struct prepared successfully");
     tracing::info!("Initiating createPerp transaction...");
 
-    // Send the transaction and wait for confirmation
+    // Send the transaction and wait for confirmation (serialized)
     tracing::info!("Sending createPerp transaction to PerpHook contract...");
-    let pending_tx = contract
-        .createPerp(create_perp_params)
-        .send()
-        .await
-        .map_err(|e| {
+    let pending_tx = execute_transaction_serialized(async {
+        contract
+            .createPerp(create_perp_params)
+            .send()
+            .await
+            .map_err(|e| {
             let error_type = match e.to_string().as_str() {
                 s if s.contains("execution reverted") => "Contract Execution Reverted",
                 s if s.contains("insufficient funds") => "Insufficient Funds",
@@ -373,7 +374,8 @@ async fn deploy_perp_for_beacon(
 
             sentry::capture_message(&error_msg, sentry::Level::Error);
             error_msg
-        })?;
+        })
+    }).await?;
 
     tracing::info!("Transaction sent successfully, waiting for confirmation...");
     let pending_tx_hash = *pending_tx.tx_hash();
@@ -714,9 +716,9 @@ async fn deposit_liquidity_for_perp(
         state.perp_hook_address
     );
 
-    // USDC approval with RPC fallback
+    // USDC approval with RPC fallback (serialized)
     let usdc_contract = IERC20::new(state.usdc_address, &*state.provider);
-    let pending_approval = {
+    let pending_approval = execute_transaction_serialized(async {
         // Try primary RPC first
         tracing::info!("Approving USDC spending with primary RPC");
         let result = usdc_contract
@@ -725,7 +727,7 @@ async fn deposit_liquidity_for_perp(
             .await;
 
         match result {
-            Ok(pending) => pending,
+            Ok(pending) => Ok(pending),
             Err(e) => {
                 let error_msg = format!("Failed to approve USDC spending: {e}");
                 tracing::error!("{}", error_msg);
@@ -745,6 +747,12 @@ async fn deposit_liquidity_for_perp(
                 // Try alternate RPC if available
                 if let Some(alternate_provider) = &state.alternate_provider {
                     tracing::info!("Trying USDC approval with alternate RPC");
+                    
+                    // Get fresh nonce from alternate RPC to avoid nonce conflicts
+                    if let Err(nonce_error) = get_fresh_nonce_from_alternate(state).await {
+                        tracing::warn!("Could not sync nonce with alternate RPC: {}", nonce_error);
+                    }
+                    
                     let alt_usdc_contract = IERC20::new(state.usdc_address, &**alternate_provider);
 
                     match alt_usdc_contract
@@ -754,23 +762,23 @@ async fn deposit_liquidity_for_perp(
                     {
                         Ok(pending) => {
                             tracing::info!("USDC approval succeeded with alternate RPC");
-                            pending
+                            Ok(pending)
                         }
                         Err(alt_e) => {
                             let combined_error = format!(
                                 "USDC approval failed on both RPCs. Primary: {e}. Alternate: {alt_e}"
                             );
                             tracing::error!("{}", combined_error);
-                            return Err(combined_error);
+                            Err(combined_error)
                         }
                     }
                 } else {
                     tracing::error!("No alternate RPC configured, cannot fallback");
-                    return Err(error_msg);
+                    Err(error_msg)
                 }
             }
         }
-    };
+    }).await?;
 
     tracing::info!("USDC approval transaction sent, waiting for confirmation...");
     let approval_tx_hash = *pending_approval.tx_hash();
@@ -901,8 +909,8 @@ async fn deposit_liquidity_for_perp(
         }
     };
 
-    // Send the openMakerPosition transaction with RPC fallback
-    let pending_tx = {
+    // Send the openMakerPosition transaction with RPC fallback (serialized)
+    let pending_tx = execute_transaction_serialized(async {
         // Try primary RPC first
         tracing::info!("Opening maker position with primary RPC");
         let result = contract
@@ -911,7 +919,7 @@ async fn deposit_liquidity_for_perp(
             .await;
 
         match result {
-            Ok(pending) => pending,
+            Ok(pending) => Ok(pending),
             Err(e) => {
                 let error_type = match e.to_string().as_str() {
                     s if s.contains("execution reverted") => "Liquidity Deposit Reverted",
@@ -949,6 +957,12 @@ async fn deposit_liquidity_for_perp(
                 // Try alternate RPC if available
                 if let Some(alternate_provider) = &state.alternate_provider {
                     tracing::info!("Trying openMakerPosition with alternate RPC");
+                    
+                    // Get fresh nonce from alternate RPC to avoid nonce conflicts
+                    if let Err(nonce_error) = get_fresh_nonce_from_alternate(state).await {
+                        tracing::warn!("Could not sync nonce with alternate RPC: {}", nonce_error);
+                    }
+                    
                     let alt_contract =
                         IPerpHook::new(state.perp_hook_address, &**alternate_provider);
 
@@ -959,7 +973,7 @@ async fn deposit_liquidity_for_perp(
                     {
                         Ok(pending) => {
                             tracing::info!("OpenMakerPosition succeeded with alternate RPC");
-                            pending
+                            Ok(pending)
                         }
                         Err(alt_e) => {
                             let combined_error = format!(
@@ -990,7 +1004,7 @@ async fn deposit_liquidity_for_perp(
                                 _ => {}
                             }
 
-                            return Err(combined_error);
+                            Err(combined_error)
                         }
                     }
                 } else {
@@ -1015,11 +1029,11 @@ async fn deposit_liquidity_for_perp(
                         _ => {}
                     }
 
-                    return Err(error_msg);
+                    Err(error_msg)
                 }
             }
         }
-    };
+    }).await?;
 
     tracing::info!("Liquidity deposit transaction sent, waiting for confirmation...");
     let deposit_tx_hash = *pending_tx.tx_hash();
@@ -3303,30 +3317,4 @@ mod tests {
 
 
 // Helper function to check if an error is a nonce-related error
-fn is_nonce_error(error_msg: &str) -> bool {
-    error_msg.contains("nonce too low")
-        || error_msg.contains("nonce too high")
-        || error_msg.contains("invalid nonce")
-        || error_msg.contains("replacement transaction underpriced")
-}
 
-// Helper function to sync wallet nonce with on-chain state
-async fn sync_wallet_nonce(state: &AppState) -> Result<u64, String> {
-    tracing::info!("Syncing wallet nonce with on-chain state...");
-
-    match state
-        .provider
-        .get_transaction_count(state.wallet_address)
-        .await
-    {
-        Ok(nonce) => {
-            tracing::info!("Current on-chain nonce: {}", nonce);
-            Ok(nonce)
-        }
-        Err(e) => {
-            let error_msg = format!("Failed to get current nonce: {e}");
-            tracing::error!("{}", error_msg);
-            Err(error_msg)
-        }
-    }
-}
