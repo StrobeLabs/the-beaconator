@@ -82,7 +82,7 @@ mod tests {
         assert!(endpoint_paths.contains(&"/update_beacon"));
         assert!(endpoint_paths.contains(&"/batch_update_beacon"));
         assert!(endpoint_paths.contains(&"/fund_guest_wallet"));
-        
+
         // Verify non-existent endpoints are not present
         assert!(!endpoint_paths.contains(&"/batch_deploy_perps"));
     }
