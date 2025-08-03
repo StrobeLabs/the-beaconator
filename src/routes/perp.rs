@@ -301,9 +301,8 @@ async fn deploy_perp_for_beacon(
 
     // Send the transaction and wait for confirmation (serialized)
     tracing::info!("Sending createPerp transaction to PerpHook contract...");
-    let pending_tx =
-        execute_transaction_serialized(&*state.provider, state.wallet_address, async {
-            contract
+    let pending_tx = execute_transaction_serialized(async {
+        contract
             .createPerp(create_perp_params)
             .send()
             .await
@@ -379,8 +378,8 @@ async fn deploy_perp_for_beacon(
             sentry::capture_message(&error_msg, sentry::Level::Error);
             error_msg
         })
-        })
-        .await?;
+    })
+    .await?;
 
     tracing::info!("Transaction sent successfully, waiting for confirmation...");
     let pending_tx_hash = *pending_tx.tx_hash();
@@ -725,7 +724,7 @@ async fn deposit_liquidity_for_perp(
 
     // USDC approval with RPC fallback (serialized)
     let usdc_contract = IERC20::new(state.usdc_address, &*state.provider);
-    let pending_approval = execute_transaction_serialized(&*state.provider, state.wallet_address, async {
+    let pending_approval = execute_transaction_serialized(async {
         // Try primary RPC first
         tracing::info!("Approving USDC spending with primary RPC");
         let result = usdc_contract
@@ -917,7 +916,7 @@ async fn deposit_liquidity_for_perp(
     };
 
     // Send the openMakerPosition transaction with RPC fallback (serialized)
-    let pending_tx = execute_transaction_serialized(&*state.provider, state.wallet_address, async {
+    let pending_tx = execute_transaction_serialized(async {
         // Try primary RPC first
         tracing::info!("Opening maker position with primary RPC");
         let result = contract
@@ -1481,30 +1480,24 @@ pub async fn batch_deposit_liquidity_for_perps(
     let state_inner = state.inner();
     let deposits_clone = request.liquidity_deposits.clone();
 
-    let batch_results =
-        execute_transaction_serialized(&*state.provider, state.wallet_address, async move {
-            // Check if we have a multicall3 contract address configured
-            if let Some(multicall_address) = state_inner.multicall3_address {
-                // Use multicall3 for atomic batch liquidity deposits
-                batch_deposit_liquidity_with_multicall3(
-                    state_inner,
-                    multicall_address,
-                    &deposits_clone,
-                )
+    let batch_results = execute_transaction_serialized(async move {
+        // Check if we have a multicall3 contract address configured
+        if let Some(multicall_address) = state_inner.multicall3_address {
+            // Use multicall3 for atomic batch liquidity deposits
+            batch_deposit_liquidity_with_multicall3(state_inner, multicall_address, &deposits_clone)
                 .await
-            } else {
-                // No multicall3 configured - return error for all deposits
-                let error_msg =
-                    "Batch operations require Multicall3 contract address to be configured"
-                        .to_string();
-                tracing::error!("{}", error_msg);
-                deposits_clone
-                    .iter()
-                    .map(|deposit| (deposit.perp_id.clone(), Err(error_msg.clone())))
-                    .collect()
-            }
-        })
-        .await;
+        } else {
+            // No multicall3 configured - return error for all deposits
+            let error_msg =
+                "Batch operations require Multicall3 contract address to be configured".to_string();
+            tracing::error!("{}", error_msg);
+            deposits_clone
+                .iter()
+                .map(|deposit| (deposit.perp_id.clone(), Err(error_msg.clone())))
+                .collect()
+        }
+    })
+    .await;
 
     // Process the results
     let mut maker_position_ids = Vec::new();
