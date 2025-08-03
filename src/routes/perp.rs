@@ -9,7 +9,7 @@ use tracing;
 
 use super::{
     IERC20, IPerpHook, execute_transaction_serialized, get_fresh_nonce_from_alternate,
-    is_nonce_error, sync_wallet_nonce,
+    is_nonce_error,
 };
 use crate::guards::ApiToken;
 use crate::models::{
@@ -742,11 +742,8 @@ async fn deposit_liquidity_for_perp(
                 // Check if nonce error and sync if needed
                 if is_nonce_error(&error_msg) {
                     tracing::warn!(
-                        "Nonce error detected, attempting to sync nonce before fallback"
+                        "Nonce error detected, waiting before fallback"
                     );
-                    if let Err(sync_error) = sync_wallet_nonce(state).await {
-                        tracing::error!("Nonce sync failed: {}", sync_error);
-                    }
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
 
@@ -952,11 +949,8 @@ async fn deposit_liquidity_for_perp(
                 // Check if nonce error and sync if needed
                 if is_nonce_error(&error_msg) {
                     tracing::warn!(
-                        "Nonce error detected, attempting to sync nonce before fallback"
+                        "Nonce error detected, waiting before fallback"
                     );
-                    if let Err(sync_error) = sync_wallet_nonce(state).await {
-                        tracing::error!("Nonce sync failed: {}", sync_error);
-                    }
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
 
@@ -3222,23 +3216,6 @@ mod tests {
 
         let generic_error_msg = "insufficient funds";
         assert!(!is_nonce_error(generic_error_msg));
-    }
-
-    #[tokio::test]
-    async fn test_perp_nonce_synchronization() {
-        use crate::routes::test_utils::create_test_app_state;
-
-        let app_state = create_test_app_state().await;
-
-        // Test nonce synchronization
-        let result = sync_wallet_nonce(&app_state).await;
-
-        // Should succeed with test provider
-        assert!(result.is_ok());
-        let nonce = result.unwrap();
-
-        // If we got here, nonce synchronization worked
-        println!("Synchronized nonce: {nonce}");
     }
 
     #[tokio::test]

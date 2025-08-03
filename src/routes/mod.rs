@@ -136,27 +136,6 @@ fn get_transaction_mutex() -> &'static Arc<Mutex<()>> {
     TRANSACTION_MUTEX.get_or_init(|| Arc::new(Mutex::new(())))
 }
 
-// Helper function to sync wallet nonce with on-chain state
-pub async fn sync_wallet_nonce(state: &AppState) -> Result<u64, String> {
-    tracing::info!("Syncing wallet nonce with on-chain state...");
-
-    match state
-        .provider
-        .get_transaction_count(state.wallet_address)
-        .await
-    {
-        Ok(nonce) => {
-            tracing::info!("Current on-chain nonce: {}", nonce);
-            Ok(nonce)
-        }
-        Err(e) => {
-            let error_msg = format!("Failed to get current nonce: {e}");
-            tracing::error!("{}", error_msg);
-            Err(error_msg)
-        }
-    }
-}
-
 // Helper function to get fresh nonce from alternate provider
 pub async fn get_fresh_nonce_from_alternate(state: &AppState) -> Result<u64, String> {
     if let Some(alternate_provider) = &state.alternate_provider {

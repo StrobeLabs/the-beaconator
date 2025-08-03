@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod nonce_synchronization_tests {
     use crate::models::AppState;
-    use crate::routes::{execute_transaction_serialized, get_fresh_nonce_from_alternate, sync_wallet_nonce, is_nonce_error};
+    use crate::routes::{execute_transaction_serialized, get_fresh_nonce_from_alternate, is_nonce_error};
     use crate::routes::test_utils::create_mock_app_state;
     use alloy::providers::ProviderBuilder;
     use alloy::network::EthereumWallet;
@@ -18,7 +18,7 @@ mod nonce_synchronization_tests {
         let app_state = create_mock_app_state().await;
 
         // Test 1: Primary RPC nonce synchronization
-        let primary_nonce = sync_wallet_nonce(&app_state).await;
+        let primary_nonce = app_state.provider.get_transaction_count(app_state.wallet_address).await.map_err(|e| e.to_string());
         assert!(primary_nonce.is_ok(), "Primary nonce sync should succeed with mock provider");
         
         let nonce_value = primary_nonce.unwrap();
@@ -109,7 +109,7 @@ mod nonce_synchronization_tests {
             join_set.spawn(async move {
                 let app_state = create_mock_app_state().await;
                 let start_time = Instant::now();
-                let result = sync_wallet_nonce(&app_state).await;
+                let result = app_state.provider.get_transaction_count(app_state.wallet_address).await.map_err(|e| e.to_string());
                 (i, result, start_time.elapsed())
             });
         }
@@ -196,7 +196,7 @@ mod nonce_synchronization_tests {
         let mut failed_syncs = 0;
 
         for _attempt in 0..5 {
-            match sync_wallet_nonce(&app_state).await {
+            match app_state.provider.get_transaction_count(app_state.wallet_address).await {
                 Ok(nonce) => {
                     successful_syncs += 1;
                     // Nonce is u64, so it's always non-negative by type definition
