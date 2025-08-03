@@ -9,7 +9,7 @@ use tracing;
 
 use super::{
     IBeacon, IBeaconFactory, IBeaconRegistry, IMulticall3, execute_transaction_serialized,
-    get_fresh_nonce_from_alternate, is_nonce_error, sync_wallet_nonce,
+    get_fresh_nonce_from_alternate, is_nonce_error,
 };
 use crate::guards::ApiToken;
 use crate::models::{
@@ -48,11 +48,8 @@ async fn create_beacon_via_factory(
                 // Check if nonce error and sync if needed
                 if is_nonce_error(&error_msg) {
                     tracing::warn!(
-                        "Nonce error detected, attempting to sync nonce before fallback"
+                        "Nonce error detected, waiting before fallback"
                     );
-                    if let Err(sync_error) = sync_wallet_nonce(state).await {
-                        tracing::error!("Nonce sync failed: {}", sync_error);
-                    }
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
 
@@ -384,11 +381,8 @@ async fn register_beacon_with_registry(
                 // Check if nonce error and sync if needed
                 if is_nonce_error(&error_msg) {
                     tracing::warn!(
-                        "Nonce error detected, attempting to sync nonce before fallback"
+                        "Nonce error detected, waiting before fallback"
                     );
-                    if let Err(sync_error) = sync_wallet_nonce(state).await {
-                        tracing::error!("Nonce sync failed: {}", sync_error);
-                    }
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
 
@@ -1958,22 +1952,6 @@ mod tests {
 
         let generic_error_msg = "insufficient funds";
         assert!(!is_nonce_error(generic_error_msg));
-    }
-
-    #[tokio::test]
-    async fn test_sync_wallet_nonce() {
-        use crate::routes::test_utils::create_test_app_state;
-
-        let app_state = create_test_app_state().await;
-
-        // Test nonce synchronization
-        let result = sync_wallet_nonce(&app_state).await;
-
-        // Should succeed with test provider
-        assert!(result.is_ok());
-        let _nonce = result.unwrap();
-
-        // If we got here, nonce synchronization worked
     }
 
     #[tokio::test]
