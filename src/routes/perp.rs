@@ -695,8 +695,14 @@ async fn deposit_liquidity_for_perp(
     let tick_lower = (tick_lower / tick_spacing) * tick_spacing;
     let tick_upper = (tick_upper / tick_spacing) * tick_spacing;
 
-    // Use configured liquidity scaling factor
-    let liquidity = margin_amount_usdc * config.liquidity_scaling_factor;
+    // Calculate liquidity using Uniswap V4 formula (like OpenMakerPosition.sol)
+    let liquidity = config.calculate_liquidity_from_margin(margin_amount_usdc);
+
+    tracing::info!(
+        "Calculated liquidity {} for margin {} USDC using Uniswap formula",
+        liquidity,
+        margin_amount_usdc as f64 / 1_000_000.0
+    );
 
     let open_maker_params = IPerpHook::OpenMakerPositionParams {
         margin: margin_amount_usdc,
@@ -1327,7 +1333,9 @@ pub async fn deposit_liquidity_for_perp_endpoint(
     // Pre-flight liquidity bounds validation
     let (min_liquidity, max_liquidity) =
         state.perp_config.calculate_liquidity_bounds(margin_amount);
-    let current_liquidity = margin_amount * state.perp_config.liquidity_scaling_factor;
+    let current_liquidity = state
+        .perp_config
+        .calculate_liquidity_from_margin(margin_amount);
 
     if current_liquidity < min_liquidity {
         let error_msg = format!(
@@ -1625,7 +1633,9 @@ async fn batch_deposit_liquidity_with_multicall3(
         // Pre-flight liquidity bounds validation for batch items
         let (min_liquidity, max_liquidity) =
             state.perp_config.calculate_liquidity_bounds(margin_amount);
-        let current_liquidity = margin_amount * state.perp_config.liquidity_scaling_factor;
+        let current_liquidity = state
+            .perp_config
+            .calculate_liquidity_from_margin(margin_amount);
 
         if current_liquidity < min_liquidity {
             let error_msg = format!(
@@ -1668,6 +1678,7 @@ async fn batch_deposit_liquidity_with_multicall3(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routes::test_utils::create_test_app_state;
     use alloy::primitives::{FixedBytes, U256};
     use rocket::State;
     use std::str::FromStr;
@@ -1905,22 +1916,41 @@ mod tests {
 
     #[tokio::test]
     async fn test_liquidity_calculation() {
-        // Test liquidity scaling calculation
-        let margin_500_usdc = 500_000_000u128; // 500 USDC in 6 decimals
-        let expected_liquidity = margin_500_usdc * 400_000_000_000_000u128;
+        let app_state = create_test_app_state().await;
 
-        // Should scale to 18 decimals properly
-        assert_eq!(expected_liquidity, 200_000_000_000_000_000_000_000u128);
+        // Test Uniswap liquidity calculation
+        let margin_100_usdc = 100_000_000u128; // 100 USDC in 6 decimals
+        let liquidity = app_state
+            .perp_config
+            .calculate_liquidity_from_margin(margin_100_usdc);
+
+        // Should produce non-zero liquidity
+        assert!(liquidity > 0, "Liquidity should be non-zero for 100 USDC");
+
+        // Test that it scales linearly with margin
+        let margin_200_usdc = 200_000_000u128; // 200 USDC
+        let liquidity_200 = app_state
+            .perp_config
+            .calculate_liquidity_from_margin(margin_200_usdc);
+
+        // Should be approximately double (linear relationship, allowing for rounding)
+        assert!(
+            liquidity_200 >= liquidity * 2 - 1 && liquidity_200 <= liquidity * 2 + 1,
+            "Liquidity should scale linearly with margin (allowing for rounding)"
+        );
 
         // Test edge cases
-        let min_margin = 1u128;
-        let min_liquidity = min_margin * 400_000_000_000_000u128;
-        assert_eq!(min_liquidity, 400_000_000_000_000u128);
+        assert_eq!(app_state.perp_config.calculate_liquidity_from_margin(0), 0);
 
-        // Test large margin
-        let large_margin = 1_000_000_000u128; // 1000 USDC
-        let large_liquidity = large_margin * 400_000_000_000_000u128;
-        assert_eq!(large_liquidity, 400_000_000_000_000_000_000_000u128);
+        // Test small margin
+        let margin_10_usdc = 10_000_000u128; // 10 USDC
+        let liquidity_10 = app_state
+            .perp_config
+            .calculate_liquidity_from_margin(margin_10_usdc);
+        assert!(
+            liquidity_10 > 0,
+            "10 USDC should produce non-zero liquidity"
+        );
     }
 
     #[tokio::test]

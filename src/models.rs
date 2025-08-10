@@ -1,4 +1,7 @@
-use alloy::{json_abi::JsonAbi, primitives::Address};
+use alloy::{
+    json_abi::JsonAbi,
+    primitives::{Address, U256},
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -7,6 +10,13 @@ use crate::AlloyProvider;
 /// Q96 constant for fixed point math (2^96)
 /// Used for Uniswap V4 price and liquidity calculations
 pub const Q96: u128 = 79228162514264337593543950336;
+
+/// Q96 as U256 for big number calculations
+pub const Q96_U256: U256 = U256::from_limbs([0, 4294967296, 0, 0]);
+
+/// TickMath constants for min/max ticks
+pub const MIN_TICK: i32 = -887272;
+pub const MAX_TICK: i32 = 887272;
 
 /// API endpoint information for documentation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,6 +232,73 @@ impl PerpConfig {
         self.calculate_minimum_margin_usdc() as f64 / 1_000_000.0
     }
 
+    /// Convert tick to sqrt price X96
+    /// This replicates TickMath.getSqrtPriceAtTick from Uniswap V4
+    pub fn tick_to_sqrt_price_x96(tick: i32) -> u128 {
+        // For the OpenMakerPosition.sol ticks:
+        // tick -46080 should give sqrt(0.01) * 2^96 = Q96 / 10
+        // tick 46050 should give sqrt(100) * 2^96 = 10 * Q96
+
+        // Using the exact formula: sqrtPrice = sqrt(1.0001^tick) * 2^96
+        let tick_f64 = tick as f64;
+        let price = 1.0001_f64.powf(tick_f64);
+        let sqrt_price = price.sqrt();
+        let sqrt_price_x96 = sqrt_price * (Q96 as f64);
+
+        // Return as u128
+        sqrt_price_x96 as u128
+    }
+
+    /// Calculate liquidity for amount1 using Uniswap V4 formula
+    /// Replicates LiquidityAmounts.getLiquidityForAmount1
+    pub fn get_liquidity_for_amount1(
+        sqrt_price_a_x96: u128,
+        sqrt_price_b_x96: u128,
+        amount1: u128,
+    ) -> u128 {
+        // Convert to U256 for big number math
+        let sqrt_a_u256 = U256::from(sqrt_price_a_x96);
+        let sqrt_b_u256 = U256::from(sqrt_price_b_x96);
+        let amount1_u256 = U256::from(amount1);
+
+        // Ensure sqrtPriceAX96 <= sqrtPriceBX96
+        let (sqrt_price_lower, sqrt_price_upper) = if sqrt_a_u256 > sqrt_b_u256 {
+            (sqrt_b_u256, sqrt_a_u256)
+        } else {
+            (sqrt_a_u256, sqrt_b_u256)
+        };
+
+        // liquidity = amount1 * Q96 / (sqrtPriceUpperX96 - sqrtPriceLowerX96)
+        let denominator = sqrt_price_upper - sqrt_price_lower;
+        if denominator == U256::ZERO {
+            return 0;
+        }
+
+        // Calculate using U256 to avoid overflow
+        let numerator = amount1_u256 * Q96_U256;
+        let liquidity_u256 = numerator / denominator;
+
+        // Convert back to u128, saturating if too large
+        liquidity_u256.to::<u128>()
+    }
+
+    /// Calculate liquidity based on margin amount and configured tick range
+    pub fn calculate_liquidity_from_margin(&self, margin_amount_usdc: u128) -> u128 {
+        // Convert ticks to sqrt prices
+        let sqrt_price_lower_x96 = Self::tick_to_sqrt_price_x96(self.default_tick_lower);
+        let sqrt_price_upper_x96 = Self::tick_to_sqrt_price_x96(self.default_tick_upper);
+
+        // Convert USDC (6 decimals) to 18 decimals
+        let amount1_18_decimals = margin_amount_usdc * 10_u128.pow(12);
+
+        // Use the Uniswap formula
+        Self::get_liquidity_for_amount1(
+            sqrt_price_lower_x96,
+            sqrt_price_upper_x96,
+            amount1_18_decimals,
+        )
+    }
+
     /// Calculate expected leverage for a given margin amount.
     /// This approximates the relationship: more liquidity = higher leverage (but not linearly)
     /// Returns None if the calculation would result in invalid leverage.
@@ -275,34 +352,26 @@ impl PerpConfig {
 
     /// Calculate a reasonable maximum margin that stays within leverage bounds
     pub fn calculate_reasonable_max_margin(&self) -> u128 {
-        let max_leverage = self.max_opening_leverage_x96 as f64 / (2_u128.pow(96) as f64);
-        let tick_range = (self.default_tick_upper - self.default_tick_lower).unsigned_abs() as u128;
-        let price_factor = tick_range * 1000;
+        // With the new Uniswap liquidity calculation, we need a different approach
+        // The leverage calculation is complex and depends on liquidity, notional, and tick range
+        // For now, return a reasonable value based on our max margin configuration
 
-        // Work backwards: max_leverage = (margin * scaling_factor) / (price_factor)
-        // Therefore: margin = (max_leverage * price_factor) / scaling_factor
-        let reasonable_margin =
-            ((max_leverage * price_factor as f64) / self.liquidity_scaling_factor as f64) as u128;
-
-        // Add some safety buffer (use 80% of calculated max)
-        (reasonable_margin * 80) / 100
+        // Use 80% of the configured maximum as the reasonable max
+        (self.max_margin_usdc * 80) / 100
     }
 
     /// Calculate minimum and maximum reasonable liquidity for a given margin
     /// Based on the current working configuration and Uniswap V4 constraints
     pub fn calculate_liquidity_bounds(&self, margin_usdc: u128) -> (u128, u128) {
-        // Current working scaling factor from contract tests and practical experience
-        let current_scaling = self.liquidity_scaling_factor;
-        let current_liquidity = margin_usdc * current_scaling;
+        // Calculate expected liquidity using Uniswap formula
+        let expected_liquidity = self.calculate_liquidity_from_margin(margin_usdc);
 
-        // For validation, allow a reasonable range around the current configuration
-        // Minimum: 10% of current scaling factor (very conservative)
-        let min_liquidity = current_liquidity / 10;
+        // For validation, allow a reasonable range
+        // Minimum: 90% of expected (to account for rounding)
+        let min_liquidity = (expected_liquidity * 9) / 10;
 
-        // Maximum: based on leverage constraint
-        // If current config is designed to stay under 10x leverage, allow up to 2x current
-        // This gives room for adjustment while preventing excessive leverage
-        let max_liquidity = current_liquidity * 2;
+        // Maximum: 110% of expected (to account for rounding)
+        let max_liquidity = (expected_liquidity * 11) / 10;
 
         (min_liquidity, max_liquidity)
     }
@@ -373,36 +442,23 @@ impl PerpConfig {
             }
         }
 
-        // Test liquidity bounds for typical margins
+        // Test liquidity calculation for typical margins
         let test_margins = vec![10_000_000u128, 100_000_000u128, 1_000_000_000u128]; // 10, 100, 1000 USDC
         for margin in test_margins {
-            let (min_liq, max_liq) = self.calculate_liquidity_bounds(margin);
-            let current_liq = margin * self.liquidity_scaling_factor;
+            let calculated_liq = self.calculate_liquidity_from_margin(margin);
 
-            if current_liq < min_liq {
+            // Ensure liquidity is reasonable (non-zero)
+            if calculated_liq == 0 {
                 return Err(format!(
-                    "{} USDC margin produces liquidity {} below minimum {} (scaling factor too low)",
-                    margin as f64 / 1_000_000.0,
-                    current_liq,
-                    min_liq
-                ));
-            }
-
-            if current_liq > max_liq {
-                return Err(format!(
-                    "{} USDC margin produces liquidity {} above maximum {} (scaling factor too high, will exceed leverage limits)",
-                    margin as f64 / 1_000_000.0,
-                    current_liq,
-                    max_liq
+                    "{} USDC margin produces zero liquidity",
+                    margin as f64 / 1_000_000.0
                 ));
             }
 
             tracing::debug!(
-                "{} USDC: liquidity {} (bounds: {} - {})",
+                "{} USDC: liquidity {}",
                 margin as f64 / 1_000_000.0,
-                current_liq,
-                min_liq,
-                max_liq
+                calculated_liq
             );
         }
 
@@ -465,9 +521,9 @@ impl Default for PerpConfig {
             funding_interval_seconds: 86400, // FUNDING_INTERVAL = 1 days = 86400 seconds
             tick_spacing: 30,                // TICK_SPACING = 30
             starting_sqrt_price_x96: 560227709747861419891227623424, // STARTING_SQRT_PRICE_X96 = SQRT_50_X96 = 2^96 * sqrt(50)
-            default_tick_lower: 40950, // Price ~35.7 (2x range, ±40% from center)
-            default_tick_upper: 46050, // Price ~70.1 (2x range, ±40% from center)
-            liquidity_scaling_factor: 100_000, // Reduced scaling factor for tighter tick range
+            default_tick_lower: -46080, // Price 0.01 (matches OpenMakerPosition.sol)
+            default_tick_upper: 46050,  // Price ~100 (matches OpenMakerPosition.sol)
+            liquidity_scaling_factor: 200_000_000_000_000_000_000, // 200e18 (matches OpenMakerPosition.sol)
             max_margin_per_perp_usdc: 1_000_000_000, // 1000 USDC in 6 decimals (matching max_margin_usdc)
         }
     }

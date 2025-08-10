@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, B256, Bytes};
+use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::providers::Provider;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
@@ -875,7 +875,17 @@ pub async fn update_beacon(
 
     // Prepare the proof and public signals
     let proof_bytes = Bytes::from(request.proof.clone());
-    let public_signals_bytes = Bytes::from(vec![0u8; 32]); // Placeholder for now
+
+    // Convert value to X96 format (multiply by 2^96)
+    // Use U256 to handle large numbers
+    let value_u256 = U256::from(request.value);
+    let q96 = U256::from(1u128) << 96; // 2^96
+    let value_x96: U256 = value_u256 * q96;
+
+    // Encode the value as bytes (ABI encoded uint256)
+    // U256 needs to be converted to 32 bytes in big-endian format
+    let value_bytes: [u8; 32] = value_x96.to_be_bytes();
+    let public_signals_bytes = Bytes::from(value_bytes.to_vec());
 
     tracing::debug!("Sending updateData transaction...");
 
@@ -1051,7 +1061,15 @@ async fn batch_update_with_multicall3(
 
         // Prepare proof and public signals
         let proof_bytes = Bytes::from(update_data.proof.clone());
-        let public_signals_bytes = Bytes::from(vec![0u8; 32]); // Placeholder for now
+
+        // Convert value to X96 format (multiply by 2^96)
+        let value_u256 = U256::from(update_data.value);
+        let q96 = U256::from(1u128) << 96; // 2^96
+        let value_x96: U256 = value_u256 * q96;
+
+        // Encode the value as bytes (ABI encoded uint256)
+        let value_bytes: [u8; 32] = value_x96.to_be_bytes();
+        let public_signals_bytes = Bytes::from(value_bytes.to_vec());
 
         // Create the updateData call data using the IBeacon interface
         let beacon_contract = IBeacon::new(beacon_address, &*state.provider);
