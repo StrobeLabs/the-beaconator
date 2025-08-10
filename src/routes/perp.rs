@@ -1887,20 +1887,20 @@ mod tests {
     async fn test_tick_spacing_calculation() {
         // Test the tick spacing calculation logic
         let tick_spacing = 30i32;
-        let tick_lower = -23030i32;
-        let tick_upper = 23030i32;
+        let tick_lower = -3045i32;
+        let tick_upper = 3045i32;
 
         // Test rounding to nearest tick spacing
         let rounded_lower = (tick_lower / tick_spacing) * tick_spacing;
         let rounded_upper = (tick_upper / tick_spacing) * tick_spacing;
 
-        assert_eq!(rounded_lower, -23010); // -23030 rounds to -23010 (integer division)
-        assert_eq!(rounded_upper, 23010); // 23030 rounds to 23010 (integer division)
+        assert_eq!(rounded_lower, -3030); // -3045 rounds to -3030 (integer division)
+        assert_eq!(rounded_upper, 3030); // 3045 rounds to 3030 (integer division)
 
         // Test edge cases
-        let edge_case = -23029i32;
+        let edge_case = -3029i32;
         let rounded_edge = (edge_case / tick_spacing) * tick_spacing;
-        assert_eq!(rounded_edge, -23010); // Rounds to -23010 (integer division)
+        assert_eq!(rounded_edge, -3000); // Rounds to -3000 (integer division)
     }
 
     #[tokio::test]

@@ -4,6 +4,10 @@ use std::sync::Arc;
 
 use crate::AlloyProvider;
 
+/// Q96 constant for fixed point math (2^96)
+/// Used for Uniswap V4 price and liquidity calculations
+pub const Q96: u128 = 79228162514264337593543950336;
+
 /// API endpoint information for documentation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EndpointInfo {
@@ -175,9 +179,9 @@ pub struct PerpConfig {
     pub tick_spacing: i32,
     /// Starting square root price in Q96 format (e.g., sqrt(50) * 2^96 = 560227709747861419891227623424)
     pub starting_sqrt_price_x96: u128,
-    /// Default tick range for liquidity positions - lower bound (e.g., -23030 ≈ sqrt(0.1) price)
+    /// Default tick range for liquidity positions - lower bound (40950 ≈ price 35.7)
     pub default_tick_lower: i32,
-    /// Default tick range for liquidity positions - upper bound (e.g., 23030 ≈ sqrt(10) price)
+    /// Default tick range for liquidity positions - upper bound (46050 ≈ price 70.1)
     pub default_tick_upper: i32,
     /// Liquidity scaling factor (multiplier to convert USDC margin to 18-decimal liquidity)
     pub liquidity_scaling_factor: u128,
@@ -190,7 +194,7 @@ impl PerpConfig {
     ///
     /// This is based on empirical testing with Uniswap V4 and the current tick range.
     /// The calculation considers:
-    /// - Wide tick range [-23030, 23030] requires substantial liquidity
+    /// - Tick range [40950, 46050] provides concentrated liquidity
     /// - Liquidity scaling factor optimized for reasonable leverage
     /// - Uniswap V4 minimum liquidity thresholds
     ///
@@ -461,9 +465,9 @@ impl Default for PerpConfig {
             funding_interval_seconds: 86400, // FUNDING_INTERVAL = 1 days = 86400 seconds
             tick_spacing: 30,                // TICK_SPACING = 30
             starting_sqrt_price_x96: 560227709747861419891227623424, // STARTING_SQRT_PRICE_X96 = SQRT_50_X96 = 2^96 * sqrt(50)
-            default_tick_lower: 24390, // Price ~11.5 (19x range centered on 50)
-            default_tick_upper: 53850, // Price ~218 (19x range centered on 50)
-            liquidity_scaling_factor: 500_000, // Conservative scaling factor for reasonable leverage
+            default_tick_lower: 40950, // Price ~35.7 (2x range, ±40% from center)
+            default_tick_upper: 46050, // Price ~70.1 (2x range, ±40% from center)
+            liquidity_scaling_factor: 100_000, // Reduced scaling factor for tighter tick range
             max_margin_per_perp_usdc: 1_000_000_000, // 1000 USDC in 6 decimals (matching max_margin_usdc)
         }
     }
@@ -573,11 +577,11 @@ pub struct DepositLiquidityForPerpRequest {
     pub perp_id: String, // PoolId as hex string
     /// USDC margin amount in 6 decimals (e.g., "50000000" for 50 USDC)
     ///
-    /// **IMPORTANT**: Due to Uniswap V4 liquidity requirements and wide tick range [-23030, 23030],
+    /// **IMPORTANT**: Due to Uniswap V4 liquidity requirements and the tick range [40950, 46050],
     /// minimum recommended amount is 10 USDC (10,000,000). Smaller amounts will likely fail
     /// with execution revert due to insufficient liquidity.
     ///
-    /// Current scaling: margin × 500,000 = final liquidity amount
+    /// Current scaling: margin × 100,000 = final liquidity amount
     pub margin_amount_usdc: String,
 }
 

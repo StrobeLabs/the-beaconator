@@ -70,8 +70,8 @@ mod tests {
     fn test_perp_config_validation_unaligned_ticks() {
         let config = PerpConfig {
             tick_spacing: 30,
-            default_tick_lower: -23015, // Not aligned to 30
-            default_tick_upper: 23010,
+            default_tick_lower: -3015, // Not aligned to 30
+            default_tick_upper: 3030,
             ..Default::default()
         };
 
@@ -98,7 +98,7 @@ mod tests {
     fn test_perp_config_validation_excessive_leverage_with_min_margin() {
         let config = PerpConfig {
             // Set a very high scaling factor that would produce excessive leverage
-            liquidity_scaling_factor: 450_000_000_000, // 1000x higher than reasonable
+            liquidity_scaling_factor: 90_000_000_000, // 900x higher than new default (90B vs 100K)
             ..Default::default()
         };
 
@@ -201,5 +201,37 @@ mod tests {
         // might not work as expected, so we'll just verify it's positive
         // The leverage validation is now handled differently
         println!("Reasonable max margin calculation completed successfully");
+    }
+
+    #[test]
+    fn test_scaling_factor_analysis() {
+        let config = PerpConfig::default();
+        
+        println!("\n=== Scaling Factor Analysis ===");
+        println!("Current scaling factor: {}", config.liquidity_scaling_factor);
+        println!("Tick range: [{}, {}]", config.default_tick_lower, config.default_tick_upper);
+        
+        // Calculate what the scaling factor does
+        let test_margins = vec![
+            10_000_000u128,    // 10 USDC
+            100_000_000u128,   // 100 USDC
+            1_000_000_000u128, // 1000 USDC
+        ];
+        
+        for margin in test_margins {
+            let liquidity = margin * config.liquidity_scaling_factor;
+            println!(
+                "{} USDC * {} = {} liquidity",
+                margin as f64 / 1_000_000.0,
+                config.liquidity_scaling_factor,
+                liquidity
+            );
+        }
+        
+        // The scaling factor is a simple multiplier that the contracts expect
+        // It's not the same as the Uniswap getLiquidityForAmount1 formula,
+        // but rather a simplified approach that works for the perp contracts
+        println!("\nThe scaling factor is a simplified approach used by the perp contracts");
+        println!("It directly multiplies USDC amount by {} to get liquidity", config.liquidity_scaling_factor);
     }
 }
