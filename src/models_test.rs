@@ -230,8 +230,9 @@ mod tests {
             let margin_18_decimals = margin * 10_u128.pow(12);
             let sqrt_lower = PerpConfig::tick_to_sqrt_price_x96(config.default_tick_lower);
             let sqrt_upper = PerpConfig::tick_to_sqrt_price_x96(config.default_tick_upper);
-            let expected =
+            let expected_u256 =
                 PerpConfig::get_liquidity_for_amount1(sqrt_lower, sqrt_upper, margin_18_decimals);
+            let expected = expected_u256.saturating_to::<u128>();
 
             assert_eq!(
                 liquidity, expected,
