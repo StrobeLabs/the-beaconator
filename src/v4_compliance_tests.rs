@@ -37,7 +37,7 @@ mod v4_compliance_tests {
         // Test 5: Verify monotonicity - higher ticks have higher sqrt prices
         for tick in [-1000, -500, 0, 500, 1000].iter() {
             let sqrt_price = PerpConfig::get_sqrt_price_at_tick(*tick);
-            let sqrt_price_next = PerpConfig::get_sqrt_price_at_tick(tick + 1);
+            let sqrt_price_next = PerpConfig::get_sqrt_price_at_tick(*tick + 1);
             assert!(
                 sqrt_price_next > sqrt_price,
                 "Sqrt price must increase with tick"

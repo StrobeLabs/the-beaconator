@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::models::{PerpConfig, U256};
+    use crate::models::PerpConfig;
+    use alloy::primitives::U256;
 
     #[test]
     fn test_v4_get_sqrt_price_at_tick() {

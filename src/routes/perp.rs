@@ -1349,11 +1349,8 @@ pub async fn deposit_liquidity_for_perp_endpoint(
         Err(_) => {
             let error_msg = format!("Liquidity {current_liquidity_u256} exceeds u128 max value");
             tracing::error!("{}", error_msg);
-            return Ok(Json(ApiResponse {
-                success: false,
-                data: None,
-                message: error_msg,
-            }));
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            return Err(Status::BadRequest);
         }
     };
 
