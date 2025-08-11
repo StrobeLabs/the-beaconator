@@ -696,7 +696,13 @@ async fn deposit_liquidity_for_perp(
     let tick_upper = (tick_upper / tick_spacing) * tick_spacing;
 
     // Calculate liquidity using Uniswap V4 formula (like OpenMakerPosition.sol)
-    let liquidity = config.calculate_liquidity_from_margin(margin_amount_usdc);
+    let liquidity_u256 = config.calculate_liquidity_from_margin(margin_amount_usdc);
+
+    // Convert to u128 for the contract interface
+    // This is safe as our margin amounts are bounded and won't produce overflow
+    let liquidity: u128 = liquidity_u256
+        .try_into()
+        .map_err(|_| format!("Liquidity {liquidity_u256} exceeds u128 max value"))?;
 
     tracing::info!(
         "Calculated liquidity {} for margin {} USDC using Uniswap formula",
@@ -1333,9 +1339,23 @@ pub async fn deposit_liquidity_for_perp_endpoint(
     // Pre-flight liquidity bounds validation
     let (min_liquidity, max_liquidity) =
         state.perp_config.calculate_liquidity_bounds(margin_amount);
-    let current_liquidity = state
+    let current_liquidity_u256 = state
         .perp_config
         .calculate_liquidity_from_margin(margin_amount);
+
+    // Convert to u128 for comparison
+    let current_liquidity: u128 = match current_liquidity_u256.try_into() {
+        Ok(val) => val,
+        Err(_) => {
+            let error_msg = format!("Liquidity {current_liquidity_u256} exceeds u128 max value");
+            tracing::error!("{}", error_msg);
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: error_msg,
+            }));
+        }
+    };
 
     if current_liquidity < min_liquidity {
         let error_msg = format!(
@@ -1633,9 +1653,20 @@ async fn batch_deposit_liquidity_with_multicall3(
         // Pre-flight liquidity bounds validation for batch items
         let (min_liquidity, max_liquidity) =
             state.perp_config.calculate_liquidity_bounds(margin_amount);
-        let current_liquidity = state
+        let current_liquidity_u256 = state
             .perp_config
             .calculate_liquidity_from_margin(margin_amount);
+
+        // Convert to u128 for comparison
+        let current_liquidity: u128 = match current_liquidity_u256.try_into() {
+            Ok(val) => val,
+            Err(_) => {
+                let error_msg =
+                    format!("Liquidity {current_liquidity_u256} exceeds u128 max value");
+                results.push((deposit_request.perp_id.clone(), Err(error_msg)));
+                continue;
+            }
+        };
 
         if current_liquidity < min_liquidity {
             let error_msg = format!(
@@ -1920,35 +1951,42 @@ mod tests {
 
         // Test Uniswap liquidity calculation
         let margin_100_usdc = 100_000_000u128; // 100 USDC in 6 decimals
-        let liquidity = app_state
+        let liquidity_u256 = app_state
             .perp_config
             .calculate_liquidity_from_margin(margin_100_usdc);
 
         // Should produce non-zero liquidity
-        assert!(liquidity > 0, "Liquidity should be non-zero for 100 USDC");
+        assert!(
+            liquidity_u256 > U256::ZERO,
+            "Liquidity should be non-zero for 100 USDC"
+        );
 
         // Test that it scales linearly with margin
         let margin_200_usdc = 200_000_000u128; // 200 USDC
-        let liquidity_200 = app_state
+        let liquidity_200_u256 = app_state
             .perp_config
             .calculate_liquidity_from_margin(margin_200_usdc);
 
         // Should be approximately double (linear relationship, allowing for rounding)
         assert!(
-            liquidity_200 >= liquidity * 2 - 1 && liquidity_200 <= liquidity * 2 + 1,
+            liquidity_200_u256 >= liquidity_u256 * U256::from(2) - U256::from(1)
+                && liquidity_200_u256 <= liquidity_u256 * U256::from(2) + U256::from(1),
             "Liquidity should scale linearly with margin (allowing for rounding)"
         );
 
         // Test edge cases
-        assert_eq!(app_state.perp_config.calculate_liquidity_from_margin(0), 0);
+        assert_eq!(
+            app_state.perp_config.calculate_liquidity_from_margin(0),
+            U256::ZERO
+        );
 
         // Test small margin
         let margin_10_usdc = 10_000_000u128; // 10 USDC
-        let liquidity_10 = app_state
+        let liquidity_10_u256 = app_state
             .perp_config
             .calculate_liquidity_from_margin(margin_10_usdc);
         assert!(
-            liquidity_10 > 0,
+            liquidity_10_u256 > U256::ZERO,
             "10 USDC should produce non-zero liquidity"
         );
     }

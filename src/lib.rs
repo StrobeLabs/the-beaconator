@@ -13,7 +13,11 @@ use std::sync::Arc;
 pub mod fairings;
 pub mod guards;
 pub mod models;
+#[cfg(test)]
+mod open_maker_position_compliance_test;
 pub mod routes;
+#[cfg(test)]
+mod v4_compliance_tests;
 
 use crate::models::{AppState, PerpConfig};
 use rocket::{Request, catch, catchers};

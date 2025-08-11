@@ -236,7 +236,7 @@ impl PerpConfig {
     ///
     /// # Panics
     /// Panics if tick is outside the valid range [MIN_TICK, MAX_TICK]
-    pub fn tick_to_sqrt_price_x96(tick: i32) -> u128 {
+    pub fn get_sqrt_price_at_tick(tick: i32) -> U256 {
         // Check tick bounds
         if !(MIN_TICK..=MAX_TICK).contains(&tick) {
             panic!("Tick {tick} is outside valid range [{MIN_TICK}, {MAX_TICK}]");
@@ -428,8 +428,8 @@ impl PerpConfig {
             ratio = (ratio
                 * U256::from_be_bytes([
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0xa1, 0x70, 0x39, 0x1f, 0x7d, 0xc4,
-                    0x24, 0x44, 0xe8, 0xfa, 0x20,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0xa1, 0x70, 0x39, 0x1f, 0x7d,
+                    0xc4, 0x24, 0x44, 0xe8, 0xfa, 0x20,
                 ]))
                 >> 128;
         }
@@ -448,62 +448,51 @@ impl PerpConfig {
                 U256::from(1)
             };
 
-        // Convert to u128, should always fit as we're in Q64.96
-        sqrt_price_x96.to::<u128>()
+        // Return as U256 to avoid overflow issues
+        sqrt_price_x96
     }
 
     /// Calculate liquidity for amount1 using Uniswap V4 formula
-    /// Replicates LiquidityAmounts.getLiquidityForAmount1
+    /// Replicates LiquidityAmounts.getLiquidityForAmount1 from Uniswap V4
+    /// https://github.com/Uniswap/v4-periphery/blob/main/src/libraries/LiquidityAmounts.sol#L36
     pub fn get_liquidity_for_amount1(
-        sqrt_price_a_x96: u128,
-        sqrt_price_b_x96: u128,
-        amount1: u128,
+        sqrt_price_a_x96: U256,
+        sqrt_price_b_x96: U256,
+        amount1: U256,
     ) -> U256 {
-        // Convert to U256 for big number math
-        let sqrt_a_u256 = U256::from(sqrt_price_a_x96);
-        let sqrt_b_u256 = U256::from(sqrt_price_b_x96);
-        let amount1_u256 = U256::from(amount1);
-
         // Ensure sqrtPriceAX96 <= sqrtPriceBX96
-        let (sqrt_price_lower, sqrt_price_upper) = if sqrt_a_u256 > sqrt_b_u256 {
-            (sqrt_b_u256, sqrt_a_u256)
+        let (sqrt_price_lower, sqrt_price_upper) = if sqrt_price_a_x96 > sqrt_price_b_x96 {
+            (sqrt_price_b_x96, sqrt_price_a_x96)
         } else {
-            (sqrt_a_u256, sqrt_b_u256)
+            (sqrt_price_a_x96, sqrt_price_b_x96)
         };
 
-        // liquidity = amount1 * Q96 / (sqrtPriceUpperX96 - sqrtPriceLowerX96)
         let denominator = sqrt_price_upper - sqrt_price_lower;
         if denominator == U256::ZERO {
             return U256::ZERO;
         }
 
-        // Calculate using U256 to avoid overflow
-        // Multiply by 2^96 using left shift
-        let numerator = amount1_u256 << 96;
+        // V4 uses FullMath.mulDiv(amount1, FixedPoint96.Q96, sqrtPriceBX96 - sqrtPriceAX96)
+        // Which is equivalent to: (amount1 * Q96) / (sqrtPriceBX96 - sqrtPriceAX96)
+        // Q96 = 2^96
+        let q96 = U256::from(1) << 96;
 
-        // Return liquidity as U256
-        numerator / denominator
+        // Calculate liquidity = (amount1 * Q96) / (sqrtPriceUpperX96 - sqrtPriceLowerX96)
+        // Using checked arithmetic to match Solidity's behavior
+        (amount1 * q96) / denominator
     }
 
     /// Calculate liquidity based on margin amount and configured tick range
-    pub fn calculate_liquidity_from_margin(&self, margin_amount_usdc: u128) -> u128 {
+    pub fn calculate_liquidity_from_margin(&self, margin_amount_usdc: u128) -> U256 {
         // Convert ticks to sqrt prices
-        let sqrt_price_lower_x96 = Self::tick_to_sqrt_price_x96(self.default_tick_lower);
-        let sqrt_price_upper_x96 = Self::tick_to_sqrt_price_x96(self.default_tick_upper);
+        let sqrt_price_lower_x96 = Self::get_sqrt_price_at_tick(self.default_tick_lower);
+        let sqrt_price_upper_x96 = Self::get_sqrt_price_at_tick(self.default_tick_upper);
 
         // Convert USDC (6 decimals) to 18 decimals
-        let amount1_18_decimals = margin_amount_usdc * 10_u128.pow(12);
+        let amount1_u256 = U256::from(margin_amount_usdc) * U256::from(10_u128.pow(12));
 
-        // Use the Uniswap formula and convert result back to u128
-        // This is safe because we control the input ranges
-        let liquidity_u256 = Self::get_liquidity_for_amount1(
-            sqrt_price_lower_x96,
-            sqrt_price_upper_x96,
-            amount1_18_decimals,
-        );
-
-        // Convert to u128, saturating if too large (though this shouldn't happen with our ranges)
-        liquidity_u256.saturating_to::<u128>()
+        // Use the Uniswap V4 formula
+        Self::get_liquidity_for_amount1(sqrt_price_lower_x96, sqrt_price_upper_x96, amount1_u256)
     }
 
     /// Calculate expected leverage for a given margin amount.
@@ -571,14 +560,19 @@ impl PerpConfig {
     /// Based on the current working configuration and Uniswap V4 constraints
     pub fn calculate_liquidity_bounds(&self, margin_usdc: u128) -> (u128, u128) {
         // Calculate expected liquidity using Uniswap formula
-        let expected_liquidity = self.calculate_liquidity_from_margin(margin_usdc);
+        let expected_liquidity_u256 = self.calculate_liquidity_from_margin(margin_usdc);
 
         // For validation, allow a reasonable range
         // Minimum: 90% of expected (to account for rounding)
-        let min_liquidity = (expected_liquidity * 9) / 10;
+        let min_liquidity_u256 = (expected_liquidity_u256 * U256::from(9)) / U256::from(10);
 
         // Maximum: 110% of expected (to account for rounding)
-        let max_liquidity = (expected_liquidity * 11) / 10;
+        let max_liquidity_u256 = (expected_liquidity_u256 * U256::from(11)) / U256::from(10);
+
+        // Convert to u128 for return values
+        // This is safe as we control the input ranges
+        let min_liquidity: u128 = min_liquidity_u256.try_into().unwrap_or(u128::MAX);
+        let max_liquidity: u128 = max_liquidity_u256.try_into().unwrap_or(u128::MAX);
 
         (min_liquidity, max_liquidity)
     }
@@ -652,10 +646,10 @@ impl PerpConfig {
         // Test liquidity calculation for typical margins
         let test_margins = vec![10_000_000u128, 100_000_000u128, 1_000_000_000u128]; // 10, 100, 1000 USDC
         for margin in test_margins {
-            let calculated_liq = self.calculate_liquidity_from_margin(margin);
+            let calculated_liq_u256 = self.calculate_liquidity_from_margin(margin);
 
             // Ensure liquidity is reasonable (non-zero)
-            if calculated_liq == 0 {
+            if calculated_liq_u256 == U256::ZERO {
                 return Err(format!(
                     "{} USDC margin produces zero liquidity",
                     margin as f64 / 1_000_000.0
@@ -665,7 +659,7 @@ impl PerpConfig {
             tracing::debug!(
                 "{} USDC: liquidity {}",
                 margin as f64 / 1_000_000.0,
-                calculated_liq
+                calculated_liq_u256
             );
         }
 
