@@ -113,7 +113,7 @@ let provider = ProviderBuilder::new()
 // AVOID - Deprecated pattern
 let provider = ProviderBuilder::new()
     .wallet(wallet)  
-    .on_http(url);     // Deprecated in v1.0+
+    .on_http(url);     // Deprecated in v1.0+, use .connect_http(url) instead
 ```
 
 ### Contract Interface Pattern
