@@ -8,14 +8,15 @@ use tokio::time::timeout;
 use tracing;
 
 use super::{
-    IBeacon, IBeaconFactory, IBeaconRegistry, IMulticall3, execute_transaction_serialized,
-    get_fresh_nonce_from_alternate, is_nonce_error,
+    IBeacon, IBeaconFactory, IBeaconRegistry, IDichotomousBeaconFactory, IMulticall3, 
+    IStepBeacon, execute_transaction_serialized, get_fresh_nonce_from_alternate, is_nonce_error,
 };
 use crate::guards::ApiToken;
 use crate::models::{
     ApiResponse, AppState, BatchCreatePerpcityBeaconRequest, BatchCreatePerpcityBeaconResponse,
     BatchUpdateBeaconRequest, BatchUpdateBeaconResponse, BeaconUpdateData, BeaconUpdateResult,
-    CreateBeaconRequest, RegisterBeaconRequest, UpdateBeaconRequest,
+    CreateBeaconRequest, CreateVerifiableBeaconRequest, RegisterBeaconRequest, 
+    UpdateBeaconRequest, UpdateVerifiableBeaconRequest,
 };
 
 // Helper function to create a beacon via the factory contract
@@ -2203,4 +2204,307 @@ mod tests {
             assert!(beacon_result.error.is_some());
         }
     }
+}
+
+// ============================================================================
+// VERIFIABLE BEACON ENDPOINTS
+// ============================================================================
+
+/// Create a new verifiable beacon using DichotomousBeaconFactory
+#[post("/create_verifiable_beacon", data = "<request>")]
+pub async fn create_verifiable_beacon(
+    request: Json<CreateVerifiableBeaconRequest>,
+    _token: ApiToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<String>>, Status> {
+    tracing::info!("Received request: POST /create_verifiable_beacon");
+    
+    let _guard = sentry::Hub::current().push_scope();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("endpoint", "/create_verifiable_beacon");
+        scope.set_extra("verifier_address", request.verifier_address.clone().into());
+        scope.set_extra("initial_data", request.initial_data.to_string().into());
+        scope.set_extra("initial_cardinality", request.initial_cardinality.into());
+    });
+
+    // Check if dichotomous factory is configured
+    let factory_address = match state.dichotomous_beacon_factory_address {
+        Some(addr) => addr,
+        None => {
+            tracing::error!("Dichotomous beacon factory address not configured");
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "Verifiable beacon factory not configured".to_string(),
+            }));
+        }
+    };
+
+    // Parse verifier address
+    let verifier_address = match Address::from_str(&request.verifier_address) {
+        Ok(addr) => addr,
+        Err(e) => {
+            tracing::error!("Invalid verifier address: {}", e);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    tracing::info!("Creating verifiable beacon with:");
+    tracing::info!("  Factory: {}", factory_address);
+    tracing::info!("  Verifier: {}", verifier_address);
+    tracing::info!("  Initial data: {}", request.initial_data);
+    tracing::info!("  Initial cardinality: {}", request.initial_cardinality);
+
+    // Create contract instance (this creates a client to interact with the existing factory contract)
+    let contract = IDichotomousBeaconFactory::new(factory_address, &*state.provider);
+
+    // Send beacon creation transaction
+    let pending_tx = execute_transaction_serialized(async {
+        tracing::info!("Creating verifiable beacon with primary RPC");
+        let result = contract
+            .createBeacon(verifier_address, alloy::primitives::U256::from(request.initial_data), request.initial_cardinality)
+            .send()
+            .await;
+
+        match result {
+            Ok(pending) => Ok(pending),
+            Err(e) => {
+                let error_msg = format!("Failed to send createBeacon transaction: {e}");
+                tracing::error!("{}", error_msg);
+
+                // Check if nonce error and sync if needed
+                if is_nonce_error(&error_msg) {
+                    tracing::warn!("Nonce error detected, attempting to sync nonce from alternate RPC");
+                    if let Ok(fresh_nonce) = get_fresh_nonce_from_alternate(state).await {
+                        tracing::info!("Retrying with fresh nonce: {}", fresh_nonce);
+                        // The provider should automatically use the fresh nonce on retry
+                    }
+                }
+                Err(error_msg)
+            }
+        }
+    })
+    .await
+    .map_err(|e| {
+        tracing::error!("Transaction execution failed: {}", e);
+        sentry::capture_message(&format!("Verifiable beacon creation failed: {e}"), sentry::Level::Error);
+        Status::InternalServerError
+    })?;
+
+    // Get transaction receipt with timeout
+    let receipt = match timeout(Duration::from_secs(120), pending_tx.get_receipt()).await {
+        Ok(Ok(receipt)) => receipt,
+        Ok(Err(e)) => {
+            tracing::error!("Failed to get transaction receipt: {}", e);
+            sentry::capture_message(
+                &format!("Failed to get verifiable beacon creation receipt: {e}"),
+                sentry::Level::Error,
+            );
+            return Err(Status::InternalServerError);
+        }
+        Err(_) => {
+            tracing::error!("Timeout waiting for transaction receipt");
+            sentry::capture_message(
+                "Timeout waiting for verifiable beacon creation receipt",
+                sentry::Level::Error,
+            );
+            return Err(Status::GatewayTimeout);
+        }
+    };
+
+    // The createBeacon function returns the beacon address directly
+    // We need to decode the return value from the transaction receipt
+    // For now, let's look for the BeaconCreated event properly
+    let beacon_address = {
+        // Find the BeaconCreated event log
+        let beacon_created_event = receipt
+            .inner
+            .logs()
+            .iter()
+            .find(|log| {
+                // BeaconCreated event has signature: BeaconCreated(address,address)
+                // Event signature hash would be the first topic
+                log.topics().len() >= 1
+            })
+            .ok_or_else(|| {
+                tracing::error!("BeaconCreated event not found in transaction receipt");
+                Status::InternalServerError
+            })?;
+        
+        // For BeaconCreated(address beacon, address verifier):
+        // - First topic is event signature
+        // - beacon address is in the data (first 32 bytes)
+        // - verifier address is in the data (second 32 bytes)
+        if beacon_created_event.data().data.len() >= 64 {
+            // First address (beacon) is in bytes 12-32 of the first 32-byte word
+            let addr_bytes = &beacon_created_event.data().data[12..32];
+            Address::from_slice(addr_bytes)
+        } else {
+            tracing::error!("Invalid BeaconCreated event data");
+            return Err(Status::InternalServerError);
+        }
+    };
+
+    let message = "Verifiable beacon created successfully";
+    tracing::info!("{} - Beacon: {}", message, beacon_address);
+    
+    sentry::capture_message(
+        &format!("Verifiable beacon created: {beacon_address}"),
+        sentry::Level::Info,
+    );
+
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some(format!("Beacon address: {beacon_address}")),
+        message: message.to_string(),
+    }))
+}
+
+/// Update a verifiable beacon with zero-knowledge proof
+#[post("/update_verifiable_beacon", data = "<request>")]
+pub async fn update_verifiable_beacon(
+    request: Json<UpdateVerifiableBeaconRequest>,
+    _token: ApiToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<String>>, Status> {
+    tracing::info!("Received request: POST /update_verifiable_beacon");
+    
+    let _guard = sentry::Hub::current().push_scope();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("endpoint", "/update_verifiable_beacon");
+        scope.set_extra("beacon_address", request.beacon_address.clone().into());
+        scope.set_extra("proof_length", request.proof.len().into());
+        scope.set_extra("signals_length", request.public_signals.len().into());
+    });
+
+    // Parse beacon address
+    let beacon_address = match Address::from_str(&request.beacon_address) {
+        Ok(addr) => addr,
+        Err(e) => {
+            tracing::error!("Invalid beacon address: {}", e);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    // Parse proof and public signals from hex strings
+    let proof_bytes = match hex::decode(request.proof.trim_start_matches("0x")) {
+        Ok(bytes) => Bytes::from(bytes),
+        Err(e) => {
+            tracing::error!("Invalid proof hex: {}", e);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    let signals_bytes = match hex::decode(request.public_signals.trim_start_matches("0x")) {
+        Ok(bytes) => Bytes::from(bytes),
+        Err(e) => {
+            tracing::error!("Invalid public signals hex: {}", e);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    tracing::info!(
+        "Updating verifiable beacon {} with proof ({} bytes) and signals ({} bytes)",
+        beacon_address,
+        proof_bytes.len(),
+        signals_bytes.len()
+    );
+
+    // Create contract instance
+    let contract = IStepBeacon::new(beacon_address, &*state.provider);
+
+    // Send update transaction
+    let pending_tx_result = execute_transaction_serialized(async {
+        tracing::info!("Updating verifiable beacon with primary RPC");
+        let result = contract
+            .updateData(proof_bytes.clone(), signals_bytes.clone())
+            .send()
+            .await;
+
+        match result {
+            Ok(pending) => Ok(pending),
+            Err(e) => {
+                let error_msg = format!("Failed to send updateData transaction: {e}");
+                tracing::error!("{}", error_msg);
+                
+                // Check for specific errors
+                if error_msg.contains("ProofAlreadyUsed") {
+                    tracing::warn!("Proof has already been used");
+                    sentry::capture_message("Proof reuse attempted", sentry::Level::Warning);
+                } else if error_msg.contains("InvalidProof") {
+                    tracing::warn!("Invalid proof provided");
+                    sentry::capture_message("Invalid proof submitted", sentry::Level::Warning);
+                } else if is_nonce_error(&error_msg) {
+                    tracing::warn!("Nonce error detected, attempting to sync nonce");
+                    if let Ok(fresh_nonce) = get_fresh_nonce_from_alternate(state).await {
+                        tracing::info!("Retrying with fresh nonce: {}", fresh_nonce);
+                    }
+                }
+                Err(error_msg)
+            }
+        }
+    })
+    .await;
+
+    // Handle transaction execution result
+    let pending_tx = match pending_tx_result {
+        Ok(tx) => tx,
+        Err(e) => {
+            tracing::error!("Transaction execution failed: {}", e);
+            
+            // Return appropriate error based on the failure type
+            if e.contains("ProofAlreadyUsed") {
+                return Ok(Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: "Proof has already been used".to_string(),
+                }));
+            } else if e.contains("InvalidProof") {
+                return Ok(Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: "Invalid proof provided".to_string(),
+                }));
+            }
+            
+            sentry::capture_message(&format!("Verifiable beacon update failed: {e}"), sentry::Level::Error);
+            return Err(Status::InternalServerError);
+        }
+    };
+
+    // Get transaction receipt
+    let receipt = match timeout(Duration::from_secs(120), pending_tx.get_receipt()).await {
+        Ok(Ok(receipt)) => receipt,
+        Ok(Err(e)) => {
+            tracing::error!("Failed to get transaction receipt: {}", e);
+            sentry::capture_message(
+                &format!("Failed to get verifiable beacon update receipt: {e}"),
+                sentry::Level::Error,
+            );
+            return Err(Status::InternalServerError);
+        }
+        Err(_) => {
+            tracing::error!("Timeout waiting for transaction receipt");
+            sentry::capture_message(
+                "Timeout waiting for verifiable beacon update receipt",
+                sentry::Level::Error,
+            );
+            return Err(Status::GatewayTimeout);
+        }
+    };
+
+    let tx_hash = receipt.transaction_hash;
+    let message = "Verifiable beacon updated successfully";
+    
+    tracing::info!("{} - TX: {:?}", message, tx_hash);
+    sentry::capture_message(
+        &format!("Verifiable beacon {} updated: {:?}", beacon_address, tx_hash),
+        sentry::Level::Info,
+    );
+
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some(format!("Transaction hash: {:?}", tx_hash)),
+        message: message.to_string(),
+    }))
 }

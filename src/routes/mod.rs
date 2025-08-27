@@ -36,6 +36,23 @@ sol! {
     }
 
     #[sol(rpc)]
+    interface IDichotomousBeaconFactory {
+        function createBeacon(address verifier, uint256 initialData, uint32 initialCardinalityNext) external returns (address);
+        event BeaconCreated(address beacon, address verifier);
+    }
+
+    #[sol(rpc)]
+    interface IStepBeacon {
+        function getData() external view returns (uint256 data, uint256 timestamp);
+        function updateData(bytes calldata proof, bytes calldata publicSignals) external;
+        function getTwap(uint32 twapSecondsAgo) external view returns (uint256 twapPrice);
+        function increaseCardinalityNext(uint32 cardinalityNext) external returns (uint32 cardinalityNextOld, uint32 cardinalityNextNew);
+        event DataUpdated(uint256 data);
+        error ProofAlreadyUsed(bytes proof, bytes publicSignals);
+        error InvalidProof(bytes proof, bytes publicSignals);
+    }
+
+    #[sol(rpc)]
     interface IERC20 {
         function transfer(address to, uint256 amount) external returns (bool);
         function approve(address spender, uint256 amount) external returns (bool);

@@ -1,0 +1,31 @@
+[
+  {
+    "type": "function",
+    "name": "createBeacon",
+    "inputs": [
+      {
+        "name": "verifier",
+        "type": "address",
+        "internalType": "contract IHalo2Verifier"
+      },
+      {
+        "name": "initialData",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialCardinalityNext",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  }
+]

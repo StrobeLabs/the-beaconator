@@ -157,6 +157,8 @@ pub async fn create_rocket() -> Rocket<Build> {
     let beacon_registry_abi = load_abi("BeaconRegistry");
     let perp_hook_abi = load_abi("PerpHook");
     let multicall3_abi = load_abi("Multicall3");
+    let dichotomous_beacon_factory_abi = load_abi("DichotomousBeaconFactory");
+    let step_beacon_abi = load_abi("StepBeacon");
 
     // Load contract addresses
     let beacon_factory_address = Address::from_str(
@@ -191,6 +193,13 @@ pub async fn create_rocket() -> Rocket<Build> {
     } else {
         tracing::warn!("MULTICALL3_ADDRESS not set - batch operations will be disabled");
     }
+
+    // Hardcoded dichotomous beacon factory address for verifiable beacons
+    let dichotomous_beacon_factory_address = Some(
+        Address::from_str("0x05C0023b323138d5353018A1c350274932B8e9f6")
+            .expect("Failed to parse dichotomous beacon factory address")
+    );
+    tracing::info!("Dichotomous beacon factory address: {:?}", dichotomous_beacon_factory_address);
 
     let usdc_transfer_limit = env::var("USDC_TRANSFER_LIMIT")
         .unwrap_or_else(|_| "1000000000".to_string()) // Default 1000 USDC
@@ -323,10 +332,13 @@ pub async fn create_rocket() -> Rocket<Build> {
         beacon_registry_abi,
         perp_hook_abi,
         multicall3_abi,
+        dichotomous_beacon_factory_abi,
+        step_beacon_abi,
         beacon_factory_address,
         perpcity_registry_address,
         perp_hook_address,
         usdc_address,
+        dichotomous_beacon_factory_address,
         usdc_transfer_limit,
         eth_transfer_limit,
         access_token,
@@ -352,7 +364,9 @@ pub async fn create_rocket() -> Rocket<Build> {
                 routes::batch_deposit_liquidity_for_perps,
                 routes::update_beacon,
                 routes::batch_update_beacon,
-                routes::fund_guest_wallet
+                routes::fund_guest_wallet,
+                routes::create_verifiable_beacon,
+                routes::update_verifiable_beacon
             ],
         )
         .register("/", catchers![catch_all_errors, catch_panic])

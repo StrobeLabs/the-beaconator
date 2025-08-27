@@ -112,6 +112,21 @@ impl ApiEndpoints {
                 requires_auth: true,
                 status: EndpointStatus::Working,
             },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/create_verifiable_beacon".to_string(),
+                description: "Create a verifiable beacon with ZK proof support and TWAP".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/update_verifiable_beacon".to_string(),
+                description: "Update a verifiable beacon with zero-knowledge proof verification"
+                    .to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
         ]
     }
 
@@ -478,10 +493,13 @@ pub struct AppState {
     pub beacon_registry_abi: JsonAbi,
     pub perp_hook_abi: JsonAbi,
     pub multicall3_abi: JsonAbi,
+    pub dichotomous_beacon_factory_abi: JsonAbi,
+    pub step_beacon_abi: JsonAbi,
     pub beacon_factory_address: Address,
     pub perpcity_registry_address: Address,
     pub perp_hook_address: Address,
     pub usdc_address: Address,
+    pub dichotomous_beacon_factory_address: Option<Address>,
     pub usdc_transfer_limit: u128,
     pub eth_transfer_limit: u128,
     pub access_token: String,
@@ -541,6 +559,20 @@ pub struct CreateBeaconRequest {
 pub struct RegisterBeaconRequest {
     // TODO: Define the fields needed for registering a beacon
     pub placeholder: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateVerifiableBeaconRequest {
+    pub verifier_address: String,      // Halo2 verifier contract address
+    pub initial_data: u128,            // Initial data value (MUST be pre-scaled by 2^96 if representing a decimal)
+    pub initial_cardinality: u32,      // Initial TWAP observation slots (typically 100-1000)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateVerifiableBeaconRequest {
+    pub beacon_address: String,        // Address of the verifiable beacon
+    pub proof: String,                 // ZK proof as hex string
+    pub public_signals: String,        // Public signals as hex string
 }
 
 #[derive(Debug, Serialize, Deserialize)]
