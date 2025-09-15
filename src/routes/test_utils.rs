@@ -287,11 +287,14 @@ pub async fn create_test_app_state() -> AppState {
         beacon_registry_abi,
         perp_hook_abi,
         multicall3_abi: load_test_abi("Multicall3"),
+        dichotomous_beacon_factory_abi: JsonAbi::new(), // Mock ABI for tests
+        step_beacon_abi: JsonAbi::new(),                // Mock ABI for tests
         beacon_factory_address: deployment.beacon_factory,
         perpcity_registry_address: deployment.beacon_registry,
         perp_hook_address: deployment.perp_hook,
         usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
-        usdc_transfer_limit: 1_000_000_000,         // 1000 USDC
+        dichotomous_beacon_factory_address: None, // Not configured by default in tests
+        usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
         eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
         access_token: "test_token".to_string(),
         perp_config: PerpConfig::default(),
@@ -326,11 +329,14 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
         beacon_registry_abi: load_test_abi("BeaconRegistry"),
         perp_hook_abi: load_test_abi("PerpHook"),
         multicall3_abi: load_test_abi("Multicall3"),
+        dichotomous_beacon_factory_abi: JsonAbi::new(), // Mock ABI for tests
+        step_beacon_abi: JsonAbi::new(),                // Mock ABI for tests
         beacon_factory_address: deployment.beacon_factory,
         perpcity_registry_address: deployment.beacon_registry,
         perp_hook_address: deployment.perp_hook,
         usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
-        usdc_transfer_limit: 1_000_000_000,         // 1000 USDC
+        dichotomous_beacon_factory_address: None, // Not configured by default in tests
+        usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
         eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
         access_token: "test_token".to_string(),
         perp_config: PerpConfig::default(),
@@ -410,13 +416,16 @@ pub fn create_simple_test_app_state() -> AppState {
         beacon_registry_abi: JsonAbi::new(),
         perp_hook_abi: JsonAbi::new(),
         multicall3_abi: JsonAbi::new(),
+        dichotomous_beacon_factory_abi: JsonAbi::new(),
+        step_beacon_abi: JsonAbi::new(),
         beacon_factory_address: Address::from_str("0x1234567890123456789012345678901234567890")
             .unwrap(),
         perpcity_registry_address: Address::from_str("0x2345678901234567890123456789012345678901")
             .unwrap(),
         perp_hook_address: Address::from_str("0x3456789012345678901234567890123456789012").unwrap(),
         usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
-        usdc_transfer_limit: 1_000_000_000,         // 1000 USDC
+        dichotomous_beacon_factory_address: None, // Not configured by default in tests
+        usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
         eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
         access_token: "test_token".to_string(),
         perp_config: PerpConfig::default(),

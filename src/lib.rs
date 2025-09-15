@@ -197,9 +197,12 @@ pub async fn create_rocket() -> Rocket<Build> {
     // Hardcoded dichotomous beacon factory address for verifiable beacons
     let dichotomous_beacon_factory_address = Some(
         Address::from_str("0x05C0023b323138d5353018A1c350274932B8e9f6")
-            .expect("Failed to parse dichotomous beacon factory address")
+            .expect("Failed to parse dichotomous beacon factory address"),
     );
-    tracing::info!("Dichotomous beacon factory address: {:?}", dichotomous_beacon_factory_address);
+    tracing::info!(
+        "Dichotomous beacon factory address: {:?}",
+        dichotomous_beacon_factory_address
+    );
 
     let usdc_transfer_limit = env::var("USDC_TRANSFER_LIMIT")
         .unwrap_or_else(|_| "1000000000".to_string()) // Default 1000 USDC

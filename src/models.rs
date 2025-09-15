@@ -563,16 +563,16 @@ pub struct RegisterBeaconRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateVerifiableBeaconRequest {
-    pub verifier_address: String,      // Halo2 verifier contract address
-    pub initial_data: u128,            // Initial data value (MUST be pre-scaled by 2^96 if representing a decimal)
-    pub initial_cardinality: u32,      // Initial TWAP observation slots (typically 100-1000)
+    pub verifier_address: String, // Halo2 verifier contract address
+    pub initial_data: u128, // Initial data value (MUST be pre-scaled by 2^96 if representing a decimal)
+    pub initial_cardinality: u32, // Initial TWAP observation slots (typically 100-1000)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateVerifiableBeaconRequest {
-    pub beacon_address: String,        // Address of the verifiable beacon
-    pub proof: String,                 // ZK proof as hex string
-    pub public_signals: String,        // Public signals as hex string
+    pub beacon_address: String, // Address of the verifiable beacon
+    pub proof: String,          // ZK proof as hex string
+    pub public_signals: String, // Public signals as hex string
 }
 
 #[derive(Debug, Serialize, Deserialize)]

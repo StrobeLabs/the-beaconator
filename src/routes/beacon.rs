@@ -8,15 +8,15 @@ use tokio::time::timeout;
 use tracing;
 
 use super::{
-    IBeacon, IBeaconFactory, IBeaconRegistry, IDichotomousBeaconFactory, IMulticall3, 
-    IStepBeacon, execute_transaction_serialized, get_fresh_nonce_from_alternate, is_nonce_error,
+    IBeacon, IBeaconFactory, IBeaconRegistry, IDichotomousBeaconFactory, IMulticall3, IStepBeacon,
+    execute_transaction_serialized, get_fresh_nonce_from_alternate, is_nonce_error,
 };
 use crate::guards::ApiToken;
 use crate::models::{
     ApiResponse, AppState, BatchCreatePerpcityBeaconRequest, BatchCreatePerpcityBeaconResponse,
     BatchUpdateBeaconRequest, BatchUpdateBeaconResponse, BeaconUpdateData, BeaconUpdateResult,
-    CreateBeaconRequest, CreateVerifiableBeaconRequest, RegisterBeaconRequest, 
-    UpdateBeaconRequest, UpdateVerifiableBeaconRequest,
+    CreateBeaconRequest, CreateVerifiableBeaconRequest, RegisterBeaconRequest, UpdateBeaconRequest,
+    UpdateVerifiableBeaconRequest,
 };
 
 // Helper function to create a beacon via the factory contract
@@ -2204,6 +2204,256 @@ mod tests {
             assert!(beacon_result.error.is_some());
         }
     }
+
+    #[tokio::test]
+    async fn test_create_verifiable_beacon_missing_factory() {
+        use crate::guards::ApiToken;
+        use crate::models::CreateVerifiableBeaconRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let mut app_state = create_simple_test_app_state();
+
+        // Ensure dichotomous factory is not configured
+        app_state.dichotomous_beacon_factory_address = None;
+
+        let state = State::from(&app_state);
+
+        let request = Json(CreateVerifiableBeaconRequest {
+            verifier_address: "0x1234567890123456789012345678901234567890".to_string(),
+            initial_data: 50_u128 << 96, // 50 scaled by 2^96
+            initial_cardinality: 100,
+        });
+
+        let result = create_verifiable_beacon(request, token, state).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap().into_inner();
+        assert!(!response.success);
+        assert!(response.message.contains("not configured"));
+    }
+
+    #[tokio::test]
+    async fn test_create_verifiable_beacon_invalid_verifier_address() {
+        use crate::guards::ApiToken;
+        use crate::models::CreateVerifiableBeaconRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let mut app_state = create_simple_test_app_state();
+
+        // Set valid factory address so we get to the address parsing
+        app_state.dichotomous_beacon_factory_address =
+            Some(Address::from_str("0x05C0023b323138d5353018A1c350274932B8e9f6").unwrap());
+
+        let state = State::from(&app_state);
+
+        let request = Json(CreateVerifiableBeaconRequest {
+            verifier_address: "invalid_address".to_string(),
+            initial_data: 50_u128 << 96,
+            initial_cardinality: 100,
+        });
+
+        let result = create_verifiable_beacon(request, token, state).await;
+
+        // Should return BadRequest due to invalid address parsing
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
+    }
+
+    #[tokio::test]
+    async fn test_create_verifiable_beacon_network_failure() {
+        use crate::guards::ApiToken;
+        use crate::models::CreateVerifiableBeaconRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let mut app_state = create_simple_test_app_state();
+
+        // Set valid factory address
+        app_state.dichotomous_beacon_factory_address =
+            Some(Address::from_str("0x05C0023b323138d5353018A1c350274932B8e9f6").unwrap());
+
+        let state = State::from(&app_state);
+
+        let request = Json(CreateVerifiableBeaconRequest {
+            verifier_address: "0x1234567890123456789012345678901234567890".to_string(),
+            initial_data: 50_u128 << 96,
+            initial_cardinality: 100,
+        });
+
+        // This will fail due to network not being available in test environment
+        let result = create_verifiable_beacon(request, token, state).await;
+
+        // Should return InternalServerError due to network failure
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            rocket::http::Status::InternalServerError
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_verifiable_beacon_invalid_address() {
+        use crate::guards::ApiToken;
+        use crate::models::UpdateVerifiableBeaconRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let app_state = create_simple_test_app_state();
+        let state = State::from(&app_state);
+
+        let request = Json(UpdateVerifiableBeaconRequest {
+            beacon_address: "invalid_address".to_string(),
+            proof: "0x1234".to_string(),
+            public_signals: "0x5678".to_string(),
+        });
+
+        let result = update_verifiable_beacon(request, token, state).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
+    }
+
+    #[tokio::test]
+    async fn test_update_verifiable_beacon_invalid_proof_hex() {
+        use crate::guards::ApiToken;
+        use crate::models::UpdateVerifiableBeaconRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let app_state = create_simple_test_app_state();
+        let state = State::from(&app_state);
+
+        let request = Json(UpdateVerifiableBeaconRequest {
+            beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
+            proof: "invalid_hex".to_string(),
+            public_signals: "0x5678".to_string(),
+        });
+
+        let result = update_verifiable_beacon(request, token, state).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
+    }
+
+    #[tokio::test]
+    async fn test_update_verifiable_beacon_invalid_signals_hex() {
+        use crate::guards::ApiToken;
+        use crate::models::UpdateVerifiableBeaconRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let app_state = create_simple_test_app_state();
+        let state = State::from(&app_state);
+
+        let request = Json(UpdateVerifiableBeaconRequest {
+            beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
+            proof: "0x1234".to_string(),
+            public_signals: "invalid_hex".to_string(),
+        });
+
+        let result = update_verifiable_beacon(request, token, state).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), rocket::http::Status::BadRequest);
+    }
+
+    #[tokio::test]
+    async fn test_update_verifiable_beacon_network_failure() {
+        use crate::guards::ApiToken;
+        use crate::models::UpdateVerifiableBeaconRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let app_state = create_simple_test_app_state();
+        let state = State::from(&app_state);
+
+        let request = Json(UpdateVerifiableBeaconRequest {
+            beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
+            proof: "0x123456789abcdef0".to_string(),
+            public_signals: "0x00000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000001".to_string(),
+        });
+
+        // This will fail due to network not being available in test environment
+        let result = update_verifiable_beacon(request, token, state).await;
+
+        // Should return InternalServerError due to network failure
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            rocket::http::Status::InternalServerError
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_verifiable_beacon_valid_input_parsing() {
+        use crate::guards::ApiToken;
+        use crate::models::UpdateVerifiableBeaconRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let app_state = create_simple_test_app_state();
+        let state = State::from(&app_state);
+
+        // Test with hex strings that have 0x prefix
+        let request = Json(UpdateVerifiableBeaconRequest {
+            beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
+            proof: "0x123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0".to_string(),
+            public_signals: "0x00000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000001".to_string(),
+        });
+
+        // This will fail due to network, but input parsing should succeed
+        let result = update_verifiable_beacon(request, token, state).await;
+
+        // Should be InternalServerError (network failure) not BadRequest (parsing failure)
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            rocket::http::Status::InternalServerError
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_verifiable_beacon_request_validation() {
+        use crate::guards::ApiToken;
+        use crate::models::CreateVerifiableBeaconRequest;
+        use crate::routes::test_utils::create_simple_test_app_state;
+        use rocket::State;
+
+        let token = ApiToken("test_token".to_string());
+        let mut app_state = create_simple_test_app_state();
+
+        // Set valid factory address
+        app_state.dichotomous_beacon_factory_address =
+            Some(Address::from_str("0x05C0023b323138d5353018A1c350274932B8e9f6").unwrap());
+
+        let state = State::from(&app_state);
+
+        // Test boundary values for initial_data and initial_cardinality
+        let request = Json(CreateVerifiableBeaconRequest {
+            verifier_address: "0x1234567890123456789012345678901234567890".to_string(),
+            initial_data: 0,        // Minimum value
+            initial_cardinality: 1, // Minimum value
+        });
+
+        let result = create_verifiable_beacon(request, token, state).await;
+
+        // Should fail due to network, not validation
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            rocket::http::Status::InternalServerError
+        );
+    }
 }
 
 // ============================================================================
@@ -2218,7 +2468,7 @@ pub async fn create_verifiable_beacon(
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<String>>, Status> {
     tracing::info!("Received request: POST /create_verifiable_beacon");
-    
+
     let _guard = sentry::Hub::current().push_scope();
     sentry::configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_verifiable_beacon");
@@ -2262,7 +2512,11 @@ pub async fn create_verifiable_beacon(
     let pending_tx = execute_transaction_serialized(async {
         tracing::info!("Creating verifiable beacon with primary RPC");
         let result = contract
-            .createBeacon(verifier_address, alloy::primitives::U256::from(request.initial_data), request.initial_cardinality)
+            .createBeacon(
+                verifier_address,
+                alloy::primitives::U256::from(request.initial_data),
+                request.initial_cardinality,
+            )
             .send()
             .await;
 
@@ -2274,7 +2528,9 @@ pub async fn create_verifiable_beacon(
 
                 // Check if nonce error and sync if needed
                 if is_nonce_error(&error_msg) {
-                    tracing::warn!("Nonce error detected, attempting to sync nonce from alternate RPC");
+                    tracing::warn!(
+                        "Nonce error detected, attempting to sync nonce from alternate RPC"
+                    );
                     if let Ok(fresh_nonce) = get_fresh_nonce_from_alternate(state).await {
                         tracing::info!("Retrying with fresh nonce: {}", fresh_nonce);
                         // The provider should automatically use the fresh nonce on retry
@@ -2287,7 +2543,10 @@ pub async fn create_verifiable_beacon(
     .await
     .map_err(|e| {
         tracing::error!("Transaction execution failed: {}", e);
-        sentry::capture_message(&format!("Verifiable beacon creation failed: {e}"), sentry::Level::Error);
+        sentry::capture_message(
+            &format!("Verifiable beacon creation failed: {e}"),
+            sentry::Level::Error,
+        );
         Status::InternalServerError
     })?;
 
@@ -2312,42 +2571,43 @@ pub async fn create_verifiable_beacon(
         }
     };
 
-    // The createBeacon function returns the beacon address directly
-    // We need to decode the return value from the transaction receipt
-    // For now, let's look for the BeaconCreated event properly
+    // Parse the BeaconCreated event from the transaction receipt
     let beacon_address = {
-        // Find the BeaconCreated event log
-        let beacon_created_event = receipt
-            .inner
-            .logs()
-            .iter()
-            .find(|log| {
-                // BeaconCreated event has signature: BeaconCreated(address,address)
-                // Event signature hash would be the first topic
-                log.topics().len() >= 1
-            })
-            .ok_or_else(|| {
-                tracing::error!("BeaconCreated event not found in transaction receipt");
-                Status::InternalServerError
-            })?;
-        
-        // For BeaconCreated(address beacon, address verifier):
-        // - First topic is event signature
-        // - beacon address is in the data (first 32 bytes)
-        // - verifier address is in the data (second 32 bytes)
-        if beacon_created_event.data().data.len() >= 64 {
-            // First address (beacon) is in bytes 12-32 of the first 32-byte word
-            let addr_bytes = &beacon_created_event.data().data[12..32];
-            Address::from_slice(addr_bytes)
-        } else {
-            tracing::error!("Invalid BeaconCreated event data");
-            return Err(Status::InternalServerError);
+        let mut beacon_addr = None;
+
+        // Look for the BeaconCreated event in the logs
+        for log in receipt.inner.logs().iter() {
+            // Check if this log is from our factory contract
+            if log.address() == factory_address {
+                // Try to decode as BeaconCreated event
+                match log.log_decode::<IDichotomousBeaconFactory::BeaconCreated>() {
+                    Ok(decoded_log) => {
+                        beacon_addr = Some(decoded_log.inner.data.beacon);
+                        tracing::info!(
+                            "Successfully parsed BeaconCreated event - beacon: {}, verifier: {}",
+                            decoded_log.inner.data.beacon,
+                            decoded_log.inner.data.verifier
+                        );
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::debug!("Could not decode log as BeaconCreated: {}", e);
+                    }
+                }
+            }
         }
+
+        beacon_addr.ok_or_else(|| {
+            tracing::error!("BeaconCreated event not found in transaction receipt");
+            tracing::error!("Total logs in receipt: {}", receipt.inner.logs().len());
+            sentry::capture_message("BeaconCreated event not found", sentry::Level::Error);
+            Status::InternalServerError
+        })?
     };
 
     let message = "Verifiable beacon created successfully";
     tracing::info!("{} - Beacon: {}", message, beacon_address);
-    
+
     sentry::capture_message(
         &format!("Verifiable beacon created: {beacon_address}"),
         sentry::Level::Info,
@@ -2368,7 +2628,7 @@ pub async fn update_verifiable_beacon(
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<String>>, Status> {
     tracing::info!("Received request: POST /update_verifiable_beacon");
-    
+
     let _guard = sentry::Hub::current().push_scope();
     sentry::configure_scope(|scope| {
         scope.set_tag("endpoint", "/update_verifiable_beacon");
@@ -2426,7 +2686,7 @@ pub async fn update_verifiable_beacon(
             Err(e) => {
                 let error_msg = format!("Failed to send updateData transaction: {e}");
                 tracing::error!("{}", error_msg);
-                
+
                 // Check for specific errors
                 if error_msg.contains("ProofAlreadyUsed") {
                     tracing::warn!("Proof has already been used");
@@ -2451,7 +2711,7 @@ pub async fn update_verifiable_beacon(
         Ok(tx) => tx,
         Err(e) => {
             tracing::error!("Transaction execution failed: {}", e);
-            
+
             // Return appropriate error based on the failure type
             if e.contains("ProofAlreadyUsed") {
                 return Ok(Json(ApiResponse {
@@ -2466,8 +2726,11 @@ pub async fn update_verifiable_beacon(
                     message: "Invalid proof provided".to_string(),
                 }));
             }
-            
-            sentry::capture_message(&format!("Verifiable beacon update failed: {e}"), sentry::Level::Error);
+
+            sentry::capture_message(
+                &format!("Verifiable beacon update failed: {e}"),
+                sentry::Level::Error,
+            );
             return Err(Status::InternalServerError);
         }
     };
@@ -2495,16 +2758,16 @@ pub async fn update_verifiable_beacon(
 
     let tx_hash = receipt.transaction_hash;
     let message = "Verifiable beacon updated successfully";
-    
+
     tracing::info!("{} - TX: {:?}", message, tx_hash);
     sentry::capture_message(
-        &format!("Verifiable beacon {} updated: {:?}", beacon_address, tx_hash),
+        &format!("Verifiable beacon {beacon_address} updated: {tx_hash:?}"),
         sentry::Level::Info,
     );
 
     Ok(Json(ApiResponse {
         success: true,
-        data: Some(format!("Transaction hash: {:?}", tx_hash)),
+        data: Some(format!("Transaction hash: {tx_hash:?}")),
         message: message.to_string(),
     }))
 }
