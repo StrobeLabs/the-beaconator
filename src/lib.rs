@@ -14,6 +14,7 @@ pub mod fairings;
 pub mod guards;
 pub mod models;
 pub mod routes;
+pub mod services;
 
 use crate::models::{AppState, PerpConfig};
 use rocket::{Request, catch, catchers};
@@ -356,20 +357,21 @@ pub async fn create_rocket() -> Rocket<Build> {
         .mount(
             "/",
             rocket::routes![
-                routes::index,
-                routes::all_beacons,
-                routes::create_beacon,
-                routes::register_beacon,
-                routes::create_perpcity_beacon,
-                routes::batch_create_perpcity_beacon,
-                routes::deploy_perp_for_beacon_endpoint,
-                routes::deposit_liquidity_for_perp_endpoint,
-                routes::batch_deposit_liquidity_for_perps,
-                routes::update_beacon,
-                routes::batch_update_beacon,
-                routes::fund_guest_wallet,
-                routes::create_verifiable_beacon,
-                routes::update_verifiable_beacon
+                routes::info::index,
+                routes::info::all_beacons,
+                routes::beacon::create_beacon,
+                routes::beacon::register_beacon,
+                routes::beacon::create_perpcity_beacon,
+                routes::beacon::batch_create_perpcity_beacon,
+                routes::perp::deploy_perp_for_beacon_endpoint,
+                routes::perp::deposit_liquidity_for_perp_endpoint,
+                routes::perp::batch_deposit_liquidity_for_perps,
+                routes::beacon::update_beacon,
+                routes::beacon::batch_update_beacon,
+                routes::wallet::fund_guest_wallet,
+                // TODO: Implement verifiable beacon routes
+                // routes::create_verifiable_beacon,
+                // routes::update_verifiable_beacon
             ],
         )
         .register("/", catchers![catch_all_errors, catch_panic])

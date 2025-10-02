@@ -17,35 +17,46 @@ build: ## Build the application in debug mode
 build-release: ## Build the application in release mode
 	cargo build --release
 
-test: ## Run all tests (CI-style: unit parallel, integration single-threaded)
-	@echo "Running tests CI-style..."
-	@./scripts/anvil-cleanup.sh
-	@echo "Running unit tests (parallel)..."
-	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test models::models_test -- --nocapture
-	@./scripts/anvil-cleanup.sh
-	@echo "Running integration tests (single-threaded)..."
-	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test routes -- --nocapture --test-threads=1
-	@echo "All tests completed successfully ✅"
+test: ## Run all tests (CI-style: optimized parallel execution)
+	@echo "Running tests with optimized parallelism..."
+	@OPTIMAL_THREADS=$$(./scripts/detect-cores.sh); \
+	echo "Detected optimal threads: $$OPTIMAL_THREADS (cores/2)"; \
+	./scripts/anvil-cleanup.sh; \
+	echo "Running unit tests (parallel, $$OPTIMAL_THREADS threads)..."; \
+	PATH="$$HOME/.foundry/bin:$$PATH" cargo test unit_tests -- --nocapture --test-threads=$$OPTIMAL_THREADS; \
+	./scripts/anvil-cleanup.sh; \
+	echo "Running integration tests ($$OPTIMAL_THREADS threads)..."; \
+	PATH="$$HOME/.foundry/bin:$$PATH" cargo test integration_tests -- --nocapture --test-threads=$$OPTIMAL_THREADS; \
+	./scripts/anvil-cleanup.sh; \
+	echo "All tests completed successfully ✅"
 
 test-verbose: ## Run tests with verbose output (legacy single-threaded)
 	PATH="$$HOME/.foundry/bin:$$PATH" cargo test -- --nocapture --test-threads=1
 
 test-unit: ## Run only unit tests (fast, parallel)
-	@echo "Running unit tests in parallel..."
-	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test models::models_test -- --nocapture
+	@echo "Running unit tests with optimal parallelism..."
+	@OPTIMAL_THREADS=$$(./scripts/detect-cores.sh); \
+	echo "Using $$OPTIMAL_THREADS threads (cores/2)"; \
+	PATH="$$HOME/.foundry/bin:$$PATH" cargo test unit_tests -- --nocapture --test-threads=$$OPTIMAL_THREADS
 
-test-integration: ## Run only integration tests (single-threaded)
+test-integration: ## Run only integration tests (optimized parallel)
 	@./scripts/anvil-cleanup.sh
-	@echo "Running integration tests with single thread..."
-	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test routes -- --nocapture --test-threads=1
-
-test-parallel: ## Run all tests in parallel (may have race conditions)
+	@echo "Running integration tests with optimal parallelism..."
+	@OPTIMAL_THREADS=$$(./scripts/detect-cores.sh); \
+	echo "Using $$OPTIMAL_THREADS threads (cores/2) with isolated Anvil instances"; \
+	PATH="$$HOME/.foundry/bin:$$PATH" cargo test integration_tests -- --nocapture --test-threads=$$OPTIMAL_THREADS
 	@./scripts/anvil-cleanup.sh
-	PATH="$$HOME/.foundry/bin:$$PATH" cargo test -- --nocapture
 
-test-fast: ## Run tests quickly (unit tests only, no integration tests)
-	@echo "Running fast unit tests..."
-	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test --lib -- --nocapture
+test-parallel: ## Run all tests in parallel (maximum parallelism)
+	@./scripts/anvil-cleanup.sh
+	@OPTIMAL_THREADS=$$(./scripts/detect-cores.sh); \
+	echo "Running all tests with $$OPTIMAL_THREADS threads"; \
+	PATH="$$HOME/.foundry/bin:$$PATH" cargo test -- --nocapture --test-threads=$$OPTIMAL_THREADS
+
+test-fast: ## Run tests quickly (unit tests + fast integration tests, under 10s)
+	@echo "Running fast tests (unit + fast integration, excludes wallet/nonce tests)..."
+	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test unit_tests -- --nocapture
+	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test integration_tests::models_test -- --nocapture
 	@echo "Fast tests completed ✅"
 
 test-full: ## Run full test suite including integration tests

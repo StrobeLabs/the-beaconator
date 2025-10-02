@@ -103,20 +103,32 @@ src/
 │   ├── wallet.rs              # Wallet operations (277 lines) ✓
 │   ├── beacon.rs              # Beacon route handlers (~450 lines)
 │   └── perp.rs                # Perp route handlers (~350 lines)
-└── test_fixtures/             # Test utilities and fixtures ✓
-    └── tests/                 # Reorganized test files
-        ├── beacon/
-        │   ├── core_tests.rs
-        │   ├── verifiable_tests.rs
-        │   └── batch_tests.rs
-        ├── perp/
-        │   └── operations_tests.rs
-        ├── transaction/
-        │   └── events_tests.rs  # Comprehensive event parsing tests
-        └── integration/
-            ├── nonce_sync_tests.rs
-            └── wallet_tests.rs
+└── test_fixtures/             # Test utilities and fixtures ✓ (JSON ABIs, mocks remain here)
 ```
+
+### Final Test Structure
+
+After execution, the test organization was simplified to a flat structure under the standard `tests/` directory at the crate root, with clear separation between unit and integration tests:
+
+```
+tests/
+├── unit_tests/                # Module-specific unit tests (isolated logic)
+│   ├── beacon_core_tests.rs   # Core beacon operations (create, register, validation)
+│   ├── beacon_verifiable_tests.rs # Verifiable beacon operations (ZK proof handling)
+│   ├── beacon_batch_tests.rs  # Batch and multicall beacon operations
+│   ├── perp_operations_tests.rs # Perp deployment, liquidity, batch operations
+│   └── transaction_events_tests.rs # Event parsing utilities (all parse_* functions)
+└── integration_tests/         # End-to-end cross-module flows
+    ├── nonce_sync_tests.rs    # Nonce management and RPC fallback integration
+    ├── event_verification_integration.rs # Full create → update → event parse flows
+    └── full_flow_integration.rs # Complete perp/beacon E2E (deploy → deposit → verify)
+```
+
+**test_fixtures/** remains unchanged at the crate root for shared resources:
+- JSON ABI files (Beacon.json, PerpHook.json, etc.)
+- Mock contracts and Anvil utilities (TestUtils, AnvilManager)
+
+This flat structure avoids deep nesting while maintaining separation: unit_tests/ for isolated module testing, integration_tests/ for cross-service flows (e.g., event verification across beacon/perp).
 
 ### Design Principles
 
@@ -137,10 +149,12 @@ src/
 - Clear, unidirectional data flow
 
 #### 4. Test Organization
-- Tests colocated with the code they test
-- Integration tests separated from unit tests
-- Shared test utilities in test_fixtures
-- Comprehensive event parsing tests centralized
+- Tests colocated in standard `tests/` directory at crate root
+- **unit_tests/**: Isolated module tests (e.g., individual service functions, event parsing)
+- **integration_tests/**: Cross-module E2E flows (e.g., nonce sync, full event verification)
+- Shared mocks/utilities in `test_fixtures/` (JSON ABIs, AnvilManager)
+- No tests in routes files—pure HTTP handlers
+- Run with `cargo test unit_tests/` or `cargo test integration_tests/` for targeted execution
 
 ## Module Breakdown
 
@@ -294,39 +308,96 @@ The modularization must account for:
 - Event type definitions used across services (imported from routes/mod.rs)
 - ABI loading and contract instantiation patterns (centralized in app_state.rs)
 
-## Implementation Strategy
+## Parallelizable Implementation Tasks
 
-### Phase 1: Extract Models and Events (~3-4 days)
-1. Create `src/models/` directory structure and split models.rs
-2. Create `src/services/transaction/events.rs` and move all parse_* functions
-3. Update imports and ensure event verification still works
-4. Add comprehensive tests in events_tests.rs
-5. Run full test suite
+To enable parallel development across multiple agents, the implementation is broken into independent tasks with clear dependencies. Agents can work simultaneously on non-dependent tasks. Total estimated effort: ~3-4 weeks with 3-4 agents.
 
-### Phase 2: Beacon Modularization (~5-7 days)
-1. Create `src/services/beacon/` structure
-2. Extract core operations to core.rs (including registry)
-3. Extract verifiable operations to verifiable.rs
-4. Extract batch/multicall to batch.rs
-5. Refactor routes/beacon.rs to thin handlers
-6. Update tests accordingly
+### Task Coordination Guidelines
+- **Dependency Management**: Use git branches for each task (e.g., `task/models-split`). Merge foundational tasks first, then integrate domain-specific ones.
+- **Parallel Groups**: Tasks in the same group have no inter-dependencies and can be worked on concurrently.
+- **Integration Points**: After completing a group, run `make quality` and full tests. Use PRs for review before merging.
+- **Communication**: Coordinate via shared issues/PRs for cross-task concerns (e.g., import patterns).
+- **Priorities**: Foundational tasks (events, models) first for quick wins and to unblock domain tasks.
 
-### Phase 3: Perp Modularization (~4-5 days)
-1. Create `src/services/perp/` with operations.rs
-2. Extract deployment, liquidity, and batch logic
-3. Refactor routes/perp.rs to thin handlers
-4. Update tests to new structure
+### Foundational Tasks (Parallel Group 1: ~4-6 days total, 2 agents)
+These must be completed first as they provide shared infrastructure.
 
-### Phase 4: Transaction Services (~2-3 days)
-1. Create execution.rs and multicall.rs
-2. Ensure services use these utilities
-3. Final test reorganization
+1. **Task: Extract and Centralize Event Parsing** (Effort: 1-2 days, Agent: Events Specialist)
+   - Create `src/services/transaction/events.rs` (~450 lines) and move all `parse_*` functions (including new `parse_data_updated_event`)
+   - Add comprehensive tests to `tests/unit_tests/transaction_events_tests.rs`
+   - Update existing code to import from new module
+   - **Dependencies**: None
+   - **Output**: Centralized event verification ready for services
+   - **Risk**: Low—mostly extraction
 
-### Phase 5: Integration and Cleanup (~2 days)
-1. Full integration testing
-2. Performance verification
-3. Documentation updates
-4. Final quality checks
+2. **Task: Split Models Module** (Effort: 1-2 days, Agent: Data/Model Specialist)
+   - Create `src/models/` directory: `requests.rs` (~250 lines), `responses.rs` (~200 lines), `app_state.rs` (~195 lines including endpoints)
+   - Update all imports across codebase to use new structure
+   - Add module tests for serialization/validation
+   - **Dependencies**: None (independent of events)
+   - **Output**: Organized data models, reducing models.rs bloat
+   - **Risk**: Medium—import updates may need careful testing
+
+### Domain Modularization Tasks (Parallel Group 2: ~10-14 days total, 2-3 agents)
+These can start after Group 1, but beacon and perp tasks can run in parallel.
+
+3. **Task: Modularize Beacon Services** (Effort: 4-5 days, Agent: Beacon Specialist)
+   - Create `src/services/beacon/`: `core.rs` (~600 lines: core ops + registry), `verifiable.rs` (~450 lines), `batch.rs` (~800 lines: batch + multicall)
+   - Refactor `routes/beacon.rs` to thin handlers (~450 lines) delegating to services
+   - Integrate event parsing calls from `events.rs` (e.g., in update_beacon flow)
+   - Move/update tests: `unit_tests/beacon_core_tests.rs`, `unit_tests/beacon_verifiable_tests.rs`, `unit_tests/beacon_batch_tests.rs`
+   - **Dependencies**: Events extraction (Task 1), Models split (Task 2)
+   - **Output**: Beacon.rs reduced from 2931 to ~450 lines
+   - **Risk**: High—complex business logic, thorough testing needed
+
+4. **Task: Modularize Perp Services** (Effort: 3-4 days, Agent: Perp Specialist)
+   - Create `src/services/perp/`: `operations.rs` (~900 lines: deployment + liquidity + batch)
+   - Refactor `routes/perp.rs` to thin handlers (~350 lines) delegating to services
+   - Update to use `events.rs` for PerpCreated/MakerPositionOpened parsing
+   - Move/update tests to `unit_tests/perp_operations_tests.rs`
+   - **Dependencies**: Events extraction (Task 1), Models split (Task 2)
+   - **Output**: Perp.rs reduced from 3351 to ~350 lines
+   - **Risk**: Medium—similar to beacon but less complex
+
+### Utility Services Tasks (Parallel Group 3: ~3-4 days total, 1 agent)
+These can overlap with Group 2 once events are done.
+
+5. **Task: Implement Transaction Execution Services** (Effort: 1-2 days, Agent: Transaction Specialist)
+   - Create `src/services/transaction/execution.rs` (~250 lines: execute_transaction_serialized, RPC fallback, nonce mgmt)
+   - Update beacon/perp services to use it
+   - Add unit tests for fallback/nonce logic in `unit_tests/transaction_events_tests.rs`
+   - **Dependencies**: Events extraction (Task 1)
+   - **Output**: Centralized transaction utils
+   - **Risk**: Low—extraction from existing code
+
+6. **Task: Implement Multicall Services** (Effort: 1-2 days, Agent: Transaction Specialist)
+   - Create `src/services/transaction/multicall.rs` (~350 lines: generic multicall3 utils)
+   - Refactor batch.rs in beacon/perp to use shared multicall
+   - Add tests for atomic batching in `unit_tests/beacon_batch_tests.rs` and `unit_tests/perp_operations_tests.rs`
+   - **Dependencies**: Events extraction (Task 1), Beacon/Perp modularization (Tasks 3-4)
+   - **Output**: Reusable multicall logic
+   - **Risk**: Medium—integration with batches
+
+### Integration and Cleanup Tasks (Sequential Group 4: ~2-3 days total, 1-2 agents)
+These finalize after all parallels.
+
+7. **Task: Test Reorganization and Integration** (Effort: 1-2 days, Agent: Testing Specialist)
+   - Organize tests into flat `tests/unit_tests/` (module-specific) and `tests/integration_tests/` (E2E flows)
+   - Move remaining tests to new structure (e.g., integrate event tests into unit_tests/transaction_events_tests.rs)
+   - Add end-to-end integration tests for event verification flows in integration_tests/
+   - Ensure 100% test pass rate with new imports
+   - **Dependencies**: All previous tasks
+   - **Output**: Fully tested modular codebase with flat test structure
+   - **Risk**: Low—mostly reorganization
+
+8. **Task: Final Integration, Documentation, and Quality** (Effort: 1 day, Agent: Lead)
+   - Run full `make quality`, fix any lint/import issues
+   - Update README/docs with new structure, including flat tests/ organization
+   - Performance verification (compilation time)
+   - Merge all branches
+   - **Dependencies**: All previous tasks
+   - **Output**: Production-ready modular codebase
+   - **Risk**: Low—final polish
 
 ## Success Metrics
 
@@ -346,9 +417,9 @@ The modularization must account for:
 
 ### Risk: Breaking Changes
 **Mitigation**:
-- Extensive testing at each phase, especially event parsing
-- Incremental migration approach
-- Maintain backward compatibility during transition
+- Extensive testing at each task completion, especially event parsing
+- Incremental git branches per task
+- Maintain backward compatibility during integration
 
 ### Risk: Import Complexity
 **Mitigation**:
@@ -363,6 +434,13 @@ The modularization must account for:
 - Keep related functionality together (e.g., all perp ops in one file)
 - Prioritize event centralization for immediate benefits
 
+### Risk: Parallel Coordination
+**Mitigation**:
+- Clear dependency graph (tasks list above)
+- Regular sync points after each group
+- Use PRs for cross-review before merges
+- Assign agents to complementary tasks (e.g., one on events, one on models)
+
 ## Conclusion
 
-This updated modularization plan balances modularity with practicality by allowing files up to 1000 lines, reducing the number of small files while maintaining clear separation of concerns. The structure prioritizes centralizing event parsing (critical for recent verification additions) and focuses on the largest pain points first. The incremental approach ensures minimal disruption while delivering immediate benefits in code organization, maintainability, and testability.
+This updated modularization plan balances modularity with practicality by allowing files up to 1000 lines, reducing the number of small files while maintaining clear separation of concerns. The parallelizable task structure enables multiple agents to work efficiently: foundational tasks first (1-2 days parallel), then domain-specific modularization (beacon/perp in parallel, 3-5 days each), utilities overlapping, and final integration. It prioritizes centralizing event parsing (critical for recent verification additions) for quick wins. This approach minimizes total time to ~3 weeks with 3 agents while ensuring a robust, maintainable codebase.

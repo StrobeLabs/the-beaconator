@@ -1,8 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use crate::models::FundGuestWalletRequest;
-    use crate::routes::test_utils::{TestUtils, create_test_app_state};
-    use crate::routes::wallet::{IERC20, fund_guest_wallet};
+    use the_beaconator::models::FundGuestWalletRequest;
+    use the_beaconator::routes::IERC20;
+    use the_beaconator::routes::wallet::fund_guest_wallet;
+    // test_utils imports - currently unused but available for future tests
+    // use crate::test_utils::{TestUtils, create_test_app_state};
+    use crate::test_utils::{TestUtils, create_isolated_test_app_state};
     use alloy::primitives::Address;
     use rocket::serde::json::Json;
     use rocket::{State, http::Status};
@@ -12,7 +15,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_fund_guest_wallet_invalid_address() {
-        let app_state = create_test_app_state().await;
+        let (app_state, _anvil) = create_isolated_test_app_state().await;
         let state = State::from(&app_state);
 
         let request = Json(FundGuestWalletRequest {
@@ -24,7 +27,7 @@ mod tests {
         let result = fund_guest_wallet(
             state,
             request,
-            crate::guards::ApiToken("test_token".to_string()),
+            the_beaconator::guards::ApiToken("test_token".to_string()),
         )
         .await;
 
@@ -38,7 +41,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_fund_guest_wallet_insufficient_balance() {
-        let app_state = create_test_app_state().await;
+        let (app_state, _anvil) = create_isolated_test_app_state().await;
         let state = State::from(&app_state);
 
         // Use a valid address
@@ -55,7 +58,7 @@ mod tests {
         let result = fund_guest_wallet(
             state,
             request,
-            crate::guards::ApiToken("test_token".to_string()),
+            the_beaconator::guards::ApiToken("test_token".to_string()),
         )
         .await;
 
@@ -75,7 +78,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_fund_guest_wallet_exceeds_limits() {
-        let app_state = create_test_app_state().await;
+        let (app_state, _anvil) = create_isolated_test_app_state().await;
         let state = State::from(&app_state);
 
         let guest_address =
@@ -91,7 +94,7 @@ mod tests {
         let result = fund_guest_wallet(
             state,
             request,
-            crate::guards::ApiToken("test_token".to_string()),
+            the_beaconator::guards::ApiToken("test_token".to_string()),
         )
         .await;
 
@@ -111,7 +114,7 @@ mod tests {
         let result = fund_guest_wallet(
             state,
             request,
-            crate::guards::ApiToken("test_token".to_string()),
+            the_beaconator::guards::ApiToken("test_token".to_string()),
         )
         .await;
 
@@ -125,7 +128,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_fund_guest_wallet_invalid_amounts() {
-        let app_state = create_test_app_state().await;
+        let (app_state, _anvil) = create_isolated_test_app_state().await;
         let state = State::from(&app_state);
 
         let guest_address =
@@ -141,7 +144,7 @@ mod tests {
         let result = fund_guest_wallet(
             state,
             request,
-            crate::guards::ApiToken("test_token".to_string()),
+            the_beaconator::guards::ApiToken("test_token".to_string()),
         )
         .await;
 
@@ -158,7 +161,7 @@ mod tests {
         // This test would require a properly funded test environment
         // For unit tests, we're focusing on error handling and validation
 
-        let app_state = create_test_app_state().await;
+        let (app_state, _anvil) = create_isolated_test_app_state().await;
 
         // Verify test setup
         assert_ne!(app_state.wallet_address, Address::ZERO);
@@ -174,7 +177,7 @@ mod tests {
     #[serial]
     async fn test_ierc20_interface() {
         // Test that IERC20 interface is properly defined
-        let app_state = create_test_app_state().await;
+        let (app_state, _anvil) = create_isolated_test_app_state().await;
         let usdc_contract = IERC20::new(app_state.usdc_address, &*app_state.provider);
 
         // Verify the contract instance was created
@@ -184,7 +187,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_fund_guest_wallet_zero_amounts() {
-        let app_state = create_test_app_state().await;
+        let (app_state, _anvil) = create_isolated_test_app_state().await;
         let state = State::from(&app_state);
 
         let guest_address =
@@ -200,7 +203,7 @@ mod tests {
         let result = fund_guest_wallet(
             state,
             request,
-            crate::guards::ApiToken("test_token".to_string()),
+            the_beaconator::guards::ApiToken("test_token".to_string()),
         )
         .await;
 
@@ -214,7 +217,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_fund_guest_wallet_negative_amounts() {
-        let app_state = create_test_app_state().await;
+        let (app_state, _anvil) = create_isolated_test_app_state().await;
         let state = State::from(&app_state);
 
         let guest_address =
@@ -230,7 +233,7 @@ mod tests {
         let result = fund_guest_wallet(
             state,
             request,
-            crate::guards::ApiToken("test_token".to_string()),
+            the_beaconator::guards::ApiToken("test_token".to_string()),
         )
         .await;
 
@@ -244,7 +247,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_fund_guest_wallet_eth_limit_exceeded() {
-        let app_state = create_test_app_state().await;
+        let (app_state, _anvil) = create_isolated_test_app_state().await;
         let state = State::from(&app_state);
 
         let guest_address =
@@ -260,7 +263,7 @@ mod tests {
         let result = fund_guest_wallet(
             state,
             request,
-            crate::guards::ApiToken("test_token".to_string()),
+            the_beaconator::guards::ApiToken("test_token".to_string()),
         )
         .await;
 
@@ -274,7 +277,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_fund_guest_wallet_invalid_amount_format() {
-        let app_state = create_test_app_state().await;
+        let (app_state, _anvil) = create_isolated_test_app_state().await;
         let state = State::from(&app_state);
 
         let guest_address =
@@ -290,7 +293,7 @@ mod tests {
         let result = fund_guest_wallet(
             state,
             request,
-            crate::guards::ApiToken("test_token".to_string()),
+            the_beaconator::guards::ApiToken("test_token".to_string()),
         )
         .await;
 
@@ -310,7 +313,7 @@ mod tests {
         let result2 = fund_guest_wallet(
             state,
             request2,
-            crate::guards::ApiToken("test_token".to_string()),
+            the_beaconator::guards::ApiToken("test_token".to_string()),
         )
         .await;
 

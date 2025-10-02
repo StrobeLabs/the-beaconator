@@ -6,8 +6,7 @@ pub mod perp;
 pub mod wallet;
 
 #[cfg(test)]
-mod test_utils;
-
+// test_utils moved to tests/test_utils.rs
 // Re-export all route functions for easy access
 pub use beacon::*;
 pub use info::*;
@@ -58,6 +57,7 @@ sol! {
         function transfer(address to, uint256 amount) external returns (bool);
         function approve(address spender, uint256 amount) external returns (bool);
         function balanceOf(address account) external view returns (uint256 balance);
+        function allowance(address owner, address spender) external view returns (uint256);
     }
 
     #[sol(rpc)]
@@ -140,63 +140,7 @@ sol! {
     }
 }
 
-// Shared transaction serialization utilities
-use crate::models::AppState;
-use alloy::providers::Provider;
-use std::sync::{Arc, OnceLock};
-use tokio::sync::Mutex;
-
-// Global transaction mutex to serialize ALL blockchain transactions
-// This prevents nonce conflicts by ensuring only one transaction is submitted at a time
-static TRANSACTION_MUTEX: OnceLock<Arc<Mutex<()>>> = OnceLock::new();
-
-fn get_transaction_mutex() -> &'static Arc<Mutex<()>> {
-    TRANSACTION_MUTEX.get_or_init(|| Arc::new(Mutex::new(())))
-}
-
-// Helper function to get fresh nonce from alternate provider
-pub async fn get_fresh_nonce_from_alternate(state: &AppState) -> Result<u64, String> {
-    if let Some(alternate_provider) = &state.alternate_provider {
-        tracing::info!("Getting fresh nonce from alternate RPC...");
-        match alternate_provider
-            .get_transaction_count(state.wallet_address)
-            .await
-        {
-            Ok(nonce) => {
-                tracing::info!("Fresh nonce from alternate RPC: {}", nonce);
-                Ok(nonce)
-            }
-            Err(e) => {
-                let error_msg = format!("Failed to get nonce from alternate RPC: {e}");
-                tracing::error!("{}", error_msg);
-                Err(error_msg)
-            }
-        }
-    } else {
-        Err("No alternate provider available".to_string())
-    }
-}
-
-// Serialized transaction execution wrapper
-// All blockchain transactions should use this to prevent nonce conflicts
-// Alloy's wallet provider handles nonce management automatically
-pub async fn execute_transaction_serialized<F, T>(operation: F) -> T
-where
-    F: std::future::Future<Output = T>,
-{
-    let mutex = get_transaction_mutex();
-    let _lock = mutex.lock().await;
-    tracing::debug!("Acquired transaction lock - executing blockchain operation serially");
-    let result = operation.await;
-    tracing::debug!("Released transaction lock - blockchain operation completed");
-    result
-}
-
-// Helper function to detect nonce-related errors
-pub fn is_nonce_error(error_msg: &str) -> bool {
-    let error_lower = error_msg.to_lowercase();
-    error_lower.contains("nonce too low")
-        || error_lower.contains("nonce too high")
-        || error_lower.contains("invalid nonce")
-        || error_lower.contains("replacement transaction underpriced")
-}
+// Re-export transaction utilities from services module
+pub use crate::services::transaction::execution::{
+    execute_transaction_serialized, get_fresh_nonce_from_alternate, is_nonce_error,
+};

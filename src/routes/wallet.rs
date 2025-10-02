@@ -272,6 +272,4 @@ pub async fn fund_guest_wallet(
     }))
 }
 
-#[cfg(test)]
-#[path = "wallet_test.rs"]
-mod wallet_test;
+// Tests moved to tests/integration_tests/wallet_test.rs

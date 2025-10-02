@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::models::PerpConfig;
+    use the_beaconator::models::PerpConfig;
 
     #[test]
     fn test_perp_config_validation_passes_with_default() {
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_create_verifiable_beacon_request_serialization() {
-        use crate::models::CreateVerifiableBeaconRequest;
+        use the_beaconator::models::CreateVerifiableBeaconRequest;
 
         let request = CreateVerifiableBeaconRequest {
             verifier_address: "0x1234567890123456789012345678901234567890".to_string(),
@@ -235,7 +235,7 @@ mod tests {
 
     #[test]
     fn test_update_verifiable_beacon_request_serialization() {
-        use crate::models::UpdateVerifiableBeaconRequest;
+        use the_beaconator::models::UpdateVerifiableBeaconRequest;
 
         let request = UpdateVerifiableBeaconRequest {
             beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn test_create_verifiable_beacon_request_validation() {
-        use crate::models::CreateVerifiableBeaconRequest;
+        use the_beaconator::models::CreateVerifiableBeaconRequest;
 
         // Test valid request
         let valid_request = CreateVerifiableBeaconRequest {
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn test_update_verifiable_beacon_request_validation() {
-        use crate::models::UpdateVerifiableBeaconRequest;
+        use the_beaconator::models::UpdateVerifiableBeaconRequest;
 
         // Test with various hex string formats
         let test_cases = vec![
@@ -306,7 +306,9 @@ mod tests {
 
     #[test]
     fn test_verifiable_beacon_request_field_requirements() {
-        use crate::models::{CreateVerifiableBeaconRequest, UpdateVerifiableBeaconRequest};
+        use the_beaconator::models::{
+            CreateVerifiableBeaconRequest, UpdateVerifiableBeaconRequest,
+        };
 
         // Test CreateVerifiableBeaconRequest required fields
         let create_json = r#"{
@@ -346,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_verifiable_beacon_data_scaling() {
-        use crate::models::CreateVerifiableBeaconRequest;
+        use the_beaconator::models::CreateVerifiableBeaconRequest;
 
         // Test various initial_data values and their scaling
         let test_values = vec![
@@ -374,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_verifiable_beacon_cardinality_bounds() {
-        use crate::models::CreateVerifiableBeaconRequest;
+        use the_beaconator::models::CreateVerifiableBeaconRequest;
 
         // Test boundary values for initial_cardinality
         let boundary_values = vec![

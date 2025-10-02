@@ -81,8 +81,8 @@ jobs:
       - name: Build
         run: cargo build --all --release
       
-      - name: Run all tests (single-threaded)
-        run: cargo test -- --nocapture --test-threads=1
+      - name: Run all tests with optimal parallelism
+        run: make test
 
   docker:
     runs-on: ubuntu-latest

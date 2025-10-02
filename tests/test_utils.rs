@@ -16,7 +16,7 @@ This module provides comprehensive testing utilities for the Beaconator API, inc
 ### Basic Test Setup
 
 ```rust
-use crate::routes::test_utils::{create_test_app_state, TestUtils};
+use the_beaconator::routes::test_utils::{create_test_app_state, TestUtils};
 
 #[tokio::test]
 async fn test_example() {
@@ -37,7 +37,7 @@ async fn test_example() {
 ### Multi-Account Testing
 
 ```rust
-use crate::routes::test_utils::create_test_app_state_with_account;
+use the_beaconator::routes::test_utils::create_test_app_state_with_account;
 
 #[tokio::test]
 async fn test_with_different_account() {
@@ -52,7 +52,7 @@ async fn test_with_different_account() {
 ### Blockchain Utilities
 
 ```rust
-use crate::routes::test_utils::TestUtils;
+use the_beaconator::routes::test_utils::TestUtils;
 
 #[tokio::test]
 async fn test_blockchain_operations() {
@@ -74,7 +74,7 @@ async fn test_blockchain_operations() {
 ### Contract Deployment Mocking
 
 ```rust
-use crate::routes::test_utils::mock_contract_deployment;
+use the_beaconator::routes::test_utils::mock_contract_deployment;
 
 #[tokio::test]
 async fn test_contract_deployment() {
@@ -87,7 +87,7 @@ async fn test_contract_deployment() {
 ### Test Cleanup
 
 ```rust
-use crate::routes::test_utils::TestCleanup;
+use the_beaconator::routes::test_utils::TestCleanup;
 
 #[tokio::test]
 async fn test_with_cleanup() {
@@ -106,7 +106,7 @@ The test utilities provide a realistic testing environment:
 2. **Test Accounts**: 10 pre-funded accounts with 1000 ETH each
 3. **Chain ID**: 31337 (standard Hardhat/Anvil chain ID)
 4. **Block Time**: 1 second for fast test execution
-5. **Contract ABIs**: Loaded from `src/test_fixtures/` directory
+5. **Contract ABIs**: Loaded from `tests/test_fixtures/` directory
 
 ## Important Notes
 
@@ -125,7 +125,6 @@ Requires the following dev dependencies:
 - `alloy` with `node-bindings` feature - For Anvil integration
 */
 
-use crate::models::{AppState, PerpConfig};
 use alloy::{
     json_abi::JsonAbi,
     network::EthereumWallet,
@@ -136,14 +135,21 @@ use alloy::{
 };
 use std::str::FromStr;
 use std::sync::Arc;
+use the_beaconator::models::{AppState, PerpConfig};
 use tokio::sync::OnceCell;
 
 /// Anvil configuration and utilities
 pub struct AnvilConfig {
-    pub instance: AnvilInstance,
+    pub _instance: AnvilInstance,
     pub rpc_url: String,
     pub chain_id: u64,
     pub accounts: Vec<Address>,
+}
+
+impl Default for AnvilConfig {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AnvilConfig {
@@ -165,7 +171,7 @@ impl AnvilConfig {
         tracing::info!("  - First account: {}", accounts[0]);
 
         Self {
-            instance: anvil,
+            _instance: anvil,
             rpc_url,
             chain_id,
             accounts,
@@ -178,26 +184,53 @@ impl AnvilConfig {
     }
 
     /// Get the first key as a PrivateKeySigner
+    /// Note: Returns a deterministic test signer for development
     pub fn deployer_signer(&self) -> PrivateKeySigner {
-        // Get the key directly from anvil and create a signer
-        PrivateKeySigner::from_slice(self.instance.keys()[0].to_bytes().as_slice())
-            .expect("Failed to create signer from key")
-            .with_chain_id(Some(self.chain_id))
+        self.get_signer(0)
     }
 
-    /// Get a specific key as a PrivateKeySigner
+    /// Get a signer for the specified account index
     pub fn get_signer(&self, index: usize) -> PrivateKeySigner {
-        PrivateKeySigner::from_slice(self.instance.keys()[index].to_bytes().as_slice())
-            .expect("Failed to create signer from key")
+        // Anvil uses deterministic test private keys
+        let test_keys = [
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80", // Account 0
+            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d", // Account 1
+            "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a", // Account 2
+            "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6", // Account 3
+            "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a", // Account 4
+        ];
+
+        let key = test_keys
+            .get(index)
+            .unwrap_or(&test_keys[0]); // Default to first account if index out of bounds
+
+        PrivateKeySigner::from_str(key)
+            .expect("Failed to create signer from test key")
             .with_chain_id(Some(self.chain_id))
     }
 }
 
-/// Global Anvil instance manager
-pub struct AnvilManager;
+impl Drop for AnvilConfig {
+    fn drop(&mut self) {
+        tracing::info!("Terminating Anvil instance (RPC: {})", self.rpc_url);
+        // AnvilInstance automatically terminates when dropped
+    }
+}
+
+/// Isolated Anvil instance manager - creates fresh instances per test
+pub struct AnvilManager {
+    config: AnvilConfig,
+}
 
 impl AnvilManager {
-    /// Get or create the shared Anvil instance
+    /// Create a new isolated Anvil instance for this test
+    pub async fn new() -> Self {
+        let config = AnvilConfig::new();
+        Self { config }
+    }
+
+    /// Get or create a shared Anvil instance (deprecated - use new() for isolation)
+    #[deprecated(note = "Use AnvilManager::new() for better test isolation")]
     pub async fn get_or_create() -> Arc<AnvilConfig> {
         static ANVIL_CONFIG: OnceCell<Arc<AnvilConfig>> = OnceCell::const_new();
 
@@ -209,11 +242,43 @@ impl AnvilManager {
             .await
             .clone()
     }
+
+    /// Get the RPC URL for this Anvil instance
+    pub fn rpc_url(&self) -> &str {
+        &self.config.rpc_url
+    }
+
+    /// Get the chain ID for this Anvil instance
+    pub fn chain_id(&self) -> u64 {
+        self.config.chain_id
+    }
+
+    /// Get the deployer account address
+    pub fn deployer_account(&self) -> Address {
+        self.config.deployer_account()
+    }
+
+    /// Get a signer for the specified account index
+    pub fn get_signer(&self, index: usize) -> PrivateKeySigner {
+        self.config.get_signer(index)
+    }
+
+    /// Get the deployer signer (first account)
+    pub fn deployer_signer(&self) -> PrivateKeySigner {
+        self.config.deployer_signer()
+    }
+}
+
+impl Drop for AnvilManager {
+    fn drop(&mut self) {
+        tracing::info!("Dropping AnvilManager - Anvil instance will be terminated");
+        // AnvilConfig drop will handle the cleanup
+    }
 }
 
 /// Load ABI from test fixtures
 pub fn load_test_abi(name: &str) -> JsonAbi {
-    let fixture_path = format!("src/test_fixtures/{name}.json");
+    let fixture_path = format!("tests/test_fixtures/{name}.json");
     let abi_content = std::fs::read_to_string(&fixture_path)
         .unwrap_or_else(|_| panic!("Failed to read test ABI file: {fixture_path}"));
     serde_json::from_str(&abi_content)
@@ -225,11 +290,40 @@ pub struct TestDeployment {
     pub beacon_factory: Address,
     pub beacon_registry: Address,
     pub perp_hook: Address,
+    pub usdc: Address,
     pub deployer: Address,
-    pub provider: Arc<crate::AlloyProvider>,
+    pub provider: Arc<the_beaconator::AlloyProvider>,
 }
 
 impl TestDeployment {
+    /// Deploy test contracts to isolated Anvil instance
+    pub async fn deploy_isolated(anvil: &AnvilManager) -> Result<Self, Box<dyn std::error::Error>> {
+        // Create provider with deployer account
+        let signer = anvil.deployer_signer();
+        let wallet = EthereumWallet::from(signer);
+        let provider = Arc::new(
+            ProviderBuilder::new()
+                .wallet(wallet)
+                .connect_http(anvil.rpc_url().parse()?),
+        );
+
+        // For testing, we'll use mock addresses for now
+        // In a real integration test, you would deploy actual contracts here
+        let beacon_factory = Address::from_str("0x5FbDB2315678afecb367f032d93F642f64180aa3")?;
+        let beacon_registry = Address::from_str("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512")?;
+        let perp_hook = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
+        let usdc = Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9")?;
+
+        Ok(Self {
+            beacon_factory,
+            beacon_registry,
+            perp_hook,
+            usdc,
+            provider,
+            deployer: anvil.deployer_account(),
+        })
+    }
+
     /// Deploy test contracts to Anvil
     pub async fn deploy(anvil: &AnvilConfig) -> Result<Self, Box<dyn std::error::Error>> {
         // Create provider with deployer account
@@ -246,16 +340,19 @@ impl TestDeployment {
         let beacon_factory = Address::from_str("0x5FbDB2315678afecb367f032d93F642f64180aa3")?;
         let beacon_registry = Address::from_str("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512")?;
         let perp_hook = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
+        let usdc = Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9")?;
 
         tracing::info!("Test contracts deployed:");
         tracing::info!("  - BeaconFactory: {}", beacon_factory);
         tracing::info!("  - BeaconRegistry: {}", beacon_registry);
         tracing::info!("  - PerpHook: {}", perp_hook);
+        tracing::info!("  - USDC: {}", usdc);
 
         Ok(Self {
             beacon_factory,
             beacon_registry,
             perp_hook,
+            usdc,
             deployer: anvil.deployer_account(),
             provider,
         })
@@ -263,8 +360,11 @@ impl TestDeployment {
 }
 
 /// Create a comprehensive test AppState with real blockchain connection
+/// DEPRECATED: Use create_isolated_test_app_state() for better test isolation
+#[deprecated(note = "Use create_isolated_test_app_state() for better test isolation")]
 pub async fn create_test_app_state() -> AppState {
-    // Get or create Anvil instance
+    // Get or create Anvil instance (deprecated - use isolated instances)
+    #[allow(deprecated)]
     let anvil = AnvilManager::get_or_create().await;
 
     // Deploy test contracts
@@ -305,7 +405,54 @@ pub async fn create_test_app_state() -> AppState {
 }
 
 /// Create a test AppState with a specific account
+/// Create isolated test app state with proper cleanup (recommended for new tests)
+pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
+    // Create isolated Anvil instance
+    let anvil = AnvilManager::new().await;
+
+    // Deploy test contracts
+    let deployment = TestDeployment::deploy_isolated(&anvil)
+        .await
+        .expect("Failed to deploy test contracts");
+
+    // Load real ABIs from test fixtures
+    let beacon_abi = load_test_abi("Beacon");
+    let beacon_factory_abi = load_test_abi("BeaconFactory");
+    let beacon_registry_abi = load_test_abi("BeaconRegistry");
+    let perp_hook_abi = load_test_abi("PerpHook");
+
+    let app_state = AppState {
+        provider: deployment.provider,
+        alternate_provider: None,
+        wallet_address: deployment.deployer,
+        beacon_abi,
+        beacon_factory_abi,
+        beacon_registry_abi,
+        perp_hook_abi,
+        multicall3_abi: load_test_abi("Multicall3"),
+        dichotomous_beacon_factory_abi: JsonAbi::new(), // Mock ABI for tests
+        step_beacon_abi: JsonAbi::new(),                // Mock ABI for tests
+        beacon_factory_address: deployment.beacon_factory,
+        perpcity_registry_address: deployment.beacon_registry,
+        perp_hook_address: deployment.perp_hook,
+        usdc_address: deployment.usdc,
+        dichotomous_beacon_factory_address: None, // Not configured by default in tests
+        usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
+        eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
+        access_token: "test_token".to_string(),
+        perp_config: PerpConfig::default(),
+        multicall3_address: Some(
+            Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
+        ), // Standard multicall3 address for tests
+    };
+
+    (app_state, anvil)
+}
+
+/// DEPRECATED: Use create_isolated_test_app_state() for better test isolation
+#[deprecated(note = "Use create_isolated_test_app_state() for better test isolation")]
 pub async fn create_test_app_state_with_account(account_index: usize) -> AppState {
+    #[allow(deprecated)]
     let anvil = AnvilManager::get_or_create().await;
 
     let signer = anvil.get_signer(account_index);
@@ -352,7 +499,7 @@ pub struct TestUtils;
 impl TestUtils {
     /// Get the current block number
     pub async fn get_block_number(
-        provider: &crate::AlloyProvider,
+        provider: &the_beaconator::AlloyProvider,
     ) -> Result<u64, Box<dyn std::error::Error>> {
         let block_number = provider.get_block_number().await?;
         Ok(block_number)
@@ -360,7 +507,7 @@ impl TestUtils {
 
     /// Get account balance
     pub async fn get_balance(
-        provider: &crate::AlloyProvider,
+        provider: &the_beaconator::AlloyProvider,
         address: Address,
     ) -> Result<U256, Box<dyn std::error::Error>> {
         let balance = provider.get_balance(address).await?;
@@ -441,6 +588,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_manager() {
+        #[allow(deprecated)]
         let anvil = AnvilManager::get_or_create().await;
         assert_eq!(anvil.chain_id, 31337);
         assert!(!anvil.accounts.is_empty());
@@ -461,6 +609,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_state_creation() {
+        #[allow(deprecated)]
         let app_state = create_test_app_state().await;
         assert_ne!(app_state.wallet_address, Address::ZERO);
         assert_ne!(app_state.beacon_factory_address, Address::ZERO);
@@ -469,6 +618,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_test_deployment() {
+        #[allow(deprecated)]
         let anvil = AnvilManager::get_or_create().await;
         let deployment = TestDeployment::deploy(&anvil).await;
         assert!(deployment.is_ok());
@@ -481,6 +631,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_blockchain_utilities() {
+        #[allow(deprecated)]
         let app_state = create_test_app_state().await;
 
         // Test block number
