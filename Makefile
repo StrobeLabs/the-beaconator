@@ -43,6 +43,14 @@ test-parallel: ## Run all tests in parallel (may have race conditions)
 	@./scripts/anvil-cleanup.sh
 	PATH="$$HOME/.foundry/bin:$$PATH" cargo test -- --nocapture
 
+test-fast: ## Run tests quickly (unit tests only, no integration tests)
+	@echo "Running fast unit tests..."
+	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test --lib -- --nocapture
+	@echo "Fast tests completed ✅"
+
+test-full: ## Run full test suite including integration tests
+	$(MAKE) test
+
 test-verify: ## Verify test coverage and categorization
 	@echo "Verifying test coverage..."
 	@TOTAL_TESTS=$$(PATH="$$HOME/.foundry/bin:$$PATH" cargo test -- --list | grep -c ": test$$"); \
@@ -76,7 +84,7 @@ check: ## Run cargo check and anvil cleanup (faster than build)
 	./scripts/anvil-cleanup.sh
 
 # Comprehensive quality check
-quality: fmt-check lint test ## Run all quality checks (format, lint, test)
+quality: fmt-check lint test-fast ## Run all quality checks (format, lint, fast tests)
 
 # Cleanup targets
 clean: ## Clean build artifacts

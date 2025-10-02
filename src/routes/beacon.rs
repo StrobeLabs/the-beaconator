@@ -859,7 +859,8 @@ pub async fn update_beacon(
     sentry::configure_scope(|scope| {
         scope.set_tag("endpoint", "/update_beacon");
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
-        scope.set_extra("value", request.value.into());
+        scope.set_extra("proof_length", request.proof.len().into());
+        scope.set_extra("signals_length", request.public_signals.len().into());
     });
 
     // Parse the beacon address
@@ -871,18 +872,35 @@ pub async fn update_beacon(
         }
     };
 
+    // Parse proof and public signals from hex strings
+    let proof_bytes = match hex::decode(request.proof.trim_start_matches("0x")) {
+        Ok(bytes) => Bytes::from(bytes),
+        Err(e) => {
+            tracing::error!("Invalid proof hex: {}", e);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    let public_signals_bytes = match hex::decode(request.public_signals.trim_start_matches("0x")) {
+        Ok(bytes) => Bytes::from(bytes),
+        Err(e) => {
+            tracing::error!("Invalid public signals hex: {}", e);
+            return Err(Status::BadRequest);
+        }
+    };
+
     // Create contract instance using the sol! generated interface
     let contract = IBeacon::new(beacon_address, &*state.provider);
 
-    // Prepare the proof and public signals
-    let proof_bytes = Bytes::from(request.proof.clone());
-    let public_signals_bytes = Bytes::from(vec![0u8; 32]); // Placeholder for now
-
-    tracing::debug!("Sending updateData transaction...");
+    tracing::debug!(
+        "Sending updateData transaction with proof ({} bytes) and signals ({} bytes)...",
+        proof_bytes.len(),
+        public_signals_bytes.len()
+    );
 
     // Send the transaction and wait for receipt
     let receipt = match contract
-        .updateData(proof_bytes, public_signals_bytes)
+        .updateData(proof_bytes.clone(), public_signals_bytes.clone())
         .send()
         .await
     {
@@ -1050,9 +1068,29 @@ async fn batch_update_with_multicall3(
             }
         };
 
-        // Prepare proof and public signals
-        let proof_bytes = Bytes::from(update_data.proof.clone());
-        let public_signals_bytes = Bytes::from(vec![0u8; 32]); // Placeholder for now
+        // Parse proof and public signals from hex strings
+        let proof_bytes = match hex::decode(update_data.proof.trim_start_matches("0x")) {
+            Ok(bytes) => Bytes::from(bytes),
+            Err(e) => {
+                invalid_addresses.push((
+                    update_data.beacon_address.clone(),
+                    format!("Invalid proof hex: {e}"),
+                ));
+                continue;
+            }
+        };
+
+        let public_signals_bytes =
+            match hex::decode(update_data.public_signals.trim_start_matches("0x")) {
+                Ok(bytes) => Bytes::from(bytes),
+                Err(e) => {
+                    invalid_addresses.push((
+                        update_data.beacon_address.clone(),
+                        format!("Invalid public signals hex: {e}"),
+                    ));
+                    continue;
+                }
+            };
 
         // Create the updateData call data using the IBeacon interface
         let beacon_contract = IBeacon::new(beacon_address, &*state.provider);
@@ -1363,8 +1401,9 @@ mod tests {
 
         let update_data = BeaconUpdateData {
             beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-            value: 100,
-            proof: vec![1, 2, 3, 4], // Mock proof
+            proof: "0x01020304".to_string(), // Mock proof as hex
+            public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+                .to_string(), // 100 encoded as hex
         };
 
         let request = Json(BatchUpdateBeaconRequest {
@@ -1400,8 +1439,9 @@ mod tests {
 
         let update_data = BeaconUpdateData {
             beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-            value: 100,
-            proof: vec![1, 2, 3, 4],
+            proof: "0x01020304".to_string(),
+            public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+                .to_string(),
         };
 
         let request = Json(BatchUpdateBeaconRequest {
@@ -1504,14 +1544,22 @@ mod tests {
 
         let update_data = BeaconUpdateData {
             beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-            value: 100,
-            proof: vec![1, 2, 3, 4],
+            proof: "0x01020304".to_string(),
+            public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+                .to_string(),
         };
 
         // Create mock multicall3 call and verify atomicity setting
         let beacon_address = Address::from_str(&update_data.beacon_address).unwrap();
-        let _proof_bytes = Bytes::from(update_data.proof.clone());
-        let _public_signals_bytes = Bytes::from(vec![0u8; 32]);
+        let _proof_bytes = match hex::decode(update_data.proof.trim_start_matches("0x")) {
+            Ok(bytes) => Bytes::from(bytes),
+            Err(_) => Bytes::from(vec![]),
+        };
+        let _public_signals_bytes =
+            match hex::decode(update_data.public_signals.trim_start_matches("0x")) {
+                Ok(bytes) => Bytes::from(bytes),
+                Err(_) => Bytes::from(vec![]),
+            };
 
         // This would be the actual call structure in the multicall
         let call = IMulticall3::Call3 {
@@ -1923,8 +1971,9 @@ mod tests {
 
         let request = Json(UpdateBeaconRequest {
             beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-            value: 100,
-            proof: vec![0u8; 32],
+            proof: "0x".to_string() + &"00".repeat(32),
+            public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+                .to_string(),
         });
 
         let result = update_beacon(request, token, state).await;
@@ -2011,8 +2060,8 @@ mod tests {
         let updates = (0..101)
             .map(|i| BeaconUpdateData {
                 beacon_address: format!("0x{i:040x}"),
-                value: i as u64,
-                proof: vec![0u8; 32],
+                proof: "0x".to_string() + &"00".repeat(32),
+                public_signals: format!("0x{:064x}", i),
             })
             .collect();
 
@@ -2032,13 +2081,15 @@ mod tests {
         let updates = vec![
             BeaconUpdateData {
                 beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-                value: 100,
-                proof: vec![0u8; 32],
+                proof: "0x".to_string() + &"00".repeat(32),
+                public_signals:
+                    "0x0000000000000000000000000000000000000000000000000000000000000064".to_string(),
             },
             BeaconUpdateData {
                 beacon_address: "0x2345678901234567890123456789012345678901".to_string(),
-                value: 200,
-                proof: vec![1u8; 32],
+                proof: "0x".to_string() + &"01".repeat(32),
+                public_signals:
+                    "0x00000000000000000000000000000000000000000000000000000000000000c8".to_string(),
             },
         ];
 
@@ -2082,8 +2133,9 @@ mod tests {
 
         let updates = vec![BeaconUpdateData {
             beacon_address: "invalid_address".to_string(),
-            value: 100,
-            proof: vec![0u8; 32],
+            proof: "0x".to_string() + &"00".repeat(32),
+            public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+                .to_string(),
         }];
 
         let request = Json(BatchUpdateBeaconRequest { updates });
@@ -2118,13 +2170,15 @@ mod tests {
         let updates = vec![
             BeaconUpdateData {
                 beacon_address: "invalid_address".to_string(),
-                value: 100,
-                proof: vec![0u8; 32],
+                proof: "0x".to_string() + &"00".repeat(32),
+                public_signals:
+                    "0x0000000000000000000000000000000000000000000000000000000000000064".to_string(),
             },
             BeaconUpdateData {
                 beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-                value: 200,
-                proof: vec![1u8; 32],
+                proof: "0x".to_string() + &"01".repeat(32),
+                public_signals:
+                    "0x00000000000000000000000000000000000000000000000000000000000000c8".to_string(),
             },
         ];
 
@@ -2165,8 +2219,9 @@ mod tests {
 
         let updates = vec![BeaconUpdateData {
             beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-            value: 100,
-            proof: vec![0u8; 32],
+            proof: "0x".to_string() + &"00".repeat(32),
+            public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+                .to_string(),
         }];
 
         let request = Json(BatchUpdateBeaconRequest { updates });

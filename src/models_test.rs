@@ -227,7 +227,10 @@ mod tests {
         let deserialized: CreateVerifiableBeaconRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.verifier_address, request.verifier_address);
         assert_eq!(deserialized.initial_data, request.initial_data);
-        assert_eq!(deserialized.initial_cardinality, request.initial_cardinality);
+        assert_eq!(
+            deserialized.initial_cardinality,
+            request.initial_cardinality
+        );
     }
 
     #[test]
@@ -260,7 +263,7 @@ mod tests {
         // Test valid request
         let valid_request = CreateVerifiableBeaconRequest {
             verifier_address: "0x1234567890123456789012345678901234567890".to_string(),
-            initial_data: 0, // Minimum value
+            initial_data: 0,        // Minimum value
             initial_cardinality: 1, // Minimum value
         };
 
@@ -312,8 +315,12 @@ mod tests {
             "initial_cardinality": 100
         }"#;
 
-        let create_request: CreateVerifiableBeaconRequest = serde_json::from_str(create_json).unwrap();
-        assert_eq!(create_request.verifier_address, "0x1234567890123456789012345678901234567890");
+        let create_request: CreateVerifiableBeaconRequest =
+            serde_json::from_str(create_json).unwrap();
+        assert_eq!(
+            create_request.verifier_address,
+            "0x1234567890123456789012345678901234567890"
+        );
         assert_eq!(create_request.initial_data, 100); // Raw value
         assert_eq!(create_request.initial_cardinality, 100);
 
@@ -324,10 +331,17 @@ mod tests {
             "public_signals": "0x00000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000001"
         }"#;
 
-        let update_request: UpdateVerifiableBeaconRequest = serde_json::from_str(update_json).unwrap();
-        assert_eq!(update_request.beacon_address, "0x1234567890123456789012345678901234567890");
+        let update_request: UpdateVerifiableBeaconRequest =
+            serde_json::from_str(update_json).unwrap();
+        assert_eq!(
+            update_request.beacon_address,
+            "0x1234567890123456789012345678901234567890"
+        );
         assert_eq!(update_request.proof, "0x123456789abcdef0");
-        assert_eq!(update_request.public_signals, "0x00000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000001");
+        assert_eq!(
+            update_request.public_signals,
+            "0x00000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000001"
+        );
     }
 
     #[test]
@@ -336,10 +350,10 @@ mod tests {
 
         // Test various initial_data values and their scaling
         let test_values = vec![
-            (0, 0_u128),                    // Zero
-            (1, 1_u128 << 96),             // 1 scaled by 2^96
-            (50, 50_u128 << 96),           // 50 scaled by 2^96
-            (100, 100_u128 << 96),         // 100 scaled by 2^96
+            (0, 0_u128),           // Zero
+            (1, 1_u128 << 96),     // 1 scaled by 2^96
+            (50, 50_u128 << 96),   // 50 scaled by 2^96
+            (100, 100_u128 << 96), // 100 scaled by 2^96
         ];
 
         for (raw_value, expected_scaled) in test_values {
