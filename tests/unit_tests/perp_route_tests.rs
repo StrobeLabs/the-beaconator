@@ -348,7 +348,7 @@ fn test_margin_amount_parsing_valid() {
     let amounts = vec!["0", "1", "1000000", "999999999999"];
     for amount in amounts {
         let result = amount.parse::<u128>();
-        assert!(result.is_ok(), "Failed to parse: {}", amount);
+        assert!(result.is_ok(), "Failed to parse: {amount}");
     }
 }
 
@@ -357,7 +357,7 @@ fn test_margin_amount_parsing_invalid() {
     let invalid_amounts = vec!["abc", "-100", "1.5", "100,000", ""];
     for amount in invalid_amounts {
         let result = amount.parse::<u128>();
-        assert!(result.is_err(), "Should fail to parse: {}", amount);
+        assert!(result.is_err(), "Should fail to parse: {amount}");
     }
 }
 
@@ -372,7 +372,7 @@ fn test_beacon_address_parsing() {
 
     for addr in valid_addresses {
         let result = Address::from_str(addr);
-        assert!(result.is_ok(), "Failed to parse valid address: {}", addr);
+        assert!(result.is_ok(), "Failed to parse valid address: {addr}");
     }
 
     // Invalid addresses
@@ -388,8 +388,7 @@ fn test_beacon_address_parsing() {
         let result = Address::from_str(addr);
         assert!(
             result.is_err(),
-            "Should fail to parse invalid address: {}",
-            addr
+            "Should fail to parse invalid address: {addr}"
         );
     }
 }

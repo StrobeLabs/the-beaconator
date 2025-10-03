@@ -26,7 +26,7 @@ async fn test_deploy_perp_for_beacon_integration() {
     );
 
     let beacon_address = beacon_result.unwrap();
-    println!("Created beacon for perp deployment: {}", beacon_address);
+    println!("Created beacon for perp deployment: {beacon_address}");
 
     // Deploy perp for the beacon
     let deploy_result = deploy_perp_for_beacon(&app_state, beacon_address).await;
@@ -47,8 +47,7 @@ async fn test_deploy_perp_for_beacon_integration() {
         }
         Err(e) => {
             println!(
-                "Perp deployment failed (may be expected with test contracts): {}",
-                e
+                "Perp deployment failed (may be expected with test contracts): {e}"
             );
             // Should get to the contract interaction stage, not fail on validation
             assert!(
@@ -78,7 +77,7 @@ async fn test_deploy_perp_zero_beacon_address() {
     match result {
         Ok(_) => println!("Zero beacon address deployment unexpectedly succeeded"),
         Err(e) => {
-            println!("Zero beacon address deployment failed as expected: {}", e);
+            println!("Zero beacon address deployment failed as expected: {e}");
             // Could fail at validation or contract level
         }
     }
@@ -99,7 +98,7 @@ async fn test_deploy_perp_invalid_beacon() {
     match result {
         Ok(_) => println!("Invalid beacon deployment unexpectedly succeeded"),
         Err(e) => {
-            println!("Invalid beacon deployment failed: {}", e);
+            println!("Invalid beacon deployment failed: {e}");
             // Should detect that beacon has no code or fail at contract level
         }
     }
@@ -119,19 +118,19 @@ async fn test_multiple_perp_deployments() {
 
     // Create and deploy perps for multiple beacons
     for i in 0..2 {
-        println!("Creating beacon {} for perp deployment", i);
+        println!("Creating beacon {i} for perp deployment");
 
         // Create beacon
         let beacon_result =
             create_beacon_via_factory(&app_state, owner_address, factory_address).await;
         if let Ok(beacon_address) = beacon_result {
-            println!("Created beacon {} at: {}", i, beacon_address);
+            println!("Created beacon {i} at: {beacon_address}");
 
             // Deploy perp for beacon
             let deploy_result = deploy_perp_for_beacon(&app_state, beacon_address).await;
             deployment_results.push((i, beacon_address, deploy_result));
         } else {
-            println!("Failed to create beacon {}: {:?}", i, beacon_result);
+            println!("Failed to create beacon {i}: {beacon_result:?}");
         }
     }
 
@@ -148,14 +147,13 @@ async fn test_multiple_perp_deployments() {
             }
             Err(e) => {
                 println!(
-                    "Perp deployment {} failed for beacon {}: {}",
-                    i, beacon_address, e
+                    "Perp deployment {i} failed for beacon {beacon_address}: {e}"
                 );
             }
         }
     }
 
-    println!("Successful perp deployments: {}", successful_deployments);
+    println!("Successful perp deployments: {successful_deployments}");
 }
 
 /// Test liquidity deposit functionality
@@ -198,12 +196,11 @@ async fn test_deposit_liquidity_for_perp_integration() {
             );
         }
         Err(e) => {
-            println!("Liquidity deposit failed (may be expected): {}", e);
+            println!("Liquidity deposit failed (may be expected): {e}");
             // Should not fail on id parsing
             assert!(
                 !e.contains("Invalid perp ID"),
-                "Should not be validation error: {}",
-                e
+                "Should not be validation error: {e}"
             );
         }
     }
@@ -271,7 +268,7 @@ async fn test_deposit_liquidity_price_ranges() {
     ];
 
     for (i, (_min_price, _max_price, description)) in price_test_cases.into_iter().enumerate() {
-        println!("Testing price range {}: {}", i, description);
+        println!("Testing price range {i}: {description}");
 
         let deposit_request = DepositLiquidityForPerpRequest {
             perp_id: format!("0x{:064}", 100 + i as u64),
@@ -286,7 +283,7 @@ async fn test_deposit_liquidity_price_ranges() {
                 i, response.deposit_transaction_hash
             ),
             Err(e) => {
-                println!("Price range {} failed: {}", i, e);
+                println!("Price range {i} failed: {e}");
                 // Should not be validation errors
                 assert!(!e.contains("Invalid pool address"));
             }
@@ -313,7 +310,7 @@ async fn test_concurrent_perp_operations() {
         for i in 0..2 {
             let app_state_clone = app_state.clone();
             let handle = tokio::spawn(async move {
-                println!("Starting concurrent perp deployment {}", i);
+                println!("Starting concurrent perp deployment {i}");
                 let result = deploy_perp_for_beacon(&app_state_clone, beacon_address).await;
                 (i, result)
             });
@@ -332,15 +329,14 @@ async fn test_concurrent_perp_operations() {
                     );
                     success_count += 1;
                 }
-                Err(e) => println!("Concurrent perp deployment {} failed: {}", i, e),
+                Err(e) => println!("Concurrent perp deployment {i} failed: {e}"),
             }
         }
 
-        println!("Concurrent perp deployments: {} successes", success_count);
+        println!("Concurrent perp deployments: {success_count} successes");
     } else {
         println!(
-            "Failed to create beacon for concurrent test: {:?}",
-            beacon_result
+            "Failed to create beacon for concurrent test: {beacon_result:?}"
         );
     }
 }
@@ -366,7 +362,7 @@ async fn test_perp_deployment_error_handling() {
     ];
 
     for (address, description) in test_addresses {
-        println!("Testing perp deployment with {}: {}", description, address);
+        println!("Testing perp deployment with {description}: {address}");
 
         let result = deploy_perp_for_beacon(&app_state, address).await;
 
@@ -376,7 +372,7 @@ async fn test_perp_deployment_error_handling() {
                 description, response.transaction_hash
             ),
             Err(e) => {
-                println!("{} deployment failed: {}", description, e);
+                println!("{description} deployment failed: {e}");
                 // Log error for analysis
             }
         }
@@ -400,7 +396,7 @@ async fn test_perp_operations_extreme_values() {
     ];
 
     for (amount, description) in amount_test_cases {
-        println!("Testing liquidity deposit with {}: {}", description, amount);
+        println!("Testing liquidity deposit with {description}: {amount}");
 
         let deposit_request = DepositLiquidityForPerpRequest {
             perp_id: format!("0x{:064}", 3u64),
@@ -415,7 +411,7 @@ async fn test_perp_operations_extreme_values() {
                 description, response.deposit_transaction_hash
             ),
             Err(e) => {
-                println!("{} deposit failed: {}", description, e);
+                println!("{description} deposit failed: {e}");
                 // Should not be validation errors for id formatting
                 assert!(!e.contains("Invalid pool address"));
             }

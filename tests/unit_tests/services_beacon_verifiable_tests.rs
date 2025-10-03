@@ -22,8 +22,7 @@ async fn test_create_verifiable_beacon_invalid_verifier_address() {
             || error_msg.contains("configured")
             || error_msg.contains("Invalid")
             || error_msg.contains("address"),
-        "Unexpected error message: {}",
-        error_msg
+        "Unexpected error message: {error_msg}"
     );
 }
 
@@ -83,7 +82,7 @@ fn test_address_parsing_edge_cases() {
 
     for addr_str in valid_addresses {
         let result = Address::from_str(addr_str);
-        assert!(result.is_ok(), "Failed to parse address: {}", addr_str);
+        assert!(result.is_ok(), "Failed to parse address: {addr_str}");
     }
 
     let invalid_addresses = vec![
@@ -95,7 +94,7 @@ fn test_address_parsing_edge_cases() {
 
     for addr_str in invalid_addresses {
         let result = Address::from_str(addr_str);
-        assert!(result.is_err(), "Should have failed to parse: {}", addr_str);
+        assert!(result.is_err(), "Should have failed to parse: {addr_str}");
     }
 }
 

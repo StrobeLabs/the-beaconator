@@ -25,21 +25,19 @@ async fn test_create_verifiable_beacon_integration() {
     // get past the validation stage
     match result {
         Ok(tx_hash) => {
-            println!("Verifiable beacon creation succeeded: {}", tx_hash);
+            println!("Verifiable beacon creation succeeded: {tx_hash}");
             assert!(tx_hash.starts_with("0x"), "Should return transaction hash");
         }
         Err(e) => {
-            println!("Verifiable beacon creation failed (may be expected): {}", e);
+            println!("Verifiable beacon creation failed (may be expected): {e}");
             // Should not be a validation error
             assert!(
                 !e.contains("Invalid verifier address"),
-                "Should not be validation error: {}",
-                e
+                "Should not be validation error: {e}"
             );
             assert!(
                 !e.contains("not configured"),
-                "Factory should be configured: {}",
-                e
+                "Factory should be configured: {e}"
             );
         }
     }
@@ -110,7 +108,7 @@ async fn test_create_verifiable_beacon_edge_cases() {
     let result = create_verifiable_beacon(&app_state, zero_request).await;
     match result {
         Ok(_) => println!("Zero address verifier succeeded"),
-        Err(e) => println!("Zero address verifier failed: {}", e),
+        Err(e) => println!("Zero address verifier failed: {e}"),
     }
 
     // Test with max values
@@ -123,7 +121,7 @@ async fn test_create_verifiable_beacon_edge_cases() {
     let result = create_verifiable_beacon(&app_state, max_request).await;
     match result {
         Ok(_) => println!("Max values succeeded"),
-        Err(e) => println!("Max values failed: {}", e),
+        Err(e) => println!("Max values failed: {e}"),
     }
 }
 
@@ -146,7 +144,7 @@ async fn test_verifiable_beacon_zero_address_handling() {
     let create_result = create_verifiable_beacon(&app_state, create_request).await;
     match create_result {
         Ok(_) => println!("Create with zero verifier succeeded"),
-        Err(e) => println!("Create with zero verifier failed: {}", e),
+        Err(e) => println!("Create with zero verifier failed: {e}"),
     }
 }
 
@@ -183,16 +181,15 @@ async fn test_concurrent_verifiable_beacon_operations() {
         let (i, result) = handle.await.unwrap();
         match result {
             Ok(tx_hash) => {
-                println!("Concurrent verifiable beacon {} succeeded: {}", i, tx_hash);
+                println!("Concurrent verifiable beacon {i} succeeded: {tx_hash}");
                 success_count += 1;
             }
-            Err(e) => println!("Concurrent verifiable beacon {} failed: {}", i, e),
+            Err(e) => println!("Concurrent verifiable beacon {i} failed: {e}"),
         }
     }
 
     println!(
-        "Concurrent verifiable beacon operations: {} successes",
-        success_count
+        "Concurrent verifiable beacon operations: {success_count} successes"
     );
 }
 
@@ -215,7 +212,7 @@ async fn test_verifiable_beacon_extreme_values() {
     let min_result = create_verifiable_beacon(&app_state, min_request).await;
     match min_result {
         Ok(_) => println!("Minimum values succeeded"),
-        Err(e) => println!("Minimum values failed: {}", e),
+        Err(e) => println!("Minimum values failed: {e}"),
     }
 
     // Test with maximum values
@@ -228,6 +225,6 @@ async fn test_verifiable_beacon_extreme_values() {
     let max_result = create_verifiable_beacon(&app_state, max_request).await;
     match max_result {
         Ok(_) => println!("Maximum values succeeded"),
-        Err(e) => println!("Maximum values failed: {}", e),
+        Err(e) => println!("Maximum values failed: {e}"),
     }
 }

@@ -150,8 +150,7 @@ fn test_is_nonce_error_positive_cases() {
     for error_msg in nonce_error_messages {
         assert!(
             is_nonce_error(error_msg),
-            "Should detect nonce error in: {}",
-            error_msg
+            "Should detect nonce error in: {error_msg}"
         );
     }
 }
@@ -175,8 +174,7 @@ fn test_is_nonce_error_negative_cases() {
     for error_msg in non_nonce_error_messages {
         assert!(
             !is_nonce_error(error_msg),
-            "Should not detect nonce error in: {}",
-            error_msg
+            "Should not detect nonce error in: {error_msg}"
         );
     }
 }
@@ -224,7 +222,7 @@ fn test_is_nonce_error_all_variants() {
         assert!(is_nonce_error(&pattern.to_uppercase()));
 
         // Test with prefix and suffix
-        let with_context = format!("Error occurred: {} - please retry", pattern);
+        let with_context = format!("Error occurred: {pattern} - please retry");
         assert!(is_nonce_error(&with_context));
     }
 }
@@ -331,12 +329,11 @@ fn test_nonce_error_message_generation() {
     );
     assert!(is_nonce_error(&error_msg));
 
-    let error_msg2 = format!("invalid nonce {}", nonce_value);
+    let error_msg2 = format!("invalid nonce {nonce_value}");
     assert!(is_nonce_error(&error_msg2));
 
     let error_msg3 = format!(
-        "replacement transaction underpriced for nonce {}",
-        nonce_value
+        "replacement transaction underpriced for nonce {nonce_value}"
     );
     assert!(is_nonce_error(&error_msg3));
 }

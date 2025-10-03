@@ -26,14 +26,13 @@ async fn test_create_beacon_via_factory_with_anvil() {
     // In integration test, this should succeed with real contract deployment
     assert!(
         result.is_ok(),
-        "Factory beacon creation should succeed: {:?}",
-        result
+        "Factory beacon creation should succeed: {result:?}"
     );
 
     if let Ok(beacon_address) = result {
         // Verify the beacon address is valid
         assert_ne!(beacon_address, Address::ZERO);
-        println!("Created beacon at address: {}", beacon_address);
+        println!("Created beacon at address: {beacon_address}");
 
         // Test that we can verify the beacon was created
         let is_registered = is_beacon_registered(
@@ -69,8 +68,7 @@ async fn test_register_beacon_with_registry_integration() {
 
     assert!(
         register_result.is_ok(),
-        "Beacon registration should succeed: {:?}",
-        register_result
+        "Beacon registration should succeed: {register_result:?}"
     );
 
     // Verify registration
@@ -100,7 +98,7 @@ async fn test_update_beacon_integration() {
 
     // Create update request
     let update_request = UpdateBeaconRequest {
-        beacon_address: format!("{:?}", beacon_address),
+        beacon_address: format!("{beacon_address:?}"),
         value: 12345,
         proof: vec![1, 2, 3, 4, 5, 6, 7, 8],
     };
@@ -113,12 +111,11 @@ async fn test_update_beacon_integration() {
     match update_result {
         Ok(_) => println!("Beacon update succeeded"),
         Err(e) => {
-            println!("Beacon update failed (expected): {}", e);
+            println!("Beacon update failed (expected): {e}");
             // Should fail with contract-level error, not network error
             assert!(
                 !e.contains("network"),
-                "Should not be a network error: {}",
-                e
+                "Should not be a network error: {e}"
             );
         }
     }
@@ -148,8 +145,7 @@ async fn test_transaction_confirmation_integration() {
     // Should get a proper response from Anvil (not a network error)
     assert!(
         confirmation_result.is_ok(),
-        "Should get response from Anvil: {:?}",
-        confirmation_result
+        "Should get response from Anvil: {confirmation_result:?}"
     );
     // Expect None for invalid tx
     assert!(
@@ -174,8 +170,7 @@ async fn test_beacon_registration_check_integration() {
         is_beacon_registered(&app_state, unregistered_beacon, registry_address).await;
     assert!(
         is_registered.is_ok(),
-        "Should get response from Anvil: {:?}",
-        is_registered
+        "Should get response from Anvil: {is_registered:?}"
     );
     assert!(
         !is_registered.unwrap(),
@@ -209,34 +204,30 @@ async fn test_multiple_beacon_creation_sequence() {
 
     // Create multiple beacons
     for i in 0..3 {
-        println!("Creating beacon {}", i);
+        println!("Creating beacon {i}");
 
         let beacon_result =
             create_beacon_via_factory(&app_state, owner_address, factory_address).await;
         assert!(
             beacon_result.is_ok(),
-            "Beacon {} creation should succeed: {:?}",
-            i,
-            beacon_result
+            "Beacon {i} creation should succeed: {beacon_result:?}"
         );
 
         let beacon_address = beacon_result.unwrap();
         assert_ne!(
             beacon_address,
             Address::ZERO,
-            "Beacon {} address should not be zero",
-            i
+            "Beacon {i} address should not be zero"
         );
 
         // Each beacon should have a unique address
         assert!(
             !beacon_addresses.contains(&beacon_address),
-            "Beacon {} should have unique address",
-            i
+            "Beacon {i} should have unique address"
         );
         beacon_addresses.push(beacon_address);
 
-        println!("Created beacon {} at address: {}", i, beacon_address);
+        println!("Created beacon {i} at address: {beacon_address}");
     }
 
     assert_eq!(
@@ -261,7 +252,7 @@ async fn test_beacon_operations_error_handling() {
     let result = create_beacon_via_factory(&app_state, zero_address, factory_address).await;
     match result {
         Ok(_) => println!("Zero owner beacon creation unexpectedly succeeded"),
-        Err(e) => println!("Zero owner beacon creation failed as expected: {}", e),
+        Err(e) => println!("Zero owner beacon creation failed as expected: {e}"),
     }
 
     // Test with zero factory address
@@ -313,8 +304,7 @@ async fn test_beacon_operation_timeouts() {
     let beacon_result = result.unwrap();
     assert!(
         beacon_result.is_ok(),
-        "Beacon creation should succeed: {:?}",
-        beacon_result
+        "Beacon creation should succeed: {beacon_result:?}"
     );
 }
 
@@ -334,7 +324,7 @@ async fn test_concurrent_beacon_operations() {
     for i in 0..3 {
         let app_state_clone = app_state.clone();
         let handle = tokio::spawn(async move {
-            println!("Starting concurrent beacon creation {}", i);
+            println!("Starting concurrent beacon creation {i}");
             let result =
                 create_beacon_via_factory(&app_state_clone, owner_address, factory_address).await;
             (i, result)
@@ -346,7 +336,7 @@ async fn test_concurrent_beacon_operations() {
     let mut beacon_addresses = Vec::new();
     for handle in handles {
         let (i, result) = handle.await.unwrap();
-        println!("Concurrent beacon {} result: {:?}", i, result);
+        println!("Concurrent beacon {i} result: {result:?}");
 
         if let Ok(beacon_address) = result {
             assert_ne!(beacon_address, Address::ZERO);

@@ -154,7 +154,7 @@ fn test_build_multicall_call_allow_failure_true() {
 
     assert_eq!(call.target, target);
     assert_eq!(call.callData, calldata);
-    assert_eq!(call.allowFailure, true);
+    assert!(call.allowFailure);
 }
 
 #[test]
@@ -167,7 +167,7 @@ fn test_build_multicall_call_allow_failure_false() {
 
     assert_eq!(call.target, target);
     assert_eq!(call.callData, calldata);
-    assert_eq!(call.allowFailure, false);
+    assert!(!call.allowFailure);
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn test_build_multicall_call_empty_calldata() {
 
     assert_eq!(call.target, target);
     assert_eq!(call.callData, calldata);
-    assert_eq!(call.allowFailure, false);
+    assert!(!call.allowFailure);
 }
 
 #[test]
@@ -193,7 +193,7 @@ fn test_build_multicall_call_large_calldata() {
 
     assert_eq!(call.target, target);
     assert_eq!(call.callData, calldata);
-    assert_eq!(call.allowFailure, true);
+    assert!(call.allowFailure);
 }
 
 #[test]
@@ -315,7 +315,7 @@ fn test_build_multicall_call_different_addresses() {
         let call = build_multicall_call(target, calldata.clone(), allow_failure);
         assert_eq!(call.target, target);
         assert_eq!(call.callData, calldata);
-        assert_eq!(call.allowFailure, false);
+        assert!(!call.allowFailure);
     }
 }
 
@@ -347,13 +347,7 @@ fn test_multicall_results_with_various_byte_lengths() {
         (false, Bytes::from(vec![0x00, 0x00, 0x00, 0x00])), // Zero bytes
     ];
 
-    // Test that we can handle various result byte lengths
-    for (success, _bytes) in &results {
-        // Success can be true or false
-        assert!(*success == true || *success == false);
-    }
-
-    // Test validation with mixed results
+    // Test validation with mixed results (one false result should cause failure)
     let validation_result = validate_multicall_success(&results);
     assert!(validation_result.is_err()); // Should fail due to one false result
 }

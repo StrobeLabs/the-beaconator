@@ -350,8 +350,7 @@ fn test_address_parsing_edge_cases() {
         let result = Address::from_str(addr_str);
         assert!(
             result.is_ok(),
-            "Failed to parse valid address: {}",
-            addr_str
+            "Failed to parse valid address: {addr_str}"
         );
     }
 
@@ -366,7 +365,7 @@ fn test_address_parsing_edge_cases() {
 
     for addr_str in invalid_addresses {
         let result = Address::from_str(addr_str);
-        assert!(result.is_err(), "Should have failed to parse: {}", addr_str);
+        assert!(result.is_err(), "Should have failed to parse: {addr_str}");
     }
 }
 
@@ -385,7 +384,7 @@ fn test_transaction_hash_edge_cases() {
 
     for hash_str in valid_hashes {
         let result = B256::from_str(hash_str);
-        assert!(result.is_ok(), "Failed to parse valid hash: {}", hash_str);
+        assert!(result.is_ok(), "Failed to parse valid hash: {hash_str}");
     }
 
     // Test invalid hashes
@@ -399,6 +398,6 @@ fn test_transaction_hash_edge_cases() {
 
     for hash_str in invalid_hashes {
         let result = B256::from_str(hash_str);
-        assert!(result.is_err(), "Should have failed to parse: {}", hash_str);
+        assert!(result.is_err(), "Should have failed to parse: {hash_str}");
     }
 }

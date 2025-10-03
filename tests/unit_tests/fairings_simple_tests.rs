@@ -112,9 +112,9 @@ fn test_fairing_name_lengths() {
     let catcher = PanicCatcher;
 
     // Names should be reasonable length
-    assert!(logger.info().name.len() > 0);
+    assert!(!logger.info().name.is_empty());
     assert!(logger.info().name.len() < 100);
-    assert!(catcher.info().name.len() > 0);
+    assert!(!catcher.info().name.is_empty());
     assert!(catcher.info().name.len() < 100);
 }
 

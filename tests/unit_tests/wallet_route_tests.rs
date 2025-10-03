@@ -25,7 +25,7 @@ async fn test_fund_wallet_invalid_address() {
         eth_amount: "1000000000000000".to_string(),
     });
 
-    let result = fund_guest_wallet(&state, request, token).await;
+    let result = fund_guest_wallet(state, request, token).await;
     assert!(result.is_err());
     let (status, _) = result.unwrap_err();
     assert_eq!(status, Status::BadRequest);
@@ -43,7 +43,7 @@ async fn test_fund_wallet_empty_address() {
         eth_amount: "1000000000000000".to_string(),
     });
 
-    let result = fund_guest_wallet(&state, request, token).await;
+    let result = fund_guest_wallet(state, request, token).await;
     assert!(result.is_err());
     let (status, _) = result.unwrap_err();
     assert_eq!(status, Status::BadRequest);
@@ -61,7 +61,7 @@ async fn test_fund_wallet_invalid_usdc_amount() {
         eth_amount: "1000000000000000".to_string(),
     });
 
-    let result = fund_guest_wallet(&state, request, token).await;
+    let result = fund_guest_wallet(state, request, token).await;
     assert!(result.is_err());
     let (status, _) = result.unwrap_err();
     assert_eq!(status, Status::BadRequest);
@@ -79,7 +79,7 @@ async fn test_fund_wallet_invalid_eth_amount() {
         eth_amount: "not_a_number".to_string(),
     });
 
-    let result = fund_guest_wallet(&state, request, token).await;
+    let result = fund_guest_wallet(state, request, token).await;
     assert!(result.is_err());
     let (status, _) = result.unwrap_err();
     assert_eq!(status, Status::BadRequest);
@@ -97,7 +97,7 @@ async fn test_fund_wallet_negative_usdc() {
         eth_amount: "1000000000000000".to_string(),
     });
 
-    let result = fund_guest_wallet(&state, request, token).await;
+    let result = fund_guest_wallet(state, request, token).await;
     assert!(result.is_err());
     let (status, _) = result.unwrap_err();
     assert_eq!(status, Status::BadRequest);
@@ -115,7 +115,7 @@ async fn test_fund_wallet_negative_eth() {
         eth_amount: "-1000000000000000".to_string(),
     });
 
-    let result = fund_guest_wallet(&state, request, token).await;
+    let result = fund_guest_wallet(state, request, token).await;
     assert!(result.is_err());
     let (status, _) = result.unwrap_err();
     assert_eq!(status, Status::BadRequest);
@@ -134,7 +134,7 @@ async fn test_fund_wallet_usdc_exceeds_limit() {
         eth_amount: "1000000000000000".to_string(),
     });
 
-    let result = fund_guest_wallet(&state, request, token).await;
+    let result = fund_guest_wallet(state, request, token).await;
     assert!(result.is_err());
     let (status, response) = result.unwrap_err();
     assert_eq!(status, Status::BadRequest);
@@ -154,7 +154,7 @@ async fn test_fund_wallet_eth_exceeds_limit() {
         eth_amount: "2000000000000000".to_string(), // 0.002 ETH
     });
 
-    let result = fund_guest_wallet(&state, request, token).await;
+    let result = fund_guest_wallet(state, request, token).await;
     assert!(result.is_err());
     let (status, response) = result.unwrap_err();
     assert_eq!(status, Status::BadRequest);
@@ -174,7 +174,7 @@ async fn test_fund_wallet_zero_amounts() {
     });
 
     // Zero amounts are technically valid, but will fail at network level
-    let result = fund_guest_wallet(&state, request, token).await;
+    let result = fund_guest_wallet(state, request, token).await;
     // Could be BadRequest or InternalServerError depending on validation
     assert!(result.is_err());
 }
@@ -192,7 +192,7 @@ async fn test_fund_wallet_valid_format_network_failure() {
     });
 
     // Valid input but should fail due to network issues in test environment
-    let result = fund_guest_wallet(&state, request, token).await;
+    let result = fund_guest_wallet(state, request, token).await;
     assert!(result.is_err());
 }
 
@@ -208,7 +208,7 @@ async fn test_fund_wallet_decimal_usdc_amount() {
         eth_amount: "1000000000000000".to_string(),
     });
 
-    let result = fund_guest_wallet(&state, request, token).await;
+    let result = fund_guest_wallet(state, request, token).await;
     assert!(result.is_err());
     let (status, _) = result.unwrap_err();
     assert_eq!(status, Status::BadRequest);
@@ -226,7 +226,7 @@ async fn test_fund_wallet_scientific_notation() {
         eth_amount: "1000000000000000".to_string(),
     });
 
-    let result = fund_guest_wallet(&state, request, token).await;
+    let result = fund_guest_wallet(state, request, token).await;
     assert!(result.is_err());
     let (status, _) = result.unwrap_err();
     assert_eq!(status, Status::BadRequest);
@@ -246,7 +246,7 @@ async fn test_fund_wallet_address_with_mixed_case() {
     });
 
     // Should parse correctly but fail at network level
-    let result = fund_guest_wallet(&state, request, token).await;
+    let result = fund_guest_wallet(state, request, token).await;
     assert!(result.is_err());
 }
 
@@ -263,7 +263,7 @@ async fn test_fund_wallet_max_u128_amounts() {
     });
 
     // Should fail due to exceeding limits
-    let result = fund_guest_wallet(&state, request, token).await;
+    let result = fund_guest_wallet(state, request, token).await;
     assert!(result.is_err());
     let (status, _) = result.unwrap_err();
     assert_eq!(status, Status::BadRequest);

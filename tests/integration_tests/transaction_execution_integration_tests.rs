@@ -29,12 +29,11 @@ async fn test_execute_transaction_serialized_with_network() {
 
     assert!(
         result.is_ok(),
-        "Serialized balance check should succeed: {:?}",
-        result
+        "Serialized balance check should succeed: {result:?}"
     );
 
     if let Ok(balance) = result {
-        println!("Wallet balance in serialized execution: {} wei", balance);
+        println!("Wallet balance in serialized execution: {balance} wei");
         assert!(
             balance > U256::ZERO,
             "Wallet should have some ETH for tests"
@@ -64,11 +63,11 @@ async fn test_multiple_serialized_network_operations() {
         })
         .await;
 
-        println!("Serialized operation {} result: {:?}", i, result);
+        println!("Serialized operation {i} result: {result:?}");
     }
 
     let elapsed = start_time.elapsed();
-    println!("Serialized network operations completed in {:?}", elapsed);
+    println!("Serialized network operations completed in {elapsed:?}");
 }
 
 /// Test fresh nonce retrieval from alternate provider
@@ -97,13 +96,13 @@ async fn test_get_fresh_nonce_from_alternate_integration() {
     let result_with_alt = get_fresh_nonce_from_alternate(&app_state).await;
     match result_with_alt {
         Ok(nonce) => {
-            println!("Got fresh nonce from alternate provider: {}", nonce);
+            println!("Got fresh nonce from alternate provider: {nonce}");
             // Nonce should be reasonable (not too high)
-            assert!(nonce < 1000000, "Nonce should be reasonable: {}", nonce);
+            assert!(nonce < 1000000, "Nonce should be reasonable: {nonce}");
         }
         Err(e) => {
             // Might fail in test environment, but should not be "no provider" error
-            println!("Alternate nonce fetch failed (may be expected): {}", e);
+            println!("Alternate nonce fetch failed (may be expected): {e}");
             assert!(
                 !e.contains("No alternate provider available"),
                 "Should not be no provider error"
@@ -122,8 +121,8 @@ async fn test_transaction_mutex_singleton_integration() {
     let mutex3 = get_transaction_mutex();
 
     // Should all be the same instance
-    assert!(Arc::ptr_eq(&mutex1, &mutex2), "Mutex should be singleton");
-    assert!(Arc::ptr_eq(&mutex2, &mutex3), "Mutex should be singleton");
+    assert!(Arc::ptr_eq(mutex1, mutex2), "Mutex should be singleton");
+    assert!(Arc::ptr_eq(mutex2, mutex3), "Mutex should be singleton");
 
     // Test concurrent access to the singleton
     let mutex_clone = mutex1.clone();
@@ -161,7 +160,7 @@ async fn test_serialized_beacon_creation() {
 
     match result {
         Ok(beacon_address) => {
-            println!("Serialized beacon creation succeeded: {}", beacon_address);
+            println!("Serialized beacon creation succeeded: {beacon_address}");
             assert_ne!(
                 beacon_address,
                 Address::ZERO,
@@ -169,7 +168,7 @@ async fn test_serialized_beacon_creation() {
             );
         }
         Err(e) => {
-            println!("Serialized beacon creation failed: {}", e);
+            println!("Serialized beacon creation failed: {e}");
             // Should not be a serialization error
             assert!(!e.contains("mutex"), "Should not be mutex error");
         }
@@ -196,8 +195,7 @@ async fn test_nonce_error_detection_comprehensive() {
     for error_msg in nonce_errors {
         assert!(
             is_nonce_error(error_msg),
-            "Should detect nonce error: {}",
-            error_msg
+            "Should detect nonce error: {error_msg}"
         );
     }
 
@@ -217,8 +215,7 @@ async fn test_nonce_error_detection_comprehensive() {
     for error_msg in non_nonce_errors {
         assert!(
             !is_nonce_error(error_msg),
-            "Should not detect nonce error: {}",
-            error_msg
+            "Should not detect nonce error: {error_msg}"
         );
     }
 }
@@ -237,16 +234,16 @@ async fn test_concurrent_serialized_network_operations() {
         let result = execute_transaction_serialized(async {
             // Simple operation that doesn't require network
             tokio::time::sleep(Duration::from_millis(1)).await;
-            Ok::<String, Box<dyn std::error::Error + Send + Sync>>(format!("operation_{}", i))
+            Ok::<String, Box<dyn std::error::Error + Send + Sync>>(format!("operation_{i}"))
         })
         .await;
 
-        println!("Concurrent operation {} result: {:?}", i, result);
+        println!("Concurrent operation {i} result: {result:?}");
         assert!(result.is_ok());
     }
 
     let elapsed = start_time.elapsed();
-    println!("Serialized operations completed in {:?}", elapsed);
+    println!("Serialized operations completed in {elapsed:?}");
 
     // Should complete quickly since no real network calls
     assert!(
@@ -283,8 +280,8 @@ async fn test_serialized_execution_error_handling() {
     .await;
 
     match network_result {
-        Ok(balance) => println!("Zero address balance: {}", balance),
-        Err(e) => println!("Zero address balance failed: {}", e),
+        Ok(balance) => println!("Zero address balance: {balance}"),
+        Err(e) => println!("Zero address balance failed: {e}"),
     }
 }
 
@@ -343,35 +340,29 @@ async fn test_nonce_synchronization_integration() {
         .await;
     match current_nonce {
         Ok(nonce) => {
-            println!("Current nonce: {}", nonce);
+            println!("Current nonce: {nonce}");
 
             // Get fresh nonce from alternate
             let fresh_nonce = get_fresh_nonce_from_alternate(&app_state).await;
             match fresh_nonce {
                 Ok(alt_nonce) => {
-                    println!("Alternate nonce: {}", alt_nonce);
+                    println!("Alternate nonce: {alt_nonce}");
                     // Should be the same or very close
-                    let diff = if alt_nonce >= nonce {
-                        alt_nonce - nonce
-                    } else {
-                        nonce - alt_nonce
-                    };
+                    let diff = alt_nonce.abs_diff(nonce);
                     assert!(
                         diff <= 10,
-                        "Nonces should be close: current={}, alt={}",
-                        nonce,
-                        alt_nonce
+                        "Nonces should be close: current={nonce}, alt={alt_nonce}"
                     );
                 }
                 Err(e) => {
-                    println!("Alternate nonce failed: {}", e);
+                    println!("Alternate nonce failed: {e}");
                     // Should not be "no provider" error
                     assert!(!e.contains("No alternate provider available"));
                 }
             }
         }
         Err(e) => {
-            println!("Failed to get current nonce: {}", e);
+            println!("Failed to get current nonce: {e}");
         }
     }
 }

@@ -226,8 +226,7 @@ async fn test_deploy_perp_for_beacon_with_anvil() {
         }
         Err(e) => {
             println!(
-                "Perp deployment failed (expected in some environments): {}",
-                e
+                "Perp deployment failed (expected in some environments): {e}"
             );
             // In CI or limited environments, this might fail - that's ok for testing
         }

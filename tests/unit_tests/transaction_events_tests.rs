@@ -15,7 +15,6 @@ fn test_data_updated_event_interface_compilation() {
     // The fact that this code compiles means the IBeacon::DataUpdated event type exists
     // and can be used for event parsing. Full integration testing would require
     // deployed contracts and actual blockchain transactions.
-    assert!(true);
 }
 
 #[test]
@@ -35,8 +34,6 @@ fn test_parse_data_updated_event_function_exists() {
     // Also verify the helper function exists
     let _beacon_created_function_exists = parse_beacon_created_event
         as fn(&alloy::rpc::types::TransactionReceipt, Address) -> Result<Address, String>;
-
-    assert!(true);
 }
 
 #[test]
@@ -49,7 +46,6 @@ fn test_update_beacon_includes_event_parsing() {
     // that the code structure includes the call to parse_data_updated_event.
 
     // This serves as documentation that event verification is now part of the update flow.
-    assert!(true);
 }
 
 #[test]
@@ -57,8 +53,6 @@ fn test_parse_perp_created_event_signature() {
     // Test that the parse_perp_created_event function exists and has the correct signature
     let _function_exists = parse_perp_created_event
         as fn(&alloy::rpc::types::TransactionReceipt, Address) -> Result<FixedBytes<32>, String>;
-
-    assert!(true);
 }
 
 #[test]
@@ -70,8 +64,6 @@ fn test_parse_maker_position_opened_event_signature() {
             Address,
             FixedBytes<32>,
         ) -> Result<U256, String>;
-
-    assert!(true);
 }
 
 #[test]
@@ -79,6 +71,4 @@ fn test_parse_beacon_created_events_from_multicall_signature() {
     // Test that the parse_beacon_created_events_from_multicall function exists
     let _function_exists = parse_beacon_created_events_from_multicall
         as fn(&alloy::rpc::types::TransactionReceipt, Address, u32) -> Result<Vec<String>, String>;
-
-    assert!(true);
 }

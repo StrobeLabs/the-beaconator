@@ -20,8 +20,7 @@ async fn test_register_beacon_with_anvil() {
     let beacon_result = create_beacon_via_factory(&app_state, owner_address, factory_address).await;
     assert!(
         beacon_result.is_ok(),
-        "Beacon creation should succeed: {:?}",
-        beacon_result
+        "Beacon creation should succeed: {beacon_result:?}"
     );
 
     let beacon_address = beacon_result.unwrap();
@@ -33,12 +32,11 @@ async fn test_register_beacon_with_anvil() {
 
     assert!(
         register_result.is_ok(),
-        "Beacon registration should succeed: {:?}",
-        register_result
+        "Beacon registration should succeed: {register_result:?}"
     );
 
     let tx_hash = register_result.unwrap();
-    println!("Beacon registered with tx hash: {}", tx_hash);
+    println!("Beacon registered with tx hash: {tx_hash}");
 
     // Verify the beacon is registered
     let is_registered = is_beacon_registered(&app_state, beacon_address, registry_address).await;
@@ -80,7 +78,7 @@ async fn test_register_beacon_idempotency() {
 
     // Should return B256::ZERO to indicate already registered
     let tx_hash = second_register.unwrap();
-    println!("Second registration tx hash: {}", tx_hash);
+    println!("Second registration tx hash: {tx_hash}");
 
     // Both should result in registered beacon
     let is_registered = is_beacon_registered(&app_state, beacon_address, registry_address).await;
@@ -125,8 +123,7 @@ async fn test_register_beacon_with_different_registries() {
         Ok(_) => println!("Registered with second registry (unexpected success)"),
         Err(e) => {
             println!(
-                "Registration with second registry failed as expected: {}",
-                e
+                "Registration with second registry failed as expected: {e}"
             );
             // Should not be a validation error, but a contract call error
             assert!(!e.contains("Invalid"));
@@ -149,15 +146,14 @@ async fn test_register_multiple_beacons_sequentially() {
 
     // Create and register 3 beacons
     for i in 0..3 {
-        println!("Creating and registering beacon {}", i);
+        println!("Creating and registering beacon {i}");
 
         // Create beacon
         let beacon_result =
             create_beacon_via_factory(&app_state, owner_address, factory_address).await;
         assert!(
             beacon_result.is_ok(),
-            "Beacon {} creation should succeed",
-            i
+            "Beacon {i} creation should succeed"
         );
         let beacon_address = beacon_result.unwrap();
 
@@ -166,16 +162,14 @@ async fn test_register_multiple_beacons_sequentially() {
             register_beacon_with_registry(&app_state, beacon_address, registry_address).await;
         assert!(
             register_result.is_ok(),
-            "Beacon {} registration should succeed: {:?}",
-            i,
-            register_result
+            "Beacon {i} registration should succeed: {register_result:?}"
         );
 
         // Verify registration
         let is_registered =
             is_beacon_registered(&app_state, beacon_address, registry_address).await;
         assert!(is_registered.is_ok());
-        assert!(is_registered.unwrap(), "Beacon {} should be registered", i);
+        assert!(is_registered.unwrap(), "Beacon {i} should be registered");
 
         registered_beacons.push(beacon_address);
     }
@@ -202,8 +196,7 @@ async fn test_register_zero_beacon_address() {
     // Should fail - either at validation or contract level
     assert!(
         result.is_err(),
-        "Registering zero address should fail: {:?}",
-        result
+        "Registering zero address should fail: {result:?}"
     );
 }
 
@@ -246,7 +239,7 @@ async fn test_concurrent_beacon_registrations() {
             create_beacon_via_factory(&app_state, owner_address, factory_address).await;
         if let Ok(beacon_address) = beacon_result {
             beacon_addresses.push(beacon_address);
-            println!("Created beacon {} at {}", i, beacon_address);
+            println!("Created beacon {i} at {beacon_address}");
         }
     }
 
@@ -256,7 +249,7 @@ async fn test_concurrent_beacon_registrations() {
         let app_state_clone = app_state.clone();
         let beacon_addr = *beacon_address;
         let handle = tokio::spawn(async move {
-            println!("Starting concurrent registration {}", i);
+            println!("Starting concurrent registration {i}");
             let result =
                 register_beacon_with_registry(&app_state_clone, beacon_addr, registry_address)
                     .await;
@@ -271,14 +264,14 @@ async fn test_concurrent_beacon_registrations() {
         let (i, beacon_addr, result) = handle.await.unwrap();
         match result {
             Ok(_) => {
-                println!("Registration {} succeeded for {}", i, beacon_addr);
+                println!("Registration {i} succeeded for {beacon_addr}");
                 successful += 1;
             }
-            Err(e) => println!("Registration {} failed: {}", i, e),
+            Err(e) => println!("Registration {i} failed: {e}"),
         }
     }
 
-    println!("Concurrent registrations: {} succeeded", successful);
+    println!("Concurrent registrations: {successful} succeeded");
     assert!(successful > 0, "At least some registrations should succeed");
 }
 
@@ -309,7 +302,7 @@ async fn test_registration_error_handling() {
     ];
 
     for (beacon_addr, registry_addr, description) in test_cases {
-        println!("Testing: {}", description);
+        println!("Testing: {description}");
         let result = register_beacon_with_registry(&app_state, beacon_addr, registry_addr).await;
 
         // All should fail at some point (validation or contract level)
@@ -352,8 +345,7 @@ async fn test_registration_with_timeout() {
     if let Ok(register_result) = result {
         assert!(
             register_result.is_ok(),
-            "Registration should succeed: {:?}",
-            register_result
+            "Registration should succeed: {register_result:?}"
         );
     }
 }

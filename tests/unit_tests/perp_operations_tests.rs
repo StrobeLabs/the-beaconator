@@ -12,14 +12,12 @@ fn test_deploy_perp_for_beacon_signature() {
         alloy::primitives::Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
 
     // The fact this compiles means the function signature is correct
-    assert!(true);
 }
 
 #[test]
 fn test_perp_operations_module_exists() {
     // Verify that the perp operations module is accessible
     // This serves as documentation that perp operations have been modularized
-    assert!(true);
 }
 
 #[test]

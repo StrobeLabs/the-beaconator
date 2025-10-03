@@ -166,7 +166,7 @@ async fn test_create_beacon_functionality() {
     });
 
     // The function will fail with network error in test environment, which is expected
-    let result = create_beacon(request, token, &state).await;
+    let result = create_beacon(request, token, state).await;
 
     // In test environment, this should fail with InternalServerError due to no network
     assert!(result.is_err());

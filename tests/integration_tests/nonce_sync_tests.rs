@@ -30,8 +30,8 @@ mod nonce_synchronization_tests {
         );
 
         let nonce_value = primary_nonce.unwrap();
-        // Nonce is u64, so it's always non-negative by type definition
-        assert!(nonce_value <= u64::MAX, "Nonce should be valid u64"); // This is always true, but kept for clarity
+        // Nonce is u64, so it's always valid by type definition
+        let _ = nonce_value; // Use the value to avoid unused variable warning
 
         // Test 2: Missing alternate provider scenario
         assert!(
@@ -253,8 +253,8 @@ mod nonce_synchronization_tests {
             {
                 Ok(nonce) => {
                     successful_syncs += 1;
-                    // Nonce is u64, so it's always non-negative by type definition
-                    assert!(nonce <= u64::MAX, "Nonce should be valid u64"); // This is always true, but kept for clarity
+                    // Nonce is u64, so it's always valid by type definition
+                    let _ = nonce; // Use the value to avoid unused variable warning
                 }
                 Err(_) => {
                     _failed_syncs += 1;
