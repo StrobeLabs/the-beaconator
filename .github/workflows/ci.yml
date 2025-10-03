@@ -51,10 +51,10 @@ jobs:
       - name: Check format
         run: cargo fmt --all -- --check
 
-      - name: Lint (builds dependencies)
-        run: cargo clippy --all -- -D warnings
+      - name: Lint (builds dependencies and test artifacts)
+        run: cargo clippy --all --all-targets -- -D warnings
 
-      - name: Run all tests with optimal parallelism (uses cached build from clippy)
+      - name: Run all tests with optimal parallelism (reuses test artifacts from clippy)
         run: make test
 
       - name: Build release binary (uses cached dependencies)
