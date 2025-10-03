@@ -19,37 +19,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      # Aggressive Cargo registry caching - this is the big win
-      - name: Cache Cargo registry and index
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-registry-
-      
-      # Cache Rust toolchain installation
-      - name: Cache Rust toolchain
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.rustup/toolchains/
-            ~/.rustup/update-hashes/
-            ~/.rustup/settings.toml
-          key: rust-toolchain-${{ runner.os }}-nightly
-          restore-keys: |
-            rust-toolchain-${{ runner.os }}-
-      
+
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy, rustfmt
-      
-      # Cache Foundry installation  
+
+      # Efficient Rust caching - handles registry, git deps, and build artifacts automatically
+      - name: Cache Rust dependencies and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Cache key based on Cargo.lock for dependency changes
+          shared-key: "ci-cache"
+          # Save cache even on failure to speed up retries
+          save-if: true
+
+      # Cache Foundry installation
       - name: Cache Foundry
         uses: actions/cache@v4
         with:
@@ -57,32 +42,23 @@ jobs:
           key: foundry-${{ runner.os }}-nightly
           restore-keys: |
             foundry-${{ runner.os }}-
-      
+
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
       
-      # Cache target directory - separate by Cargo.lock for dependency changes
-      - name: Cache Cargo build
-        uses: actions/cache@v4
-        with:
-          path: target/
-          key: cargo-build-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-build-${{ runner.os }}-
-      
       - name: Check format
         run: cargo fmt --all -- --check
-      
-      - name: Lint
+
+      - name: Lint (builds dependencies)
         run: cargo clippy --all -- -D warnings
-      
-      - name: Build
-        run: cargo build --all --release
-      
-      - name: Run all tests with optimal parallelism
+
+      - name: Run all tests with optimal parallelism (uses cached build from clippy)
         run: make test
+
+      - name: Build release binary (uses cached dependencies)
+        run: cargo build --all --release
 
   docker:
     runs-on: ubuntu-latest
