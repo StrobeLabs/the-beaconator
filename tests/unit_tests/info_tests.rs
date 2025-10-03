@@ -16,8 +16,8 @@ fn test_index() {
     assert!(response.message.contains("endpoints"));
 }
 
-#[tokio::test]
-async fn test_index_detailed_output() {
+#[test]
+fn test_index_detailed_output() {
     let result = index();
     let response = result.into_inner();
 
