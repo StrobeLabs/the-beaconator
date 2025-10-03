@@ -726,77 +726,73 @@ pub async fn deposit_liquidity_for_perp(
         return Err(error_msg);
     }
 
-    // Check current USDC allowance for PerpHook
+    // Check current USDC allowance for PerpHook and only approve if needed
     let allowance = usdc_contract
         .allowance(state.wallet_address, state.perp_hook_address)
         .call()
         .await
         .map_err(|e| format!("Failed to check USDC allowance: {e}"))?;
     let required_allowance = U256::from(margin_amount_usdc);
-    if allowance < required_allowance {
-        tracing::info!("Insufficient allowance, will approve USDC spending");
-        let _pending = usdc_contract
-            .approve(state.perp_hook_address, required_allowance)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to send USDC approval: {e}"))?;
-    }
 
-    // Execute USDC approval transaction (serialized)
-    tracing::info!("Approving USDC spending for PerpHook...");
-    let approval_pending_tx = execute_transaction_serialized(async {
-        usdc_contract
-            .approve(state.perp_hook_address, U256::from(margin_amount_usdc))
-            .send()
-            .await
-            .map_err(|e| {
-                let error_type = match e.to_string().as_str() {
-                    s if s.contains("insufficient funds") => "Insufficient Funds",
-                    s if s.contains("gas") => "Gas Related Error",
-                    s if s.contains("nonce") => "Nonce Error",
-                    _ => "Approval Transaction Error",
-                };
+    let approval_tx_hash = if allowance < required_allowance {
+        tracing::info!("Insufficient allowance ({} < {}), approving USDC spending", allowance, required_allowance);
 
-                let error_msg = format!("{error_type}: {e}");
-                tracing::error!("{}", error_msg);
-                tracing::error!("USDC approval failed: {:?}", e);
+        // Execute USDC approval transaction (serialized)
+        let approval_pending_tx = execute_transaction_serialized(async {
+            usdc_contract
+                .approve(state.perp_hook_address, required_allowance)
+                .send()
+                .await
+                .map_err(|e| {
+                    let error_type = match e.to_string().as_str() {
+                        s if s.contains("insufficient funds") => "Insufficient Funds",
+                        s if s.contains("gas") => "Gas Related Error",
+                        s if s.contains("nonce") => "Nonce Error",
+                        _ => "Approval Transaction Error",
+                    };
 
-                if let Some(revert_reason) = try_decode_revert_reason(&e) {
-                    tracing::error!("Approval revert reason: {}", revert_reason);
+                    let error_msg = format!("{error_type}: {e}");
+                    tracing::error!("{}", error_msg);
+                    tracing::error!("USDC approval failed: {:?}", e);
+
+                    if let Some(revert_reason) = try_decode_revert_reason(&e) {
+                        tracing::error!("Approval revert reason: {}", revert_reason);
+                    }
+
+                    sentry::capture_message(&error_msg, sentry::Level::Error);
+                    error_msg
+                })
+        })
+        .await?;
+
+        tracing::info!("USDC approval transaction sent, waiting for confirmation...");
+        let approval_receipt =
+            match timeout(Duration::from_secs(60), approval_pending_tx.get_receipt()).await {
+                Ok(Ok(receipt)) => {
+                    tracing::info!("USDC approval confirmed!");
+                    receipt
                 }
+                Ok(Err(e)) => {
+                    let error_msg = format!("USDC approval transaction failed: {e}");
+                    tracing::error!("{}", error_msg);
+                    sentry::capture_message(&error_msg, sentry::Level::Error);
+                    return Err(error_msg);
+                }
+                Err(_) => {
+                    let error_msg = "Timeout waiting for USDC approval confirmation".to_string();
+                    tracing::error!("{}", error_msg);
+                    sentry::capture_message(&error_msg, sentry::Level::Error);
+                    return Err(error_msg);
+                }
+            };
 
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                error_msg
-            })
-    })
-    .await?;
-
-    tracing::info!("USDC approval transaction sent, waiting for confirmation...");
-    let approval_receipt =
-        match timeout(Duration::from_secs(60), approval_pending_tx.get_receipt()).await {
-            Ok(Ok(receipt)) => {
-                tracing::info!("USDC approval confirmed!");
-                receipt
-            }
-            Ok(Err(e)) => {
-                let error_msg = format!("USDC approval transaction failed: {e}");
-                tracing::error!("{}", error_msg);
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                return Err(error_msg);
-            }
-            Err(_) => {
-                let error_msg = "Timeout waiting for USDC approval confirmation".to_string();
-                tracing::error!("{}", error_msg);
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                return Err(error_msg);
-            }
-        };
-
-    let approval_tx_hash = approval_receipt.transaction_hash;
-    tracing::info!(
-        "USDC approval transaction confirmed: {:?}",
-        approval_tx_hash
-    );
+        let tx_hash = approval_receipt.transaction_hash;
+        tracing::info!("USDC approval transaction confirmed: {:?}", tx_hash);
+        tx_hash
+    } else {
+        tracing::info!("Sufficient allowance ({} >= {}), skipping approval", allowance, required_allowance);
+        Default::default() // No approval needed
+    };
 
     // Execute liquidity deposit transaction (serialized)
     tracing::info!("Depositing liquidity for perp...");
@@ -1040,34 +1036,47 @@ async fn execute_individual_deposit(
         return Err(error_msg);
     }
 
-    // Execute USDC approval
-    let approval_result = execute_transaction_serialized(async {
-        usdc_contract
-            .approve(state.perp_hook_address, U256::from(margin_amount_usdc))
-            .send()
-            .await
-            .map_err(|e| {
-                let error_msg = format!("USDC approval failed: {e}");
-                if let Some(revert_reason) = try_decode_revert_reason(&e) {
-                    tracing::error!("Approval revert: {}", revert_reason);
-                }
-                error_msg
-            })
-    })
-    .await;
+    // Check current allowance and only approve if needed
+    let allowance = usdc_contract
+        .allowance(state.wallet_address, state.perp_hook_address)
+        .call()
+        .await
+        .map_err(|e| format!("Failed to check USDC allowance: {e}"))?;
+    let required_allowance = U256::from(margin_amount_usdc);
 
-    let approval_pending_tx = match approval_result {
-        Ok(tx) => tx,
-        Err(e) => return Err(e),
-    };
+    if allowance < required_allowance {
+        // Execute USDC approval only when needed
+        let approval_result = execute_transaction_serialized(async {
+            usdc_contract
+                .approve(state.perp_hook_address, required_allowance)
+                .send()
+                .await
+                .map_err(|e| {
+                    let error_msg = format!("USDC approval failed: {e}");
+                    if let Some(revert_reason) = try_decode_revert_reason(&e) {
+                        tracing::error!("Approval revert: {}", revert_reason);
+                    }
+                    error_msg
+                })
+        })
+        .await;
 
-    // Wait for approval confirmation
-    let _approval_receipt =
+        let approval_pending_tx = match approval_result {
+            Ok(tx) => tx,
+            Err(e) => return Err(e),
+        };
+
+        // Wait for approval confirmation
         match timeout(Duration::from_secs(60), approval_pending_tx.get_receipt()).await {
-            Ok(Ok(receipt)) => receipt,
+            Ok(Ok(_receipt)) => {
+                tracing::info!("USDC approval confirmed for {}", margin_amount_usdc);
+            }
             Ok(Err(e)) => return Err(format!("USDC approval transaction failed: {e}")),
             Err(_) => return Err("Timeout waiting for USDC approval".to_string()),
-        };
+        }
+    } else {
+        tracing::info!("Sufficient allowance, skipping approval");
+    }
 
     // Execute liquidity deposit
     // Get tick bounds from config
