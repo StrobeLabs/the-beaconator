@@ -1737,7 +1737,7 @@ pub async fn batch_deploy_perps_for_beacons(
             }
         };
 
-        match crate::services::perp::operations::deploy_perp_for_beacon(state, beacon_addr).await {
+        match deploy_perp_for_beacon(state, beacon_addr).await {
             Ok(response) => {
                 let perp_id = response.perp_id.clone();
                 perp_ids.push(response.perp_id);

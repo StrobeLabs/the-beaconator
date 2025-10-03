@@ -209,9 +209,12 @@ pub async fn create_rocket() -> Rocket<Build> {
         .ok()
         .and_then(|addr_str| {
             Address::from_str(&addr_str)
-                .map_err(|e| {
-                    tracing::warn!("Failed to parse DICHOTOMOUS_BEACON_FACTORY_ADDRESS '{}': {}", addr_str, e);
-                    e
+                .inspect_err(|e| {
+                    tracing::warn!(
+                        "Failed to parse DICHOTOMOUS_BEACON_FACTORY_ADDRESS '{}': {}",
+                        addr_str,
+                        e
+                    );
                 })
                 .ok()
         });
@@ -219,7 +222,9 @@ pub async fn create_rocket() -> Rocket<Build> {
     if let Some(addr) = dichotomous_beacon_factory_address {
         tracing::info!("Dichotomous beacon factory address loaded: {:?}", addr);
     } else {
-        tracing::info!("DICHOTOMOUS_BEACON_FACTORY_ADDRESS not set - verifiable beacon route will be disabled");
+        tracing::info!(
+            "DICHOTOMOUS_BEACON_FACTORY_ADDRESS not set - verifiable beacon route will be disabled"
+        );
     }
 
     let usdc_transfer_limit = env::var("USDC_TRANSFER_LIMIT")

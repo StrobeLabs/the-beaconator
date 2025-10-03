@@ -46,9 +46,7 @@ async fn test_deploy_perp_for_beacon_integration() {
             );
         }
         Err(e) => {
-            println!(
-                "Perp deployment failed (may be expected with test contracts): {e}"
-            );
+            println!("Perp deployment failed (may be expected with test contracts): {e}");
             // Should get to the contract interaction stage, not fail on validation
             assert!(
                 !e.contains("Beacon address cannot be zero"),
@@ -146,9 +144,7 @@ async fn test_multiple_perp_deployments() {
                 successful_deployments += 1;
             }
             Err(e) => {
-                println!(
-                    "Perp deployment {i} failed for beacon {beacon_address}: {e}"
-                );
+                println!("Perp deployment {i} failed for beacon {beacon_address}: {e}");
             }
         }
     }
@@ -335,9 +331,7 @@ async fn test_concurrent_perp_operations() {
 
         println!("Concurrent perp deployments: {success_count} successes");
     } else {
-        println!(
-            "Failed to create beacon for concurrent test: {beacon_result:?}"
-        );
+        println!("Failed to create beacon for concurrent test: {beacon_result:?}");
     }
 }
 

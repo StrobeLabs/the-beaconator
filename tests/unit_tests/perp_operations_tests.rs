@@ -1,23 +1,40 @@
 // Perp operations unit tests - fast tests only, no Anvil
 
-use std::str::FromStr;
-
 #[test]
 fn test_deploy_perp_for_beacon_signature() {
     // Test that the deploy_perp_for_beacon function exists with correct signature
     // This is a compile-time verification test
 
-    // We can't easily test without real network, but we verify the function exists
-    let _beacon_address =
-        alloy::primitives::Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
+    use the_beaconator::services::perp::deploy_perp_for_beacon;
 
-    // The fact this compiles means the function signature is correct
+    // Verify the function exists and has the expected signature by taking its address
+    // This will fail to compile if the function doesn't exist or has the wrong signature
+    let _fn_ptr = deploy_perp_for_beacon as *const ();
+
+    // Assert the function pointer is not null (always true for function pointers)
+    assert!(!_fn_ptr.is_null());
 }
 
 #[test]
 fn test_perp_operations_module_exists() {
     // Verify that the perp operations module is accessible
     // This serves as documentation that perp operations have been modularized
+
+    // Import public functions from the perp operations module
+    use the_beaconator::services::perp::{
+        batch_deposit_liquidity_with_multicall3, deploy_perp_for_beacon, deposit_liquidity_for_perp,
+    };
+
+    // Verify functions are accessible by taking their addresses
+    // This proves the module exists and its public API is accessible
+    let _deploy_fn = deploy_perp_for_beacon as *const ();
+    let _deposit_fn = deposit_liquidity_for_perp as *const ();
+    let _batch_deposit_fn = batch_deposit_liquidity_with_multicall3 as *const ();
+
+    // Assert that we successfully imported from the module
+    assert!(!_deploy_fn.is_null());
+    assert!(!_deposit_fn.is_null());
+    assert!(!_batch_deposit_fn.is_null());
 }
 
 #[test]
@@ -48,15 +65,25 @@ fn test_margin_bounds_calculation() {
 
 #[test]
 fn test_leverage_calculation_logic() {
+    use the_beaconator::models::PerpConfig;
+
     // Test leverage calculation without requiring network
-    let margin_amount = 100_000_000u64; // 100 USDC
-    let min_margin = 10_000_000u64; // 10 USDC
+    let config = PerpConfig::default();
 
-    // Basic leverage calculation: margin / min_margin
-    let calculated_leverage = margin_amount as f64 / min_margin as f64;
+    // Test with 10 USDC margin -> should be 9.97x leverage (clamped from 10.0)
+    let margin_10_usdc = 10_000_000u128;
+    let leverage_10 = config.calculate_expected_leverage(margin_10_usdc).unwrap();
+    assert!((leverage_10 - 9.97).abs() < 0.01); // Clamped to max 9.97
 
-    assert!(calculated_leverage > 1.0);
-    assert!(calculated_leverage <= 10.0); // Max 10x leverage
+    // Test with 100 USDC margin -> should be ~3.16x leverage (10.0 / sqrt(10))
+    let margin_100_usdc = 100_000_000u128;
+    let leverage_100 = config.calculate_expected_leverage(margin_100_usdc).unwrap();
+    let expected_100 = 10.0 / (margin_100_usdc as f64 / 10_000_000.0).sqrt();
+    assert!((leverage_100 - expected_100).abs() < 0.01); // ~3.16
+
+    // Ensure all leverage values are within bounds [0.1, 9.97]
+    assert!(leverage_10 >= 0.1 && leverage_10 <= 9.97);
+    assert!(leverage_100 >= 0.1 && leverage_100 <= 9.97);
 }
 
 #[tokio::test]

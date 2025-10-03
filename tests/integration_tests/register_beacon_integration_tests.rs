@@ -122,9 +122,7 @@ async fn test_register_beacon_with_different_registries() {
     match register2_result {
         Ok(_) => println!("Registered with second registry (unexpected success)"),
         Err(e) => {
-            println!(
-                "Registration with second registry failed as expected: {e}"
-            );
+            println!("Registration with second registry failed as expected: {e}");
             // Should not be a validation error, but a contract call error
             assert!(!e.contains("Invalid"));
         }
@@ -151,10 +149,7 @@ async fn test_register_multiple_beacons_sequentially() {
         // Create beacon
         let beacon_result =
             create_beacon_via_factory(&app_state, owner_address, factory_address).await;
-        assert!(
-            beacon_result.is_ok(),
-            "Beacon {i} creation should succeed"
-        );
+        assert!(beacon_result.is_ok(), "Beacon {i} creation should succeed");
         let beacon_address = beacon_result.unwrap();
 
         // Register beacon

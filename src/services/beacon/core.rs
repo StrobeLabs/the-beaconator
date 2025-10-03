@@ -570,12 +570,21 @@ pub async fn register_beacon_with_registry(
     );
     tracing::info!("Registration confirmed in block {:?}", receipt.block_number);
 
-    sentry::capture_message(
-        &format!("Beacon {beacon_address} registered with registry {registry_address}"),
-        sentry::Level::Info,
-    );
-
-    Ok(tx_hash)
+    // Check transaction status - only success if true
+    if receipt.status() {
+        tracing::info!("Registration transaction succeeded (status: true)");
+        sentry::capture_message(
+            &format!("Beacon {beacon_address} registered with registry {registry_address}"),
+            sentry::Level::Info,
+        );
+        Ok(tx_hash)
+    } else {
+        let error_msg = format!("Registration transaction {tx_hash} reverted (status: false)");
+        tracing::error!("{}", error_msg);
+        tracing::error!("Beacon: {}, Registry: {}", beacon_address, registry_address);
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        Err(error_msg)
+    }
 }
 
 /// Updates a beacon with new data using a proof.
@@ -689,5 +698,15 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
         receipt.transaction_hash
     );
 
-    Ok(tx_hash)
+    // Check transaction status - only success if true
+    if receipt.status() {
+        tracing::info!("Update transaction succeeded (status: true)");
+        Ok(tx_hash)
+    } else {
+        let error_msg = format!("Update transaction {tx_hash} reverted (status: false)");
+        tracing::error!("{}", error_msg);
+        tracing::error!("Receipt: {:?}", receipt);
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        Err(error_msg)
+    }
 }

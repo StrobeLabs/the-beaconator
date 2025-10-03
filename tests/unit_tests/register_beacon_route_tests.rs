@@ -254,10 +254,7 @@ fn test_address_parsing_for_register_beacon() {
 
     for addr_str in valid_addresses {
         let result = Address::from_str(addr_str);
-        assert!(
-            result.is_ok(),
-            "Failed to parse valid address: {addr_str}"
-        );
+        assert!(result.is_ok(), "Failed to parse valid address: {addr_str}");
     }
 
     let invalid_addresses = vec![

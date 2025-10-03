@@ -35,41 +35,45 @@ async fn test_is_beacon_registered_with_mock_state() {
 
 #[tokio::test]
 async fn test_is_transaction_confirmed_with_mock_state() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let tx_hash =
         B256::from_str("0x1234567890123456789012345678901234567890123456789012345678901234")
             .unwrap();
 
-    // This will fail in test environment due to no network, which is expected
+    // Should fail deterministically due to mock provider
     let result = is_transaction_confirmed(&app_state, tx_hash).await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_create_beacon_via_factory_network_failure() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let owner_address = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
     let factory_address = Address::from_str("0x0987654321098765432109876543210987654321").unwrap();
 
-    // This will fail in test environment due to no network, which is expected
+    // Should fail deterministically due to mock provider
     let result = create_beacon_via_factory(&app_state, owner_address, factory_address).await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_register_beacon_with_registry_network_failure() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let beacon_address = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
     let registry_address = Address::from_str("0x0987654321098765432109876543210987654321").unwrap();
 
-    // This will fail in test environment due to no network, which is expected
+    // Should fail deterministically due to mock provider
     let result = register_beacon_with_registry(&app_state, beacon_address, registry_address).await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_update_beacon_empty_address() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
 
     let request = UpdateBeaconRequest {
         beacon_address: "".to_string(),
@@ -84,7 +88,8 @@ async fn test_update_beacon_empty_address() {
 
 #[tokio::test]
 async fn test_update_beacon_zero_address() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
 
     let request = UpdateBeaconRequest {
         beacon_address: "0x0000000000000000000000000000000000000000".to_string(),
@@ -92,14 +97,15 @@ async fn test_update_beacon_zero_address() {
         proof: vec![1, 2, 3, 4],
     };
 
-    // Valid address format, but will fail at network level
+    // Valid address format, but should fail deterministically at network level
     let result = update_beacon(&app_state, request).await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_update_beacon_max_address() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
 
     let request = UpdateBeaconRequest {
         beacon_address: "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF".to_string(),
@@ -107,14 +113,15 @@ async fn test_update_beacon_max_address() {
         proof: vec![1, 2, 3, 4],
     };
 
-    // Valid address format, but will fail at network level
+    // Valid address format, but should fail deterministically at network level
     let result = update_beacon(&app_state, request).await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_update_beacon_various_proof_sizes() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
 
     let test_proofs = vec![
         vec![],           // Empty proof
@@ -132,14 +139,15 @@ async fn test_update_beacon_various_proof_sizes() {
         };
 
         let result = update_beacon(&app_state, request).await;
-        // Should fail at network level, not due to proof size
+        // Should fail deterministically at network level, not due to proof size
         assert!(result.is_err());
     }
 }
 
 #[tokio::test]
 async fn test_update_beacon_various_values() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
 
     let test_values = vec![0, 1, 100, 1000, u64::MAX];
 
@@ -151,7 +159,7 @@ async fn test_update_beacon_various_values() {
         };
 
         let result = update_beacon(&app_state, request).await;
-        // Should fail at network level, not due to value
+        // Should fail deterministically at network level, not due to value
         assert!(result.is_err());
     }
 }
@@ -348,10 +356,7 @@ fn test_address_parsing_edge_cases() {
 
     for addr_str in valid_addresses {
         let result = Address::from_str(addr_str);
-        assert!(
-            result.is_ok(),
-            "Failed to parse valid address: {addr_str}"
-        );
+        assert!(result.is_ok(), "Failed to parse valid address: {addr_str}");
     }
 
     // Test invalid addresses

@@ -70,6 +70,22 @@ pub async fn create_verifiable_beacon(
                     );
                     if let Ok(fresh_nonce) = get_fresh_nonce_from_alternate(state).await {
                         tracing::info!("Retrying with fresh nonce: {}", fresh_nonce);
+                        return contract
+                            .createBeacon(
+                                verifier_address,
+                                U256::from(request.initial_data),
+                                request.initial_cardinality,
+                            )
+                            .nonce(fresh_nonce)
+                            .send()
+                            .await
+                            .map_err(|retry_err| {
+                                let msg = format!(
+                                    "Failed to resend createBeacon transaction after nonce sync: {retry_err}"
+                                );
+                                tracing::error!("{}", msg);
+                                msg
+                            });
                     }
                 }
                 Err(error_msg)

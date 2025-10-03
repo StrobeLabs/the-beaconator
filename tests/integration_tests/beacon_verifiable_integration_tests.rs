@@ -188,9 +188,7 @@ async fn test_concurrent_verifiable_beacon_operations() {
         }
     }
 
-    println!(
-        "Concurrent verifiable beacon operations: {success_count} successes"
-    );
+    println!("Concurrent verifiable beacon operations: {success_count} successes");
 }
 
 /// Test verifiable beacon operations with extreme values

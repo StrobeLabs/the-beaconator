@@ -735,7 +735,11 @@ pub async fn deposit_liquidity_for_perp(
     let required_allowance = U256::from(margin_amount_usdc);
 
     let approval_tx_hash = if allowance < required_allowance {
-        tracing::info!("Insufficient allowance ({} < {}), approving USDC spending", allowance, required_allowance);
+        tracing::info!(
+            "Insufficient allowance ({} < {}), approving USDC spending",
+            allowance,
+            required_allowance
+        );
 
         // Execute USDC approval transaction (serialized)
         let approval_pending_tx = execute_transaction_serialized(async {
@@ -790,7 +794,11 @@ pub async fn deposit_liquidity_for_perp(
         tracing::info!("USDC approval transaction confirmed: {:?}", tx_hash);
         tx_hash
     } else {
-        tracing::info!("Sufficient allowance ({} >= {}), skipping approval", allowance, required_allowance);
+        tracing::info!(
+            "Sufficient allowance ({} >= {}), skipping approval",
+            allowance,
+            required_allowance
+        );
         Default::default() // No approval needed
     };
 

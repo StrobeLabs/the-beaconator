@@ -266,21 +266,26 @@ async fn batch_update_with_multicall3(
                                         let error_msg = if call_result.returnData.is_empty() {
                                             "Call failed with no return data".to_string()
                                         } else {
-                                            format!("Call failed: 0x{}", hex::encode(&call_result.returnData))
+                                            format!(
+                                                "Call failed: 0x{}",
+                                                hex::encode(&call_result.returnData)
+                                            )
                                         };
                                         results.push((beacon_address.clone(), Err(error_msg)));
                                     }
                                 } else {
                                     results.push((
                                         beacon_address.clone(),
-                                        Err("Missing result data for call".to_string())
+                                        Err("Missing result data for call".to_string()),
                                     ));
                                 }
                             }
                         }
                         Err(e) => {
                             // If we can't decode results, assume all succeeded (fallback)
-                            tracing::warn!("Failed to decode multicall3 results: {e}, assuming all succeeded");
+                            tracing::warn!(
+                                "Failed to decode multicall3 results: {e}, assuming all succeeded"
+                            );
                             for beacon_address in beacon_addresses {
                                 results.push((beacon_address, Ok(tx_hash.clone())));
                             }

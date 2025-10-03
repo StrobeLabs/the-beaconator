@@ -61,7 +61,8 @@ async fn test_deploy_perp_short_address() {
 
 #[tokio::test]
 async fn test_deploy_perp_valid_address_network_failure() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -69,7 +70,7 @@ async fn test_deploy_perp_valid_address_network_failure() {
         beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
     });
 
-    // Should fail due to network issues in test environment
+    // Should fail deterministically due to mock provider
     let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::InternalServerError);
@@ -256,7 +257,8 @@ async fn test_batch_deposit_liquidity_mixed_valid_invalid() {
 
 #[tokio::test]
 async fn test_deposit_liquidity_below_minimum() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -268,13 +270,14 @@ async fn test_deposit_liquidity_below_minimum() {
 
     let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
 
-    // Should fail with validation error or network error
+    // Should fail deterministically (validation error or mock provider error)
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_deploy_perp_address_case_sensitivity() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -285,13 +288,14 @@ async fn test_deploy_perp_address_case_sensitivity() {
 
     let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
 
-    // Should handle case-insensitive addresses but fail due to network
+    // Should handle case-insensitive addresses but fail deterministically due to mock provider
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_deposit_liquidity_perp_id_without_0x_prefix() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -302,7 +306,7 @@ async fn test_deposit_liquidity_perp_id_without_0x_prefix() {
 
     let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
 
-    // Hex strings without 0x prefix might parse but will fail at network level
+    // Hex strings without 0x prefix might parse but will fail deterministically
     assert!(result.is_err());
 }
 

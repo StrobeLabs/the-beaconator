@@ -113,10 +113,7 @@ async fn test_update_beacon_integration() {
         Err(e) => {
             println!("Beacon update failed (expected): {e}");
             // Should fail with contract-level error, not network error
-            assert!(
-                !e.contains("network"),
-                "Should not be a network error: {e}"
-            );
+            assert!(!e.contains("network"), "Should not be a network error: {e}");
         }
     }
 }

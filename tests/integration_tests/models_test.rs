@@ -265,7 +265,7 @@ mod tests {
         // Test CreateVerifiableBeaconRequest required fields
         let create_json = r#"{
             "verifier_address": "0x1234567890123456789012345678901234567890",
-            "initial_data": 100,
+            "initial_data": 7922816251426433759354395033600,
             "initial_cardinality": 100
         }"#;
 
@@ -275,7 +275,7 @@ mod tests {
             create_request.verifier_address,
             "0x1234567890123456789012345678901234567890"
         );
-        assert_eq!(create_request.initial_data, 100); // Raw value
+        assert_eq!(create_request.initial_data, 7922816251426433759354395033600); // 100 << 96 (pre-scaled)
         assert_eq!(create_request.initial_cardinality, 100);
     }
 

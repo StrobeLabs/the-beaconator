@@ -580,6 +580,50 @@ pub fn create_simple_test_app_state() -> AppState {
     }
 }
 
+/// Create a test AppState with a custom provider (for mocking network behavior)
+pub fn create_test_app_state_with_provider(
+    provider: Arc<the_beaconator::AlloyProvider>,
+) -> AppState {
+    AppState {
+        provider,
+        alternate_provider: None,
+        wallet_address: Address::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+        beacon_abi: JsonAbi::new(),
+        beacon_factory_abi: JsonAbi::new(),
+        beacon_registry_abi: JsonAbi::new(),
+        perp_hook_abi: JsonAbi::new(),
+        multicall3_abi: JsonAbi::new(),
+        dichotomous_beacon_factory_abi: JsonAbi::new(),
+        step_beacon_abi: JsonAbi::new(),
+        beacon_factory_address: Address::from_str("0x1234567890123456789012345678901234567890")
+            .unwrap(),
+        perpcity_registry_address: Address::from_str("0x2345678901234567890123456789012345678901")
+            .unwrap(),
+        perp_hook_address: Address::from_str("0x3456789012345678901234567890123456789012").unwrap(),
+        usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
+        dichotomous_beacon_factory_address: None, // Not configured by default in tests
+        usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
+        eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
+        access_token: "test_token".to_string(),
+        perp_config: PerpConfig::default(),
+        multicall3_address: Some(
+            Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
+        ), // Standard multicall3 address for tests
+    }
+}
+
+/// Create a mock provider that always returns network errors (for deterministic testing)
+pub fn create_mock_provider_with_network_error() -> Arc<the_beaconator::AlloyProvider> {
+    // Use a non-existent endpoint that will fail deterministically
+    let signer = alloy::signers::local::PrivateKeySigner::random();
+    let wallet = alloy::network::EthereumWallet::from(signer);
+    let provider = alloy::providers::ProviderBuilder::new()
+        .wallet(wallet)
+        .connect_http("http://127.0.0.1:1".parse().unwrap()); // Port 1 - guaranteed to fail
+
+    Arc::new(provider)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

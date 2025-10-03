@@ -225,9 +225,7 @@ async fn test_deploy_perp_for_beacon_with_anvil() {
             assert!(!response.transaction_hash.is_empty());
         }
         Err(e) => {
-            println!(
-                "Perp deployment failed (expected in some environments): {e}"
-            );
+            println!("Perp deployment failed (expected in some environments): {e}");
             // In CI or limited environments, this might fail - that's ok for testing
         }
     }

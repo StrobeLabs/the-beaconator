@@ -10,7 +10,8 @@ use the_beaconator::services::transaction::multicall::{
 
 #[tokio::test]
 async fn test_execute_multicall_empty_calls() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let multicall_address =
         Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap();
     let calls = vec![];
@@ -22,7 +23,8 @@ async fn test_execute_multicall_empty_calls() {
 
 #[tokio::test]
 async fn test_execute_multicall_single_call() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let multicall_address =
         Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap();
 
@@ -33,14 +35,15 @@ async fn test_execute_multicall_single_call() {
     );
     let calls = vec![call];
 
-    // This will fail in test environment due to no network, which is expected
+    // Should fail deterministically due to mock provider
     let result = execute_multicall(&app_state, multicall_address, calls).await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_execute_multicall_multiple_calls() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let multicall_address =
         Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap();
 
@@ -62,14 +65,15 @@ async fn test_execute_multicall_multiple_calls() {
         ),
     ];
 
-    // This will fail in test environment due to no network, which is expected
+    // Should fail deterministically due to mock provider
     let result = execute_multicall(&app_state, multicall_address, calls).await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_execute_batch_beacon_creation_multicall_empty() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let multicall_address =
         Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap();
     let calls = vec![];
@@ -86,7 +90,8 @@ async fn test_execute_batch_beacon_creation_multicall_empty() {
 
 #[tokio::test]
 async fn test_execute_batch_beacon_creation_multicall_network_failure() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let multicall_address =
         Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap();
 
@@ -96,7 +101,7 @@ async fn test_execute_batch_beacon_creation_multicall_network_failure() {
         false,
     )];
 
-    // This will fail in test environment due to no network, which is expected
+    // Should fail deterministically due to mock provider
     let result =
         execute_batch_beacon_creation_multicall(&app_state, multicall_address, calls).await;
     assert!(result.is_err());
@@ -104,7 +109,8 @@ async fn test_execute_batch_beacon_creation_multicall_network_failure() {
 
 #[tokio::test]
 async fn test_execute_batch_liquidity_deposit_multicall_empty() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let multicall_address =
         Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap();
     let calls = vec![];
@@ -121,7 +127,8 @@ async fn test_execute_batch_liquidity_deposit_multicall_empty() {
 
 #[tokio::test]
 async fn test_execute_batch_liquidity_deposit_multicall_network_failure() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let multicall_address =
         Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap();
 
@@ -138,7 +145,7 @@ async fn test_execute_batch_liquidity_deposit_multicall_network_failure() {
         ),
     ];
 
-    // This will fail in test environment due to no network, which is expected
+    // Should fail deterministically due to mock provider
     let result =
         execute_batch_liquidity_deposit_multicall(&app_state, multicall_address, calls).await;
     assert!(result.is_err());
