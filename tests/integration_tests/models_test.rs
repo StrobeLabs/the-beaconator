@@ -234,29 +234,6 @@ mod tests {
     }
 
     #[test]
-    fn test_update_verifiable_beacon_request_serialization() {
-        use the_beaconator::models::UpdateVerifiableBeaconRequest;
-
-        let request = UpdateVerifiableBeaconRequest {
-            beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-            proof: "0x123456789abcdef0".to_string(),
-            public_signals: "0x00000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000001".to_string(),
-        };
-
-        // Test JSON serialization
-        let json = serde_json::to_string(&request).unwrap();
-        assert!(json.contains("beacon_address"));
-        assert!(json.contains("proof"));
-        assert!(json.contains("public_signals"));
-
-        // Test JSON deserialization
-        let deserialized: UpdateVerifiableBeaconRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.beacon_address, request.beacon_address);
-        assert_eq!(deserialized.proof, request.proof);
-        assert_eq!(deserialized.public_signals, request.public_signals);
-    }
-
-    #[test]
     fn test_create_verifiable_beacon_request_validation() {
         use the_beaconator::models::CreateVerifiableBeaconRequest;
 
@@ -282,33 +259,8 @@ mod tests {
     }
 
     #[test]
-    fn test_update_verifiable_beacon_request_validation() {
-        use the_beaconator::models::UpdateVerifiableBeaconRequest;
-
-        // Test with various hex string formats
-        let test_cases = vec![
-            ("0x1234", "0x5678"), // With 0x prefix
-            ("1234", "5678"),     // Without 0x prefix
-            ("0x", "0x"),         // Empty hex
-        ];
-
-        for (proof, signals) in test_cases {
-            let request = UpdateVerifiableBeaconRequest {
-                beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-                proof: proof.to_string(),
-                public_signals: signals.to_string(),
-            };
-
-            let json = serde_json::to_string(&request).unwrap();
-            let _: UpdateVerifiableBeaconRequest = serde_json::from_str(&json).unwrap();
-        }
-    }
-
-    #[test]
     fn test_verifiable_beacon_request_field_requirements() {
-        use the_beaconator::models::{
-            CreateVerifiableBeaconRequest, UpdateVerifiableBeaconRequest,
-        };
+        use the_beaconator::models::CreateVerifiableBeaconRequest;
 
         // Test CreateVerifiableBeaconRequest required fields
         let create_json = r#"{
@@ -325,25 +277,6 @@ mod tests {
         );
         assert_eq!(create_request.initial_data, 100); // Raw value
         assert_eq!(create_request.initial_cardinality, 100);
-
-        // Test UpdateVerifiableBeaconRequest required fields
-        let update_json = r#"{
-            "beacon_address": "0x1234567890123456789012345678901234567890",
-            "proof": "0x123456789abcdef0",
-            "public_signals": "0x00000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000001"
-        }"#;
-
-        let update_request: UpdateVerifiableBeaconRequest =
-            serde_json::from_str(update_json).unwrap();
-        assert_eq!(
-            update_request.beacon_address,
-            "0x1234567890123456789012345678901234567890"
-        );
-        assert_eq!(update_request.proof, "0x123456789abcdef0");
-        assert_eq!(
-            update_request.public_signals,
-            "0x00000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000001"
-        );
     }
 
     #[test]

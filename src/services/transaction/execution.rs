@@ -93,6 +93,7 @@ pub fn is_nonce_error(error_msg: &str) -> bool {
         || error_lower.contains("nonce too high")
         || error_lower.contains("invalid nonce")
         || error_lower.contains("nonce is invalid")
+        || error_lower.contains("nonce is too low")
         || error_lower.contains("replacement transaction underpriced")
         || error_lower.contains("replacement tx underpriced")
 }

@@ -10,6 +10,10 @@ use super::IERC20;
 use crate::guards::ApiToken;
 use crate::models::{ApiResponse, AppState, FundGuestWalletRequest};
 
+/// Funds a guest wallet with USDC and ETH.
+///
+/// Transfers the specified amounts of USDC and ETH from the beaconator wallet
+/// to the guest wallet address. Validates transfer limits and available balances.
 #[post("/fund_guest_wallet", format = "json", data = "<request>")]
 pub async fn fund_guest_wallet(
     state: &State<AppState>,

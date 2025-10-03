@@ -2,21 +2,39 @@
 
 ## Current Structure
 
-The Beaconator follows a Rocket.rs web service pattern with the following structure:
+The Beaconator follows a modular Rocket.rs web service pattern with the following structure:
 
 ```
 src/
-├── main.rs           # Entry point
-├── lib.rs           # Core initialization and provider setup
-├── models.rs        # Request/response models and AppState
-├── guards.rs        # Authentication guards
-├── fairings.rs      # Request/response middleware
-└── routes/          # HTTP endpoint handlers
-    ├── mod.rs       # Route mounting and shared utilities
-    ├── beacon.rs    # Beacon operations (2,828 lines)
-    ├── perp.rs      # Perpetual operations (3,351 lines)
-    ├── wallet.rs    # Wallet funding operations
-    └── info.rs      # API documentation endpoints
+├── main.rs              # Entry point
+├── lib.rs              # Core initialization and provider setup
+├── guards.rs           # Authentication guards (Bearer token)
+├── fairings.rs         # Request/response middleware
+├── models/             # Data models module
+│   ├── mod.rs          # Public exports
+│   ├── app_state.rs    # AppState, API metadata, PerpConfig
+│   ├── requests.rs     # Request DTOs
+│   └── responses.rs    # Response DTOs and ApiResponse wrapper
+├── routes/             # HTTP endpoint handlers
+│   ├── mod.rs          # Route mounting and shared utilities
+│   ├── beacon.rs       # Beacon route handlers (~396 lines)
+│   ├── perp.rs         # Perpetual route handlers (~1,790 lines)
+│   ├── wallet.rs       # Wallet funding handlers (~279 lines)
+│   └── info.rs         # API documentation endpoints (~41 lines)
+└── services/           # Business logic layer
+    ├── beacon/         # Beacon service logic
+    │   ├── mod.rs      # Public exports
+    │   ├── core.rs     # Core beacon operations (~695 lines)
+    │   ├── batch.rs    # Batch beacon operations (~451 lines)
+    │   └── verifiable.rs # Verifiable beacon logic (~157 lines)
+    ├── perp/           # Perpetual service logic
+    │   ├── mod.rs      # Public exports
+    │   └── operations.rs # Perp operations (~1,120 lines)
+    └── transaction/    # Transaction management
+        ├── mod.rs      # Public exports
+        ├── execution.rs # Transaction execution (~100 lines)
+        ├── events.rs   # Event parsing and verification (~197 lines)
+        └── multicall.rs # Multicall3 utilities (~212 lines)
 ```
 
 ## Code Organization Guidelines
@@ -42,27 +60,43 @@ When adding new features, follow these patterns:
 
 3. **Shared Logic**:
    - Transaction utilities → `routes/mod.rs`
-   - Common models → `models.rs`
+   - Common models → `models/` module
    - Authentication → `guards.rs`
+   - Middleware → `fairings.rs`
 
-### Current Module Responsibilities
+### Module Responsibilities
 
-#### `routes/beacon.rs`
-- Beacon creation (factory, registry)
-- Beacon updates (single, batch)
-- Verifiable beacon operations
-- Multicall3 batch operations
+#### Routes Layer (`routes/`)
+HTTP endpoint handlers that receive requests and return responses:
+- **`beacon.rs`**: Beacon route handlers (create, batch create, update, batch update, verifiable beacons)
+- **`perp.rs`**: Perpetual route handlers (deploy, batch deploy, liquidity management)
+- **`wallet.rs`**: Wallet funding endpoints (guest wallet funding with ETH/USDC)
+- **`info.rs`**: API documentation and status endpoints
+- **`mod.rs`**: Shared route utilities and transaction helpers
 
-#### `routes/perp.rs`
-- Perpetual deployment
-- Liquidity management
-- Batch liquidity operations
-- Error decoding and recovery
+See [README.md](README.md#api-endpoints) for complete API documentation.
 
-#### `routes/wallet.rs`
-- Guest wallet funding
-- USDC and ETH transfers
-- Balance checks
+#### Services Layer (`services/`)
+Business logic separated from HTTP concerns:
+
+**Beacon Services (`services/beacon/`)**:
+- **`core.rs`**: Core beacon operations (creation via factory, registration)
+- **`batch.rs`**: Batch beacon operations using Multicall3
+- **`verifiable.rs`**: Verifiable beacon logic with ZK proof handling
+
+**Perp Services (`services/perp/`)**:
+- **`operations.rs`**: Perpetual deployment and liquidity management logic
+
+**Transaction Services (`services/transaction/`)**:
+- **`execution.rs`**: Transaction execution and serialization
+- **`events.rs`**: Event parsing and verification from transaction receipts
+- **`multicall.rs`**: Multicall3 utilities for batching contract calls
+
+#### Models Layer (`models/`)
+Data structures and type definitions:
+- **`app_state.rs`**: Application state (AppState), API metadata, PerpConfig
+- **`requests.rs`**: All request DTOs (beacon, perp, wallet operations)
+- **`responses.rs`**: All response DTOs and ApiResponse wrapper
 
 ### Testing Strategy
 
@@ -103,14 +137,20 @@ Tests are organized as follows:
    - Implement RPC fallback for critical operations
    - Handle nonce errors gracefully
 
-## Refactoring Roadmap
+## Architecture Evolution
 
-Future improvements planned:
+Completed modularization (as of Oct 2024):
 
-1. **Phase 1**: Extract test code from large files
-2. **Phase 2**: Create services/ module for shared blockchain logic
-3. **Phase 3**: Split beacon.rs and perp.rs into submodules
-4. **Phase 4**: Move integration tests to tests/ directory
+1. ✅ **Phase 1**: Extracted test code to `tests/` directory
+2. ✅ **Phase 2**: Created `services/` module for blockchain logic
+3. ✅ **Phase 3**: Split into `services/beacon/`, `services/perp/`, `services/transaction/`
+4. ✅ **Phase 4**: Organized into `models/` module (app_state, requests, responses)
+
+The codebase now follows a clean layered architecture:
+- **Routes**: HTTP handlers (thin layer)
+- **Services**: Business logic (core operations)
+- **Models**: Data structures and types
+- **Guards/Fairings**: Cross-cutting concerns
 
 ## Performance Considerations
 

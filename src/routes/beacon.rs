@@ -1,50 +1,146 @@
-use alloy::primitives::{Address, B256, Bytes};
+use alloy::primitives::{Address, B256};
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
 use std::str::FromStr;
 use tracing;
 
-use super::IBeacon;
 use crate::guards::ApiToken;
 use crate::models::{
     ApiResponse, AppState, BatchCreatePerpcityBeaconRequest, BatchCreatePerpcityBeaconResponse,
     BatchUpdateBeaconRequest, BatchUpdateBeaconResponse, CreateBeaconRequest,
-    RegisterBeaconRequest, UpdateBeaconRequest,
+    CreateVerifiableBeaconRequest, RegisterBeaconRequest, UpdateBeaconRequest,
 };
+use crate::services::beacon::verifiable::create_verifiable_beacon as service_create_verifiable_beacon;
 use crate::services::beacon::{
     batch_create_perpcity_beacon as service_batch_create_perpcity_beacon,
     batch_update_beacon as service_batch_update_beacon, create_beacon_via_factory,
-    register_beacon_with_registry,
+    register_beacon_with_registry, update_beacon as service_update_beacon,
 };
-use crate::services::transaction::events::parse_data_updated_event;
 
+/// Creates a new beacon via the beacon factory.
+///
+/// Creates a beacon using the beacon factory contract for the authenticated wallet address.
 #[post("/create_beacon", data = "<_request>")]
 pub async fn create_beacon(
     _request: Json<CreateBeaconRequest>,
     _token: ApiToken,
-) -> Json<ApiResponse<String>> {
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<String>>, Status> {
     tracing::info!("Received request: POST /create_beacon");
-    Json(ApiResponse {
-        success: false,
-        data: None,
-        message: "create_beacon endpoint not yet implemented".to_string(),
-    })
+    let _guard = sentry::Hub::current().push_scope();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("endpoint", "/create_beacon");
+        scope.set_extra("wallet_address", state.wallet_address.to_string().into());
+    });
+
+    let owner_address = state.wallet_address;
+    tracing::info!("Creating beacon for owner: {}", owner_address);
+
+    match create_beacon_via_factory(state.inner(), owner_address, state.beacon_factory_address)
+        .await
+    {
+        Ok(beacon_address) => {
+            tracing::info!("Successfully created beacon at address: {}", beacon_address);
+            sentry::capture_message(
+                &format!("Beacon created successfully at: {beacon_address}"),
+                sentry::Level::Info,
+            );
+            Ok(Json(ApiResponse {
+                success: true,
+                data: Some(beacon_address.to_string()),
+                message: "Beacon created successfully".to_string(),
+            }))
+        }
+        Err(e) => {
+            tracing::error!("Failed to create beacon: {}", e);
+            sentry::capture_message(
+                &format!("Failed to create beacon: {e}"),
+                sentry::Level::Error,
+            );
+            Err(Status::InternalServerError)
+        }
+    }
 }
 
-#[post("/register_beacon", data = "<_request>")]
+/// Registers an existing beacon with the registry.
+///
+/// Registers a previously created beacon with the PerpCity registry contract.
+#[post("/register_beacon", data = "<request>")]
 pub async fn register_beacon(
-    _request: Json<RegisterBeaconRequest>,
+    request: Json<RegisterBeaconRequest>,
     _token: ApiToken,
-) -> Json<ApiResponse<String>> {
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<String>>, Status> {
     tracing::info!("Received request: POST /register_beacon");
-    // TODO: Implement beacon registration
-    Json(ApiResponse {
-        success: false,
-        data: None,
-        message: "register_beacon endpoint not yet implemented".to_string(),
-    })
+    let _guard = sentry::Hub::current().push_scope();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("endpoint", "/register_beacon");
+        scope.set_extra("beacon_address", request.beacon_address.clone().into());
+        scope.set_extra("registry_address", request.registry_address.clone().into());
+    });
+
+    // Parse the beacon address
+    let beacon_address = match Address::from_str(&request.beacon_address) {
+        Ok(addr) => addr,
+        Err(e) => {
+            let error_msg = format!("Invalid beacon address '{}': {}", request.beacon_address, e);
+            tracing::error!("{}", error_msg);
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    // Parse the registry address
+    let registry_address = match Address::from_str(&request.registry_address) {
+        Ok(addr) => addr,
+        Err(e) => {
+            let error_msg = format!(
+                "Invalid registry address '{}': {}",
+                request.registry_address, e
+            );
+            tracing::error!("{}", error_msg);
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    // Register the beacon with the specified registry
+    match register_beacon_with_registry(state.inner(), beacon_address, registry_address).await {
+        Ok(tx_hash) => {
+            let message = if tx_hash == B256::ZERO {
+                "Beacon was already registered"
+            } else {
+                "Beacon registered successfully"
+            };
+            tracing::info!(
+                "{}: {} with registry {}",
+                message,
+                beacon_address,
+                registry_address
+            );
+            sentry::capture_message(
+                &format!("Beacon registered: {beacon_address} at registry {registry_address}"),
+                sentry::Level::Info,
+            );
+            Ok(Json(ApiResponse {
+                success: true,
+                data: Some(format!("Transaction hash: {tx_hash}")),
+                message: message.to_string(),
+            }))
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to register beacon {beacon_address}: {e}");
+            tracing::error!("{}", error_msg);
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            Err(Status::InternalServerError)
+        }
+    }
 }
 
+/// Creates a single PerpCity beacon.
+///
+/// Creates a new beacon via the beacon factory and registers it with the PerpCity registry.
+/// Returns the address of the created beacon on success.
 #[post("/create_perpcity_beacon")]
 pub async fn create_perpcity_beacon(
     _token: ApiToken,
@@ -163,6 +259,10 @@ pub async fn create_perpcity_beacon(
     }
 }
 
+/// Creates multiple PerpCity beacons in a batch operation.
+///
+/// Creates the specified number of beacons (1-100) via the beacon factory and registers
+/// them with the PerpCity registry. Returns details about successful and failed creations.
 #[post("/batch_create_perpcity_beacon", data = "<request>")]
 pub async fn batch_create_perpcity_beacon(
     request: Json<BatchCreatePerpcityBeaconRequest>,
@@ -215,6 +315,10 @@ pub async fn batch_create_perpcity_beacon(
     }
 }
 
+/// Updates a beacon with new data using a zero-knowledge proof.
+///
+/// Validates the provided proof and public signals, then updates the beacon's data.
+/// Returns the transaction hash on success.
 #[post("/update_beacon", data = "<request>")]
 pub async fn update_beacon(
     request: Json<UpdateBeaconRequest>,
@@ -226,103 +330,37 @@ pub async fn update_beacon(
     sentry::configure_scope(|scope| {
         scope.set_tag("endpoint", "/update_beacon");
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
-        scope.set_extra("proof_length", request.proof.len().into());
-        scope.set_extra("signals_length", request.public_signals.len().into());
+        scope.set_extra("value", request.value.into());
     });
 
-    // Parse the beacon address
-    let beacon_address = match Address::from_str(&request.beacon_address) {
-        Ok(addr) => addr,
-        Err(e) => {
-            tracing::error!("Invalid beacon address: {}", e);
-            return Err(Status::BadRequest);
-        }
-    };
-
-    // Parse proof and public signals from hex strings
-    let proof_bytes = match hex::decode(request.proof.trim_start_matches("0x")) {
-        Ok(bytes) => Bytes::from(bytes),
-        Err(e) => {
-            tracing::error!("Invalid proof hex: {}", e);
-            return Err(Status::BadRequest);
-        }
-    };
-
-    let public_signals_bytes = match hex::decode(request.public_signals.trim_start_matches("0x")) {
-        Ok(bytes) => Bytes::from(bytes),
-        Err(e) => {
-            tracing::error!("Invalid public signals hex: {}", e);
-            return Err(Status::BadRequest);
-        }
-    };
-
-    // Create contract instance using the sol! generated interface
-    let contract = IBeacon::new(beacon_address, &*state.provider);
-
-    tracing::debug!(
-        "Sending updateData transaction with proof ({} bytes) and signals ({} bytes)...",
-        proof_bytes.len(),
-        public_signals_bytes.len()
-    );
-
-    // Send the transaction and wait for receipt
-    let receipt = match contract
-        .updateData(proof_bytes.clone(), public_signals_bytes.clone())
-        .send()
-        .await
-    {
-        Ok(pending_tx) => match pending_tx.get_receipt().await {
-            Ok(receipt) => receipt,
-            Err(e) => {
-                tracing::error!("Failed to get receipt: {}", e);
-                sentry::capture_message(
-                    &format!("Failed to get receipt: {e}"),
-                    sentry::Level::Error,
-                );
-                return Err(Status::InternalServerError);
-            }
-        },
-        Err(e) => {
-            tracing::error!("Failed to send transaction: {}", e);
+    match service_update_beacon(state.inner(), request.into_inner()).await {
+        Ok(tx_hash) => {
+            tracing::info!("Successfully updated beacon. TX: {:?}", tx_hash);
             sentry::capture_message(
-                &format!("Failed to send transaction: {e}"),
+                &format!("Beacon updated successfully. TX: {tx_hash:?}"),
+                sentry::Level::Info,
+            );
+            Ok(Json(ApiResponse {
+                success: true,
+                data: Some(format!("Transaction hash: {tx_hash:?}")),
+                message: "Beacon updated successfully".to_string(),
+            }))
+        }
+        Err(e) => {
+            tracing::error!("Failed to update beacon: {}", e);
+            sentry::capture_message(
+                &format!("Failed to update beacon: {e}"),
                 sentry::Level::Error,
             );
-            return Err(Status::InternalServerError);
+            Err(Status::InternalServerError)
         }
-    };
-
-    tracing::info!(
-        "Update transaction confirmed in block {:?}",
-        receipt.block_number
-    );
-
-    // Parse the DataUpdated event to confirm the beacon was actually updated
-    let updated_data = match parse_data_updated_event(&receipt, beacon_address) {
-        Ok(data) => data,
-        Err(e) => {
-            tracing::error!("Failed to parse DataUpdated event: {}", e);
-            sentry::capture_message(&e, sentry::Level::Error);
-            return Err(Status::InternalServerError);
-        }
-    };
-
-    tracing::info!(
-        "Beacon updated successfully with new data: {}",
-        updated_data
-    );
-
-    let message = "Beacon updated successfully";
-    Ok(Json(ApiResponse {
-        success: true,
-        data: Some(format!(
-            "Transaction hash: {:?}, Updated data: {}",
-            receipt.transaction_hash, updated_data
-        )),
-        message: message.to_string(),
-    }))
+    }
 }
 
+/// Updates multiple beacons with new data using zero-knowledge proofs.
+///
+/// Processes a batch of beacon updates, each with their own proof and public signals.
+/// Returns detailed results for each update attempt.
 #[post("/batch_update_beacon", data = "<request>")]
 pub async fn batch_update_beacon(
     request: Json<BatchUpdateBeaconRequest>,
@@ -364,6 +402,52 @@ pub async fn batch_update_beacon(
         Err(error) => {
             tracing::error!("Batch update beacon failed: {}", error);
             Err(Status::BadRequest)
+        }
+    }
+}
+
+/// Creates a verifiable beacon with Halo2 proof verification.
+///
+/// Creates a new verifiable beacon using the DichotomousBeaconFactory with the specified
+/// verifier contract address, initial data value, and TWAP cardinality.
+#[post("/create_verifiable_beacon", data = "<request>")]
+pub async fn create_verifiable_beacon(
+    request: Json<CreateVerifiableBeaconRequest>,
+    _token: ApiToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<String>>, Status> {
+    tracing::info!("Received request: POST /create_verifiable_beacon");
+    let _guard = sentry::Hub::current().push_scope();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("endpoint", "/create_verifiable_beacon");
+        scope.set_extra("verifier_address", request.verifier_address.clone().into());
+        scope.set_extra("initial_data", request.initial_data.to_string().into());
+        scope.set_extra("initial_cardinality", request.initial_cardinality.into());
+    });
+
+    match service_create_verifiable_beacon(state.inner(), request.into_inner()).await {
+        Ok(beacon_address) => {
+            tracing::info!(
+                "Successfully created verifiable beacon at: {}",
+                beacon_address
+            );
+            sentry::capture_message(
+                &format!("Verifiable beacon created successfully at: {beacon_address}"),
+                sentry::Level::Info,
+            );
+            Ok(Json(ApiResponse {
+                success: true,
+                data: Some(beacon_address),
+                message: "Verifiable beacon created successfully".to_string(),
+            }))
+        }
+        Err(e) => {
+            tracing::error!("Failed to create verifiable beacon: {}", e);
+            sentry::capture_message(
+                &format!("Failed to create verifiable beacon: {e}"),
+                sentry::Level::Error,
+            );
+            Err(Status::InternalServerError)
         }
     }
 }

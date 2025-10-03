@@ -485,6 +485,7 @@ impl Default for PerpConfig {
     }
 }
 
+#[derive(Clone)]
 pub struct AppState {
     pub provider: Arc<AlloyProvider>,
     pub alternate_provider: Option<Arc<AlloyProvider>>,

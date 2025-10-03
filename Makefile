@@ -1,6 +1,6 @@
 # Makefile for the-beaconator
 
-.PHONY: help build build-release test test-unit test-integration test-parallel test-verbose test-verify lint fmt check clean docker-build docker-run dev
+.PHONY: help build build-release test test-unit test-integration test-parallel test-verbose test-coverage test-verify lint fmt check clean docker-build docker-run dev
 
 # Default target
 help: ## Show this help message
@@ -61,6 +61,23 @@ test-fast: ## Run tests quickly (unit tests + fast integration tests, under 10s)
 
 test-full: ## Run full test suite including integration tests
 	$(MAKE) test
+
+test-coverage: ## Generate test coverage report using tarpaulin
+	@echo "Generating test coverage report..."
+	@./scripts/anvil-cleanup.sh
+	@echo "Running tests with coverage collection..."
+	@OPTIMAL_THREADS=$$(./scripts/detect-cores.sh); \
+	echo "Using $$OPTIMAL_THREADS threads for coverage collection"; \
+	PATH="$$HOME/.foundry/bin:$$PATH" cargo tarpaulin \
+		--out Html \
+		--output-dir coverage-report \
+		--exclude-files 'tests/*' \
+		--exclude-files 'src/main.rs' \
+		--exclude-files 'src/bin/*' \
+		--timeout 300 \
+		-- --test-threads=$$OPTIMAL_THREADS; \
+	echo "Coverage report generated in coverage-report/ directory"; \
+	echo "Open coverage-report/tarpaulin-report.html to view detailed coverage"
 
 test-verify: ## Verify test coverage and categorization
 	@echo "Verifying test coverage..."

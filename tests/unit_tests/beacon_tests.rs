@@ -154,18 +154,22 @@ fn test_multicall3_atomic_behavior() {
 }
 
 #[tokio::test]
-async fn test_create_beacon_not_implemented() {
+async fn test_create_beacon_functionality() {
+    use rocket::State;
+
     let token = ApiToken("test_token".to_string());
+    let app_state = crate::test_utils::create_simple_test_app_state();
+    let state = State::from(&app_state);
 
     let request = Json(CreateBeaconRequest {
         placeholder: "test".to_string(),
     });
 
-    let result = create_beacon(request, token).await;
-    let response = result.into_inner();
+    // The function will fail with network error in test environment, which is expected
+    let result = create_beacon(request, token, &state).await;
 
-    assert!(!response.success);
-    assert!(response.message.contains("not yet implemented"));
+    // In test environment, this should fail with InternalServerError due to no network
+    assert!(result.is_err());
 }
 
 #[test]

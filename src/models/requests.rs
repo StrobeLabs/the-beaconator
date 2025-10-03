@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateBeaconRequest {
     pub beacon_address: String,
-    pub proof: String,          // ZK proof as hex string
-    pub public_signals: String, // Public signals as hex string
+    pub value: u64,
+    pub proof: Vec<u8>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -27,8 +27,8 @@ pub struct CreateBeaconRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RegisterBeaconRequest {
-    // TODO: Define the fields needed for registering a beacon
-    pub placeholder: String,
+    pub beacon_address: String,
+    pub registry_address: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -39,15 +39,13 @@ pub struct CreateVerifiableBeaconRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct UpdateVerifiableBeaconRequest {
-    pub beacon_address: String, // Address of the verifiable beacon
-    pub proof: String,          // ZK proof as hex string
-    pub public_signals: String, // Public signals as hex string
+pub struct DeployPerpForBeaconRequest {
+    pub beacon_address: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DeployPerpForBeaconRequest {
-    pub beacon_address: String,
+pub struct BatchDeployPerpsForBeaconsRequest {
+    pub beacon_addresses: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

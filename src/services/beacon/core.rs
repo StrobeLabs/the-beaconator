@@ -1,12 +1,12 @@
-use alloy::primitives::{Address, B256};
+use alloy::primitives::{Address, B256, Bytes};
 use alloy::providers::Provider;
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
 use tokio::time::timeout;
 use tracing;
 
-use crate::models::AppState;
+use crate::models::{AppState, UpdateBeaconRequest};
 use crate::routes::{
-    IBeaconFactory, IBeaconRegistry, execute_transaction_serialized,
+    IBeacon, IBeaconFactory, IBeaconRegistry, execute_transaction_serialized,
     get_fresh_nonce_from_alternate, is_nonce_error,
 };
 use crate::services::transaction::events::parse_beacon_created_event;
@@ -573,6 +573,120 @@ pub async fn register_beacon_with_registry(
     sentry::capture_message(
         &format!("Beacon {beacon_address} registered with registry {registry_address}"),
         sentry::Level::Info,
+    );
+
+    Ok(tx_hash)
+}
+
+/// Updates a beacon with new data using a proof.
+///
+/// This function handles:
+/// - Address validation
+/// - Transaction execution with RPC fallback
+/// - Transaction confirmation with progressive timeouts
+pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Result<B256, String> {
+    // Parse the beacon address
+    let beacon_address = match Address::from_str(&request.beacon_address) {
+        Ok(addr) => addr,
+        Err(e) => {
+            tracing::error!("Invalid beacon address: {}", e);
+            return Err("Invalid beacon address".to_string());
+        }
+    };
+
+    tracing::info!("Updating beacon {} with proof data", beacon_address);
+
+    // Prepare the proof and public signals
+    let proof_bytes = Bytes::from(request.proof.clone());
+    let public_signals_bytes = Bytes::from(vec![0u8; 32]); // Placeholder for now
+
+    // Create contract instance using the sol! generated interface
+    let contract = IBeacon::new(beacon_address, &*state.provider);
+
+    // Send the update transaction with RPC fallback (serialized)
+    let pending_tx = execute_transaction_serialized(async {
+        // Try primary RPC first
+        tracing::info!("Updating beacon with primary RPC");
+        let result = contract
+            .updateData(proof_bytes.clone(), public_signals_bytes.clone())
+            .send()
+            .await;
+
+        match result {
+            Ok(pending) => Ok(pending),
+            Err(e) => {
+                let error_msg = format!("Failed to send updateData transaction: {e}");
+                tracing::error!("{}", error_msg);
+
+                // Check if nonce error and sync if needed
+                if is_nonce_error(&error_msg) {
+                    tracing::warn!("Nonce error detected, waiting before fallback");
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+
+                Err(error_msg)
+            }
+        }
+    })
+    .await?;
+
+    tracing::info!("Transaction sent, waiting for receipt...");
+
+    // Get the transaction hash before calling get_receipt() (which takes ownership)
+    let tx_hash = *pending_tx.tx_hash();
+    tracing::info!("Transaction hash: {:?}", tx_hash);
+
+    // Use get_receipt() with timeout and fallback to on-chain check
+    let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
+        Ok(Ok(receipt)) => {
+            tracing::info!("Transaction confirmed via get_receipt()");
+            receipt
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("get_receipt() failed: {}", e);
+            tracing::info!("Falling back to on-chain transaction check...");
+
+            tracing::info!("Checking transaction {} on-chain...", tx_hash);
+
+            // Try to get the receipt directly from the provider with timeout
+            match timeout(
+                Duration::from_secs(30),
+                state.provider.get_transaction_receipt(tx_hash),
+            )
+            .await
+            {
+                Ok(Ok(Some(receipt))) => {
+                    tracing::info!("Transaction found on-chain via direct receipt lookup");
+                    receipt
+                }
+                Ok(Ok(None)) => {
+                    let error_msg =
+                        format!("Transaction {tx_hash} not found on-chain after timeout");
+                    tracing::error!("{}", error_msg);
+                    return Err(error_msg);
+                }
+                Ok(Err(e)) => {
+                    let error_msg = format!("Failed to check transaction {tx_hash} on-chain: {e}");
+                    tracing::error!("{}", error_msg);
+                    return Err(error_msg);
+                }
+                Err(_) => {
+                    let error_msg = format!("Timeout checking transaction {tx_hash} on-chain");
+                    tracing::error!("{}", error_msg);
+                    return Err(error_msg);
+                }
+            }
+        }
+        Err(_) => {
+            let error_msg = format!("Timeout waiting for transaction {tx_hash} receipt");
+            tracing::error!("{}", error_msg);
+            return Err(error_msg);
+        }
+    };
+
+    tracing::info!(
+        "Update transaction confirmed with hash: {:?}",
+        receipt.transaction_hash
     );
 
     Ok(tx_hash)

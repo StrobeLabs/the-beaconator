@@ -31,6 +31,14 @@ pub struct DeployPerpForBeaconResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct BatchDeployPerpsForBeaconsResponse {
+    pub deployed_count: u32,
+    pub perp_ids: Vec<String>, // PoolId as hex strings
+    pub failed_count: u32,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BatchCreatePerpcityBeaconResponse {
     pub created_count: u32,
     pub beacon_addresses: Vec<String>,

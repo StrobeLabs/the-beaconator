@@ -13,12 +13,16 @@ use super::{
 };
 use crate::guards::ApiToken;
 use crate::models::{
-    ApiResponse, AppState, BatchDepositLiquidityForPerpsRequest,
-    BatchDepositLiquidityForPerpsResponse, DeployPerpForBeaconRequest, DeployPerpForBeaconResponse,
-    DepositLiquidityForPerpRequest, DepositLiquidityForPerpResponse,
+    ApiResponse, AppState, BatchDeployPerpsForBeaconsRequest, BatchDeployPerpsForBeaconsResponse,
+    BatchDepositLiquidityForPerpsRequest, BatchDepositLiquidityForPerpsResponse,
+    DeployPerpForBeaconRequest, DeployPerpForBeaconResponse, DepositLiquidityForPerpRequest,
+    DepositLiquidityForPerpResponse,
 };
 
-// Helper function to parse the PerpCreated event from transaction receipt to get perp ID
+/// Parses the PerpCreated event from transaction receipt to extract the perp ID.
+///
+/// Searches through transaction logs to find the PerpCreated event emitted by the
+/// specified PerpHook contract and extracts the perp ID.
 fn parse_perp_created_event(
     receipt: &alloy::rpc::types::TransactionReceipt,
     perp_hook_address: Address,
@@ -42,7 +46,10 @@ fn parse_perp_created_event(
     Err("PerpCreated event not found in transaction receipt".to_string())
 }
 
-// Helper function to parse the MakerPositionOpened event from transaction receipt
+/// Parses the MakerPositionOpened event from transaction receipt.
+///
+/// Searches through transaction logs to find the MakerPositionOpened event for the
+/// specified perp ID and extracts the maker position ID.
 fn parse_maker_position_opened_event(
     receipt: &alloy::rpc::types::TransactionReceipt,
     perp_hook_address: Address,
@@ -67,7 +74,10 @@ fn parse_maker_position_opened_event(
     Err("MakerPositionOpened event not found in transaction receipt".to_string())
 }
 
-// Helper function to deploy a perp for a beacon using configuration from AppState
+/// Deploys a perpetual contract for a specific beacon.
+///
+/// Creates a new perpetual pool using the PerpHook contract with configuration
+/// from AppState. Returns the perp ID and transaction hash on success.
 async fn deploy_perp_for_beacon(
     state: &AppState,
     beacon_address: Address,
@@ -1111,6 +1121,10 @@ async fn deposit_liquidity_for_perp(
     })
 }
 
+/// Deploys a perpetual contract for a specific beacon.
+///
+/// Creates a new perpetual pool using the PerpHook contract for the specified beacon address.
+/// Returns the perp ID, PerpHook address, and transaction hash on success.
 #[post("/deploy_perp_for_beacon", data = "<request>")]
 pub async fn deploy_perp_for_beacon_endpoint(
     request: Json<DeployPerpForBeaconRequest>,
@@ -1202,6 +1216,10 @@ pub async fn deploy_perp_for_beacon_endpoint(
     }
 }
 
+/// Deposits liquidity for a specific perpetual contract.
+///
+/// Approves USDC spending and deposits the specified margin amount as liquidity
+/// for the given perp ID. Returns the maker position ID and transaction hashes.
 #[post("/deposit_liquidity_for_perp", data = "<request>")]
 pub async fn deposit_liquidity_for_perp_endpoint(
     request: Json<DepositLiquidityForPerpRequest>,
@@ -1449,6 +1467,10 @@ pub async fn deposit_liquidity_for_perp_endpoint(
     }
 }
 
+/// Deposits liquidity for multiple perpetual contracts in a batch operation.
+///
+/// Processes multiple liquidity deposits, each with their own perp ID and margin amount.
+/// Returns detailed results for each deposit attempt.
 #[post("/batch_deposit_liquidity_for_perps", data = "<request>")]
 pub async fn batch_deposit_liquidity_for_perps(
     request: Json<BatchDepositLiquidityForPerpsRequest>,
@@ -1663,6 +1685,106 @@ async fn batch_deposit_liquidity_with_multicall3(
     }
 
     results
+}
+
+/// Deploys perpetual contracts for multiple beacons in a batch operation.
+///
+/// Creates perpetual pools for each specified beacon address using the PerpHook contract.
+/// Returns detailed results including perp IDs for successful deployments.
+#[post("/batch_deploy_perps_for_beacons", data = "<request>")]
+pub async fn batch_deploy_perps_for_beacons(
+    request: Json<BatchDeployPerpsForBeaconsRequest>,
+    _token: ApiToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<BatchDeployPerpsForBeaconsResponse>>, Status> {
+    tracing::info!("Received request: POST /batch_deploy_perps_for_beacons");
+    let _guard = sentry::Hub::current().push_scope();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("endpoint", "/batch_deploy_perps_for_beacons");
+        scope.set_extra("requested_count", request.beacon_addresses.len().into());
+    });
+
+    let beacon_count = request.beacon_addresses.len();
+
+    // Validate the count (similar to batch beacon creation)
+    if beacon_count == 0 || beacon_count > 10 {
+        tracing::warn!("Invalid beacon count: {}", beacon_count);
+        return Err(Status::BadRequest);
+    }
+
+    let mut perp_ids = Vec::new();
+    let mut errors = Vec::new();
+
+    for (i, beacon_address) in request.beacon_addresses.iter().enumerate() {
+        let index = i + 1;
+        tracing::info!(
+            "Deploying perp {}/{} for beacon {}",
+            index,
+            beacon_count,
+            beacon_address
+        );
+
+        // Parse the beacon address
+        let beacon_addr = match Address::from_str(beacon_address) {
+            Ok(addr) => addr,
+            Err(e) => {
+                let error_msg =
+                    format!("Failed to parse beacon address {index} ({beacon_address}): {e}");
+                tracing::error!("{}", error_msg);
+                errors.push(error_msg.clone());
+                sentry::capture_message(&error_msg, sentry::Level::Error);
+                continue;
+            }
+        };
+
+        match crate::services::perp::operations::deploy_perp_for_beacon(state, beacon_addr).await {
+            Ok(response) => {
+                let perp_id = response.perp_id.clone();
+                perp_ids.push(response.perp_id);
+                tracing::info!(
+                    "Successfully deployed perp {}: {} for beacon {}",
+                    index,
+                    perp_id,
+                    beacon_address
+                );
+            }
+            Err(e) => {
+                let error_msg =
+                    format!("Failed to deploy perp {index} for beacon {beacon_address}: {e}");
+                tracing::error!("{}", error_msg);
+                errors.push(error_msg.clone());
+                sentry::capture_message(&error_msg, sentry::Level::Error);
+                continue; // Continue with next beacon instead of failing entire batch
+            }
+        }
+    }
+
+    let deployed_count = perp_ids.len() as u32;
+    let failed_count = beacon_count as u32 - deployed_count;
+
+    let response_data = BatchDeployPerpsForBeaconsResponse {
+        deployed_count,
+        perp_ids: perp_ids.clone(),
+        failed_count,
+        errors,
+    };
+
+    let message = if failed_count == 0 {
+        format!("Successfully deployed perps for all {deployed_count} beacons")
+    } else if deployed_count == 0 {
+        "Failed to deploy any perps".to_string()
+    } else {
+        format!("Partially successful: {deployed_count} deployed, {failed_count} failed")
+    };
+
+    tracing::info!("{}", message);
+
+    // Return success even with partial failures, let client handle the response
+    Ok(Json(ApiResponse {
+        success: deployed_count > 0,
+        data: Some(response_data),
+        message,
+    }))
 }
 
 // Tests moved to tests/unit_tests/perp_route_tests.rs

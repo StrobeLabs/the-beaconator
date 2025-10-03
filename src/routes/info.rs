@@ -5,6 +5,10 @@ use tracing;
 use crate::guards::ApiToken;
 use crate::models::{ApiEndpoints, ApiResponse};
 
+/// Returns API summary and available endpoints.
+///
+/// Provides an overview of The Beaconator API including total endpoints,
+/// working endpoints, and not yet implemented endpoints.
 #[get("/")]
 pub fn index() -> Json<ApiResponse<crate::models::ApiSummary>> {
     tracing::info!("Received request: GET /");
@@ -22,6 +26,9 @@ pub fn index() -> Json<ApiResponse<crate::models::ApiSummary>> {
     })
 }
 
+/// Lists all registered beacons.
+///
+/// This endpoint is not yet implemented and returns a placeholder response.
 #[get("/all_beacons")]
 pub fn all_beacons(_token: ApiToken) -> Json<ApiResponse<Vec<String>>> {
     tracing::info!("Received request: GET /all_beacons");
@@ -32,5 +39,3 @@ pub fn all_beacons(_token: ApiToken) -> Json<ApiResponse<Vec<String>>> {
         message: "all_beacons endpoint not yet implemented".to_string(),
     })
 }
-
-// Tests moved to tests/unit_tests/info_tests.rs

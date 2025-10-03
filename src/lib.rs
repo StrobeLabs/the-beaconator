@@ -41,7 +41,9 @@ pub type AlloyProvider = alloy::providers::fillers::FillProvider<
     alloy::network::Ethereum,
 >;
 
-// Load ABIs from files
+/// Loads a contract ABI from a JSON file.
+///
+/// Reads the ABI file from the `abis/` directory and parses it into a JsonAbi struct.
 fn load_abi(name: &str) -> JsonAbi {
     let abi_path = format!("abis/{name}.json");
     let abi_content = std::fs::read_to_string(&abi_path)
@@ -50,7 +52,10 @@ fn load_abi(name: &str) -> JsonAbi {
         .unwrap_or_else(|_| panic!("Failed to parse ABI file: {abi_path}"))
 }
 
-/// Load perp configuration from environment variables with fallback to defaults
+/// Loads perp configuration from environment variables with fallback to defaults.
+///
+/// Reads perp-related configuration from environment variables, falling back to
+/// default values if not specified.
 fn load_perp_config() -> PerpConfig {
     let default_config = PerpConfig::default();
 
@@ -143,6 +148,10 @@ fn load_perp_config() -> PerpConfig {
     }
 }
 
+/// Creates and configures the Rocket application.
+///
+/// Initializes the application state, loads configuration from environment variables,
+/// sets up providers and wallets, and mounts all routes.
 pub async fn create_rocket() -> Rocket<Build> {
     // Load and cache environment variables
     dotenvy::dotenv().ok();
@@ -364,19 +373,21 @@ pub async fn create_rocket() -> Rocket<Build> {
                 routes::beacon::create_perpcity_beacon,
                 routes::beacon::batch_create_perpcity_beacon,
                 routes::perp::deploy_perp_for_beacon_endpoint,
+                routes::perp::batch_deploy_perps_for_beacons,
                 routes::perp::deposit_liquidity_for_perp_endpoint,
                 routes::perp::batch_deposit_liquidity_for_perps,
                 routes::beacon::update_beacon,
                 routes::beacon::batch_update_beacon,
                 routes::wallet::fund_guest_wallet,
-                // TODO: Implement verifiable beacon routes
-                // routes::create_verifiable_beacon,
-                // routes::update_verifiable_beacon
+                routes::beacon::create_verifiable_beacon
             ],
         )
         .register("/", catchers![catch_all_errors, catch_panic])
 }
 
+/// Catches all unhandled errors and returns a formatted error response.
+///
+/// Logs the error and sends it to Sentry for monitoring.
 #[catch(default)]
 fn catch_all_errors(status: rocket::http::Status, request: &Request) -> String {
     let error_msg = format!(
@@ -396,6 +407,9 @@ fn catch_all_errors(status: rocket::http::Status, request: &Request) -> String {
     )
 }
 
+/// Catches panic-related internal server errors.
+///
+/// Logs the panic and sends it to Sentry with fatal level.
 #[catch(500)]
 fn catch_panic(request: &Request) -> String {
     let error_msg = format!(
