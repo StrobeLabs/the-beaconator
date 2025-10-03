@@ -204,15 +204,23 @@ pub async fn create_rocket() -> Rocket<Build> {
         tracing::warn!("MULTICALL3_ADDRESS not set - batch operations will be disabled");
     }
 
-    // Hardcoded dichotomous beacon factory address for verifiable beacons
-    let dichotomous_beacon_factory_address = Some(
-        Address::from_str("0x05C0023b323138d5353018A1c350274932B8e9f6")
-            .expect("Failed to parse dichotomous beacon factory address"),
-    );
-    tracing::info!(
-        "Dichotomous beacon factory address: {:?}",
-        dichotomous_beacon_factory_address
-    );
+    // Load dichotomous beacon factory address from environment
+    let dichotomous_beacon_factory_address = env::var("DICHOTOMOUS_BEACON_FACTORY_ADDRESS")
+        .ok()
+        .and_then(|addr_str| {
+            Address::from_str(&addr_str)
+                .map_err(|e| {
+                    tracing::warn!("Failed to parse DICHOTOMOUS_BEACON_FACTORY_ADDRESS '{}': {}", addr_str, e);
+                    e
+                })
+                .ok()
+        });
+
+    if let Some(addr) = dichotomous_beacon_factory_address {
+        tracing::info!("Dichotomous beacon factory address loaded: {:?}", addr);
+    } else {
+        tracing::info!("DICHOTOMOUS_BEACON_FACTORY_ADDRESS not set - verifiable beacon route will be disabled");
+    }
 
     let usdc_transfer_limit = env::var("USDC_TRANSFER_LIMIT")
         .unwrap_or_else(|_| "1000000000".to_string()) // Default 1000 USDC
@@ -359,29 +367,32 @@ pub async fn create_rocket() -> Rocket<Build> {
         multicall3_address,
     };
 
+    let mut base_routes = rocket::routes![
+        routes::info::index,
+        routes::info::all_beacons,
+        routes::beacon::create_beacon,
+        routes::beacon::register_beacon,
+        routes::beacon::create_perpcity_beacon,
+        routes::beacon::batch_create_perpcity_beacon,
+        routes::perp::deploy_perp_for_beacon_endpoint,
+        routes::perp::batch_deploy_perps_for_beacons,
+        routes::perp::deposit_liquidity_for_perp_endpoint,
+        routes::perp::batch_deposit_liquidity_for_perps,
+        routes::beacon::update_beacon,
+        routes::beacon::batch_update_beacon,
+        routes::wallet::fund_guest_wallet,
+    ];
+
+    // Only register verifiable beacon route if factory address is configured
+    if dichotomous_beacon_factory_address.is_some() {
+        base_routes.extend(rocket::routes![routes::beacon::create_verifiable_beacon]);
+    }
+
     rocket::build()
         .manage(app_state)
         .attach(fairings::RequestLogger)
         .attach(fairings::PanicCatcher)
-        .mount(
-            "/",
-            rocket::routes![
-                routes::info::index,
-                routes::info::all_beacons,
-                routes::beacon::create_beacon,
-                routes::beacon::register_beacon,
-                routes::beacon::create_perpcity_beacon,
-                routes::beacon::batch_create_perpcity_beacon,
-                routes::perp::deploy_perp_for_beacon_endpoint,
-                routes::perp::batch_deploy_perps_for_beacons,
-                routes::perp::deposit_liquidity_for_perp_endpoint,
-                routes::perp::batch_deposit_liquidity_for_perps,
-                routes::beacon::update_beacon,
-                routes::beacon::batch_update_beacon,
-                routes::wallet::fund_guest_wallet,
-                routes::beacon::create_verifiable_beacon
-            ],
-        )
+        .mount("/", base_routes)
         .register("/", catchers![catch_all_errors, catch_panic])
 }
 

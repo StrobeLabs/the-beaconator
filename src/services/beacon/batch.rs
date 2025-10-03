@@ -238,7 +238,8 @@ async fn batch_update_with_multicall3(
     // Execute the multicall3 transaction - single transaction containing all beacon updates
     let multicall_contract = IMulticall3::new(multicall_address, &*state.provider);
 
-    match multicall_contract.aggregate3(calls).send().await {
+    // First send the transaction
+    match multicall_contract.aggregate3(calls.clone()).send().await {
         Ok(pending_tx) => {
             tracing::info!("Multicall3 batch update transaction sent, waiting for receipt...");
             match pending_tx.get_receipt().await {
@@ -250,13 +251,40 @@ async fn batch_update_with_multicall3(
 
                     let tx_hash = format!("{:?}", receipt.transaction_hash);
 
-                    // For now, assume all succeeded - in a real implementation we would
-                    // parse the multicall3 return data to get individual call results
+                    // Call the view version to decode per-call results
                     let mut results = Vec::new();
 
-                    // Add results for successful calls
-                    for beacon_address in beacon_addresses {
-                        results.push((beacon_address, Ok(tx_hash.clone())));
+                    match multicall_contract.aggregate3(calls).call().await {
+                        Ok(call_results) => {
+                            // Iterate results in the same order as beacon_addresses
+                            for (i, beacon_address) in beacon_addresses.iter().enumerate() {
+                                if let Some(call_result) = call_results.get(i) {
+                                    if call_result.success {
+                                        results.push((beacon_address.clone(), Ok(tx_hash.clone())));
+                                    } else {
+                                        // Decode revert/return data
+                                        let error_msg = if call_result.returnData.is_empty() {
+                                            "Call failed with no return data".to_string()
+                                        } else {
+                                            format!("Call failed: 0x{}", hex::encode(&call_result.returnData))
+                                        };
+                                        results.push((beacon_address.clone(), Err(error_msg)));
+                                    }
+                                } else {
+                                    results.push((
+                                        beacon_address.clone(),
+                                        Err("Missing result data for call".to_string())
+                                    ));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            // If we can't decode results, assume all succeeded (fallback)
+                            tracing::warn!("Failed to decode multicall3 results: {e}, assuming all succeeded");
+                            for beacon_address in beacon_addresses {
+                                results.push((beacon_address, Ok(tx_hash.clone())));
+                            }
+                        }
                     }
 
                     // Add results for invalid addresses
