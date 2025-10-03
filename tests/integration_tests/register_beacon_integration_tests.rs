@@ -8,7 +8,7 @@ use the_beaconator::services::beacon::core::{
 
 /// Test beacon registration with Anvil
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_register_beacon_with_anvil() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -51,7 +51,7 @@ async fn test_register_beacon_with_anvil() {
 
 /// Test idempotency - registering the same beacon twice
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_register_beacon_idempotency() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -89,7 +89,7 @@ async fn test_register_beacon_idempotency() {
 
 /// Test registering beacon with different registries
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_register_beacon_with_different_registries() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -136,7 +136,7 @@ async fn test_register_beacon_with_different_registries() {
 
 /// Test registering multiple beacons sequentially
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_register_multiple_beacons_sequentially() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -189,7 +189,7 @@ async fn test_register_multiple_beacons_sequentially() {
 
 /// Test registration with zero beacon address
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_register_zero_beacon_address() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -209,7 +209,7 @@ async fn test_register_zero_beacon_address() {
 
 /// Test registration check for unregistered beacon
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_registration_check_unregistered_beacon() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -230,7 +230,7 @@ async fn test_registration_check_unregistered_beacon() {
 
 /// Test concurrent beacon registrations
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_concurrent_beacon_registrations() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -284,7 +284,7 @@ async fn test_concurrent_beacon_registrations() {
 
 /// Test registration error handling
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_registration_error_handling() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -323,7 +323,7 @@ async fn test_registration_error_handling() {
 
 /// Test registration with timeout
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_registration_with_timeout() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;

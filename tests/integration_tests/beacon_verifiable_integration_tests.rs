@@ -5,7 +5,7 @@ use the_beaconator::services::beacon::verifiable::create_verifiable_beacon;
 
 /// Test verifiable beacon creation with Anvil
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_create_verifiable_beacon_integration() {
     let (mut app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -47,7 +47,7 @@ async fn test_create_verifiable_beacon_integration() {
 
 /// Test verifiable beacon creation without factory configured
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_create_verifiable_beacon_no_factory() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -72,7 +72,7 @@ async fn test_create_verifiable_beacon_no_factory() {
 
 /// Test verifiable beacon creation with invalid verifier address
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_create_verifiable_beacon_invalid_verifier() {
     let (mut app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -93,7 +93,7 @@ async fn test_create_verifiable_beacon_invalid_verifier() {
 
 /// Test verifiable beacon creation with edge case values
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_create_verifiable_beacon_edge_cases() {
     let (mut app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -129,7 +129,7 @@ async fn test_create_verifiable_beacon_edge_cases() {
 
 /// Test verifiable beacon operations with zero address
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_verifiable_beacon_zero_address_handling() {
     let (mut app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -152,7 +152,7 @@ async fn test_verifiable_beacon_zero_address_handling() {
 
 /// Test multiple verifiable beacon operations concurrently
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_concurrent_verifiable_beacon_operations() {
     let (mut app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -198,7 +198,7 @@ async fn test_concurrent_verifiable_beacon_operations() {
 
 /// Test verifiable beacon operations with extreme values
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_verifiable_beacon_extreme_values() {
     let (mut app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;

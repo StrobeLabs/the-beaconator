@@ -451,5 +451,3 @@ pub async fn create_verifiable_beacon(
         }
     }
 }
-
-// Tests moved to tests/unit_tests/beacon_tests.rs

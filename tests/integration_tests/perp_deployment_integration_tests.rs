@@ -10,7 +10,7 @@ use the_beaconator::services::perp::operations::{
 
 /// Test perp deployment for beacon with Anvil
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_deploy_perp_for_beacon_integration() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -65,7 +65,7 @@ async fn test_deploy_perp_for_beacon_integration() {
 
 /// Test perp deployment with zero beacon address
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_deploy_perp_zero_beacon_address() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -86,7 +86,7 @@ async fn test_deploy_perp_zero_beacon_address() {
 
 /// Test perp deployment with invalid beacon (no code)
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_deploy_perp_invalid_beacon() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -107,7 +107,7 @@ async fn test_deploy_perp_invalid_beacon() {
 
 /// Test multiple perp deployments for different beacons
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_multiple_perp_deployments() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -160,7 +160,7 @@ async fn test_multiple_perp_deployments() {
 
 /// Test liquidity deposit functionality
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_deposit_liquidity_for_perp_integration() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -211,7 +211,7 @@ async fn test_deposit_liquidity_for_perp_integration() {
 
 /// Test liquidity deposit with invalid perp id
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_deposit_liquidity_invalid_perp() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -229,7 +229,7 @@ async fn test_deposit_liquidity_invalid_perp() {
 
 /// Test liquidity deposit with zero amounts
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_deposit_liquidity_zero_amount() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -247,7 +247,7 @@ async fn test_deposit_liquidity_zero_amount() {
 
 /// Test liquidity deposit with various price ranges (placeholder)
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_deposit_liquidity_price_ranges() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -296,7 +296,7 @@ async fn test_deposit_liquidity_price_ranges() {
 
 /// Test concurrent perp operations
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_concurrent_perp_operations() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -347,7 +347,7 @@ async fn test_concurrent_perp_operations() {
 
 /// Test perp deployment error handling
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_perp_deployment_error_handling() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
@@ -385,7 +385,7 @@ async fn test_perp_deployment_error_handling() {
 
 /// Test perp operations with extreme values
 #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
+#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_perp_operations_extreme_values() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;

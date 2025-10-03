@@ -249,7 +249,10 @@ async fn test_concurrent_serialized_network_operations() {
     println!("Serialized operations completed in {:?}", elapsed);
 
     // Should complete quickly since no real network calls
-    assert!(elapsed < Duration::from_secs(1), "Operations should complete quickly");
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "Operations should complete quickly"
+    );
 }
 
 /// Test serialized execution error handling

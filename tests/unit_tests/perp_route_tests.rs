@@ -205,7 +205,9 @@ async fn test_batch_deposit_liquidity_empty_deposits() {
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
-    let request = Json(BatchDepositLiquidityForPerpsRequest { liquidity_deposits: vec![] });
+    let request = Json(BatchDepositLiquidityForPerpsRequest {
+        liquidity_deposits: vec![],
+    });
 
     let result = batch_deposit_liquidity_for_perps(request, token, state).await;
 
