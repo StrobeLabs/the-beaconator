@@ -97,8 +97,8 @@ test-verify: ## Verify test coverage and categorization
 	fi
 
 # Code quality targets
-lint: ## Run clippy linter
-	cargo clippy -- -D warnings
+lint: ## Run clippy linter (matches CI configuration)
+	cargo clippy --all --all-targets -- -D warnings
 
 fmt: ## Format code with rustfmt
 	cargo fmt

@@ -32,7 +32,7 @@ async fn test_deposit_liquidity_invalid_perp_id() {
         margin_amount_usdc: "500000000".to_string(),
     });
 
-    let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+    let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);
 }
@@ -51,7 +51,7 @@ async fn test_deposit_liquidity_invalid_margin_amount() {
         margin_amount_usdc: "not_a_number".to_string(),
     });
 
-    let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+    let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);
 }
@@ -69,7 +69,7 @@ async fn test_deposit_liquidity_zero_margin_amount() {
         margin_amount_usdc: "0".to_string(), // 0 USDC
     });
 
-    let result = deposit_liquidity_for_perp_endpoint(request, token, &state).await;
+    let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
     assert!(result.is_err());
     // Should fail with BadRequest due to minimum margin validation
     assert_eq!(result.unwrap_err(), Status::BadRequest);
@@ -88,7 +88,7 @@ async fn test_deploy_perp_invalid_beacon_address() {
         beacon_address: "not_a_valid_address".to_string(),
     });
 
-    let result = deploy_perp_for_beacon_endpoint(request, token, &state).await;
+    let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);
 }
@@ -106,7 +106,7 @@ async fn test_deploy_perp_short_beacon_address() {
         beacon_address: "0x123456".to_string(), // Too short
     });
 
-    let result = deploy_perp_for_beacon_endpoint(request, token, &state).await;
+    let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);
 }
@@ -134,7 +134,7 @@ async fn test_batch_deposit_liquidity_mixed_validity() {
         ],
     });
 
-    let result = batch_deposit_liquidity_for_perps(request, token, &state).await;
+    let result = batch_deposit_liquidity_for_perps(request, token, state).await;
 
     // Should succeed with partial results
     assert!(result.is_ok());
@@ -162,7 +162,7 @@ async fn test_batch_deposit_liquidity_invalid_count() {
         liquidity_deposits: vec![],
     });
 
-    let result = batch_deposit_liquidity_for_perps(request, token, &state).await;
+    let result = batch_deposit_liquidity_for_perps(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);
 }

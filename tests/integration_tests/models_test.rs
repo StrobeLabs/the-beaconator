@@ -105,8 +105,7 @@ mod tests {
         let result = config.validate();
         // With the new pragmatic leverage calculation, this might not fail
         // The test should be updated to reflect the new behavior
-        if result.is_err() {
-            let error_msg = result.unwrap_err();
+        if let Err(error_msg) = result {
             assert!(
                 error_msg.contains("10 USDC margin produces")
                     || error_msg.contains("liquidity")

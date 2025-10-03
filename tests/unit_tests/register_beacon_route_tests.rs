@@ -19,7 +19,7 @@ async fn test_register_beacon_invalid_beacon_address() {
         registry_address: "0x1234567890123456789012345678901234567890".to_string(),
     });
 
-    let result = register_beacon(request, token, &state).await;
+    let result = register_beacon(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);
 }
@@ -35,7 +35,7 @@ async fn test_register_beacon_invalid_registry_address() {
         registry_address: "not_an_address".to_string(),
     });
 
-    let result = register_beacon(request, token, &state).await;
+    let result = register_beacon(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);
 }
@@ -51,7 +51,7 @@ async fn test_register_beacon_both_addresses_invalid() {
         registry_address: "also_invalid".to_string(),
     });
 
-    let result = register_beacon(request, token, &state).await;
+    let result = register_beacon(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);
 }
@@ -68,7 +68,7 @@ async fn test_register_beacon_zero_beacon_address() {
     });
 
     // Zero address is valid format, should attempt registration (will fail at network level)
-    let result = register_beacon(request, token, &state).await;
+    let result = register_beacon(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::InternalServerError);
 }
@@ -85,7 +85,7 @@ async fn test_register_beacon_zero_registry_address() {
     });
 
     // Zero address is valid format, should attempt registration (will fail at network level)
-    let result = register_beacon(request, token, &state).await;
+    let result = register_beacon(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::InternalServerError);
 }
@@ -102,7 +102,7 @@ async fn test_register_beacon_network_failure() {
     });
 
     // Valid addresses but will fail at network call
-    let result = register_beacon(request, token, &state).await;
+    let result = register_beacon(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::InternalServerError);
 }
@@ -120,7 +120,7 @@ async fn test_register_beacon_address_case_sensitivity() {
     });
 
     // Should parse successfully (case insensitive), fail at network level
-    let result = register_beacon(request, token, &state).await;
+    let result = register_beacon(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::InternalServerError);
 }
@@ -137,7 +137,7 @@ async fn test_register_beacon_address_without_0x_prefix() {
     });
 
     // Hex strings without 0x prefix might parse but will fail at network level
-    let result = register_beacon(request, token, &state).await;
+    let result = register_beacon(request, token, state).await;
     assert!(result.is_err());
 }
 
@@ -152,7 +152,7 @@ async fn test_register_beacon_too_short_address() {
         registry_address: "0x1234567890123456789012345678901234567890".to_string(),
     });
 
-    let result = register_beacon(request, token, &state).await;
+    let result = register_beacon(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);
 }
@@ -168,7 +168,7 @@ async fn test_register_beacon_too_long_address() {
         registry_address: "0x1234567890123456789012345678901234567890".to_string(),
     });
 
-    let result = register_beacon(request, token, &state).await;
+    let result = register_beacon(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);
 }
@@ -220,7 +220,7 @@ async fn test_register_beacon_same_beacon_and_registry() {
     });
 
     // Should parse successfully, fail at logic level
-    let result = register_beacon(request, token, &state).await;
+    let result = register_beacon(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::InternalServerError);
 }

@@ -82,8 +82,8 @@ fn test_leverage_calculation_logic() {
     assert!((leverage_100 - expected_100).abs() < 0.01); // ~3.16
 
     // Ensure all leverage values are within bounds [0.1, 9.97]
-    assert!(leverage_10 >= 0.1 && leverage_10 <= 9.97);
-    assert!(leverage_100 >= 0.1 && leverage_100 <= 9.97);
+    assert!((0.1..=9.97).contains(&leverage_10));
+    assert!((0.1..=9.97).contains(&leverage_100));
 }
 
 #[tokio::test]
