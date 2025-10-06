@@ -98,7 +98,7 @@ async fn test_update_beacon_integration() {
 
     // Create update request
     let update_request = UpdateBeaconRequest {
-        beacon_address: format!("{beacon_address:?}"),
+        beacon_address: beacon_address.to_string(),
         value: 12345,
         proof: vec![1, 2, 3, 4, 5, 6, 7, 8],
     };
