@@ -25,6 +25,13 @@ Thumbs.db
 # Logs
 *.log
 
+# Test coverage reports
+coverage/
+coverage-report/
+tarpaulin-report.html
+*.profraw
+*.profdata
+
 # Environment variables
 .env
 .env.local

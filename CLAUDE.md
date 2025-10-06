@@ -19,13 +19,20 @@ Use the Makefile for all development tasks:
 
 ```bash
 make dev          # Start development server
-make test         # Run tests  
-make quality      # Full quality check (format + lint + test)
+make test-fast    # Run quick unit tests (recommended for development)
+make test         # Run full test suite (unit + integration)
+make quality      # Full quality check (format + lint + fast tests)
 make lint         # Run clippy linter with strict warnings
 make fmt          # Format code with rustfmt
 make build        # Build project (debug)
 make build-release # Build project (release)
 ```
+
+### Test Strategy
+- `make test-fast`: Quick unit tests only (~1s) - use during development
+- `make test-integration`: Integration tests with Anvil (~15s)
+- `make test-full`: Complete test suite - use before commits
+- `make quality`: Pre-commit checks with fast tests only
 
 ## Architecture Overview
 
@@ -33,10 +40,17 @@ make build-release # Build project (release)
 
 - **`src/lib.rs`**: Provider setup, ABI loading, and app initialization
 - **`src/models.rs`**: Request/response models and AppState definition
-- **`src/routes.rs`**: API endpoint implementations using sol! contract interfaces
+- **`src/routes/`**: API endpoint implementations
+  - `beacon.rs` (2,828 lines): Beacon operations
+  - `perp.rs` (3,351 lines): Perpetual operations
+  - `wallet.rs`: Wallet funding
+  - `mod.rs`: Shared utilities and transaction management
 - **`src/guards.rs`**: Authentication guard for Bearer token validation
 - **`src/main.rs`**: Entry point that launches Rocket server
 - **`abis/`**: Contract ABI files loaded at runtime
+
+### Code Organization
+See `ARCHITECTURE.md` for detailed guidelines on code organization and best practices for managing large files.
 
 ### Key API Endpoints
 

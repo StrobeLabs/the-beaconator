@@ -1,6 +1,6 @@
 # Makefile for the-beaconator
 
-.PHONY: help build build-release test test-unit test-integration test-parallel test-verbose test-verify lint fmt check clean docker-build docker-run dev
+.PHONY: help build build-release test test-unit test-integration test-parallel test-verbose test-coverage test-verify lint fmt check clean docker-build docker-run dev
 
 # Default target
 help: ## Show this help message
@@ -17,31 +17,67 @@ build: ## Build the application in debug mode
 build-release: ## Build the application in release mode
 	cargo build --release
 
-test: ## Run all tests (CI-style: unit parallel, integration single-threaded)
-	@echo "Running tests CI-style..."
-	@./scripts/anvil-cleanup.sh
-	@echo "Running unit tests (parallel)..."
-	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test models::models_test -- --nocapture
-	@./scripts/anvil-cleanup.sh
-	@echo "Running integration tests (single-threaded)..."
-	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test routes -- --nocapture --test-threads=1
-	@echo "All tests completed successfully ✅"
+test: ## Run all tests (CI-style: optimized parallel execution)
+	@echo "Running tests with optimized parallelism..."
+	@OPTIMAL_THREADS=$$(./scripts/detect-cores.sh); \
+	echo "Detected optimal threads: $$OPTIMAL_THREADS (cores/2)"; \
+	./scripts/anvil-cleanup.sh; \
+	echo "Running unit tests (parallel, $$OPTIMAL_THREADS threads)..."; \
+	PATH="$$HOME/.foundry/bin:$$PATH" cargo test unit_tests -- --nocapture --test-threads=$$OPTIMAL_THREADS; \
+	./scripts/anvil-cleanup.sh; \
+	echo "Running integration tests ($$OPTIMAL_THREADS threads)..."; \
+	PATH="$$HOME/.foundry/bin:$$PATH" cargo test integration_tests -- --nocapture --test-threads=$$OPTIMAL_THREADS; \
+	./scripts/anvil-cleanup.sh; \
+	echo "All tests completed successfully ✅"
 
 test-verbose: ## Run tests with verbose output (legacy single-threaded)
 	PATH="$$HOME/.foundry/bin:$$PATH" cargo test -- --nocapture --test-threads=1
 
 test-unit: ## Run only unit tests (fast, parallel)
-	@echo "Running unit tests in parallel..."
-	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test models::models_test -- --nocapture
+	@echo "Running unit tests with optimal parallelism..."
+	@OPTIMAL_THREADS=$$(./scripts/detect-cores.sh); \
+	echo "Using $$OPTIMAL_THREADS threads (cores/2)"; \
+	PATH="$$HOME/.foundry/bin:$$PATH" cargo test unit_tests -- --nocapture --test-threads=$$OPTIMAL_THREADS
 
-test-integration: ## Run only integration tests (single-threaded)
+test-integration: ## Run only integration tests (optimized parallel)
 	@./scripts/anvil-cleanup.sh
-	@echo "Running integration tests with single thread..."
-	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test routes -- --nocapture --test-threads=1
+	@echo "Running integration tests with optimal parallelism..."
+	@OPTIMAL_THREADS=$$(./scripts/detect-cores.sh); \
+	echo "Using $$OPTIMAL_THREADS threads (cores/2) with isolated Anvil instances"; \
+	PATH="$$HOME/.foundry/bin:$$PATH" cargo test integration_tests -- --nocapture --test-threads=$$OPTIMAL_THREADS
+	@./scripts/anvil-cleanup.sh
 
-test-parallel: ## Run all tests in parallel (may have race conditions)
+test-parallel: ## Run all tests in parallel (maximum parallelism)
 	@./scripts/anvil-cleanup.sh
-	PATH="$$HOME/.foundry/bin:$$PATH" cargo test -- --nocapture
+	@OPTIMAL_THREADS=$$(./scripts/detect-cores.sh); \
+	echo "Running all tests with $$OPTIMAL_THREADS threads"; \
+	PATH="$$HOME/.foundry/bin:$$PATH" cargo test -- --nocapture --test-threads=$$OPTIMAL_THREADS
+
+test-fast: ## Run tests quickly (unit tests + fast integration tests, under 10s)
+	@echo "Running fast tests (unit + fast integration, excludes wallet/nonce tests)..."
+	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test unit_tests -- --nocapture
+	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test integration_tests::models_test -- --nocapture
+	@echo "Fast tests completed ✅"
+
+test-full: ## Run full test suite including integration tests
+	$(MAKE) test
+
+test-coverage: ## Generate test coverage report using tarpaulin
+	@echo "Generating test coverage report..."
+	@./scripts/anvil-cleanup.sh
+	@echo "Running tests with coverage collection..."
+	@OPTIMAL_THREADS=$$(./scripts/detect-cores.sh); \
+	echo "Using $$OPTIMAL_THREADS threads for coverage collection"; \
+	PATH="$$HOME/.foundry/bin:$$PATH" cargo tarpaulin \
+		--out Html \
+		--output-dir coverage-report \
+		--exclude-files 'tests/*' \
+		--exclude-files 'src/main.rs' \
+		--exclude-files 'src/bin/*' \
+		--timeout 300 \
+		-- --test-threads=$$OPTIMAL_THREADS; \
+	echo "Coverage report generated in coverage-report/ directory"; \
+	echo "Open coverage-report/tarpaulin-report.html to view detailed coverage"
 
 test-verify: ## Verify test coverage and categorization
 	@echo "Verifying test coverage..."
@@ -61,8 +97,8 @@ test-verify: ## Verify test coverage and categorization
 	fi
 
 # Code quality targets
-lint: ## Run clippy linter
-	cargo clippy -- -D warnings
+lint: ## Run clippy linter (matches CI configuration)
+	cargo clippy --all --all-targets -- -D warnings
 
 fmt: ## Format code with rustfmt
 	cargo fmt
@@ -76,7 +112,7 @@ check: ## Run cargo check and anvil cleanup (faster than build)
 	./scripts/anvil-cleanup.sh
 
 # Comprehensive quality check
-quality: fmt-check lint test ## Run all quality checks (format, lint, test)
+quality: fmt-check lint test-fast ## Run all quality checks (format, lint, fast tests)
 
 # Cleanup targets
 clean: ## Clean build artifacts

@@ -3,7 +3,10 @@ use rocket::{Request, State, http::Status, request::FromRequest, request::Outcom
 use sentry;
 use tracing;
 
-// API Token guard
+/// API token guard for request authentication.
+///
+/// Validates that requests include a valid Bearer token in the Authorization header.
+/// The token must match the configured BEACONATOR_ACCESS_TOKEN.
 pub struct ApiToken(pub String);
 
 #[rocket::async_trait]

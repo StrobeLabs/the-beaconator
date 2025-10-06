@@ -2,6 +2,9 @@ use rocket::fairing::{Fairing, Info, Kind};
 use rocket::http::Status;
 use rocket::{Data, Request, Response};
 
+/// Logs incoming requests and outgoing responses.
+///
+/// Captures method, URI, remote address, and response status for monitoring and debugging.
 pub struct RequestLogger;
 
 #[rocket::async_trait]
@@ -44,6 +47,9 @@ impl Fairing for RequestLogger {
     }
 }
 
+/// Catches and logs internal server errors that may indicate panics.
+///
+/// Monitors for 500 status responses and reports them to Sentry for investigation.
 pub struct PanicCatcher;
 
 #[rocket::async_trait]

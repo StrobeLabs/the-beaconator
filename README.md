@@ -138,123 +138,58 @@ ENV=testnet
 
 ## API Endpoints
 
+All endpoints require Bearer token authentication (except `GET /`).
+
 ### Base URL
 ```
 http://localhost:8000
 ```
 
-### Endpoints
+### Information Endpoints
 
 #### `GET /`
-Welcome page with available endpoints information.
+API welcome page with endpoint documentation and status information.
 
-#### `POST /update_beacon`
-Update beacon data with a zero-knowledge proof.
+### Beacon Endpoints
 
-**Headers:**
-```
-Authorization: Bearer <your_api_token>
-```
+#### `POST /create_beacon`
+Create a new beacon via the beacon factory contract.
 
-**Request Body:**
-```json
-{
-  "beacon_address": "0x1234567890123456789012345678901234567890",
-  "value": 42,
-  "proof": [1, 2, 3, 4, 5, ...]
-}
-```
+**Request:** Empty JSON object `{}`
 
 **Response:**
 ```json
 {
   "success": true,
-  "data": "Transaction hash: 0x...",
-  "message": "Beacon updated successfully"
-}
-```
-
-#### `GET /all_beacons`
-List all registered beacons (not yet implemented).
-
-**Headers:**
-```
-Authorization: Bearer <your_api_token>
-```
-
-**Response:**
-```json
-{
-  "success": false,
-  "data": null,
-  "message": "all_beacons endpoint not yet implemented"
-}
-```
-
-#### `POST /create_beacon`
-Create a new beacon (not yet implemented).
-
-**Headers:**
-```
-Authorization: Bearer <your_api_token>
-```
-
-**Request Body:**
-```json
-{
-  // TODO: Define beacon creation parameters
-}
-```
-
-#### `POST /register_beacon`
-Register an existing beacon (not yet implemented).
-
-**Headers:**
-```
-Authorization: Bearer <your_api_token>
-```
-
-**Request Body:**
-```json
-{
-  // TODO: Define beacon registration parameters
+  "data": "0x1234567890123456789012345678901234567890",
+  "message": "Beacon created successfully"
 }
 ```
 
 #### `POST /create_perpcity_beacon`
-Create a new beacon and register it with the Perpcity registry. The beacon is created with the authenticated wallet as the owner.
+Create a new beacon and register it with the Perpcity registry.
 
-**Headers:**
-```
-Authorization: Bearer <your_api_token>
-```
-
-**Request Body:**
-No request body required.
+**Request:** Empty JSON object `{}`
 
 **Response:**
 ```json
 {
   "success": true,
-  "data": "Beacon address: 0x...",
+  "data": "0x1234567890123456789012345678901234567890",
   "message": "Perpcity beacon created and registered successfully"
 }
 ```
 
 #### `POST /batch_create_perpcity_beacon`
-Create multiple beacons in a batch and register them with the Perpcity registry. This is more efficient than calling the individual endpoint multiple times. Each beacon is created with the authenticated wallet as the owner.
+Create multiple beacons and register them with the Perpcity registry in batch.
 
-**Headers:**
-```
-Authorization: Bearer <your_api_token>
-```
-
-**Request Body:**
+**Request:**
 ```json
 {
   "count": 5
 }
 ```
+- `count`: 1-100 beacons
 
 **Response:**
 ```json
@@ -263,26 +198,252 @@ Authorization: Bearer <your_api_token>
   "data": [
     "0x1111111111111111111111111111111111111111",
     "0x2222222222222222222222222222222222222222",
-    "0x3333333333333333333333333333333333333333",
-    "0x4444444444444444444444444444444444444444",
-    "0x5555555555555555555555555555555555555555"
+    "0x3333333333333333333333333333333333333333"
   ],
   "message": "Successfully created and registered 5 Perpcity beacons"
 }
 ```
 
-**Validation:**
-- `count` must be between 1 and 100 (inclusive)
-- Invalid counts will return `400 Bad Request`
+#### `POST /create_verifiable_beacon`
+Create a verifiable beacon with ZK proof verification.
 
-**Note:** This endpoint creates beacons sequentially for transaction reliability. Each beacon creation and registration is performed as separate transactions to ensure proper error handling and event parsing.
+**Request:**
+```json
+{
+  "initial_value": 42,
+  "proof": [/* proof array */],
+  "public_signals": [/* public signals array */]
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": "0x1234567890123456789012345678901234567890",
+  "message": "Verifiable beacon created successfully"
+}
+```
+
+#### `POST /update_beacon`
+Update a single beacon's data with ZK proof.
+
+**Request:**
+```json
+{
+  "beacon_address": "0x1234567890123456789012345678901234567890",
+  "value": 42,
+  "proof": [/* proof array */]
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": "0xabcdef...",
+  "message": "Beacon updated successfully"
+}
+```
+
+#### `POST /batch_update_beacon`
+Update multiple beacons in a single transaction using Multicall3.
+
+**Request:**
+```json
+{
+  "updates": [
+    {
+      "beacon_address": "0x1111111111111111111111111111111111111111",
+      "value": 42,
+      "proof": [/* proof array */]
+    },
+    {
+      "beacon_address": "0x2222222222222222222222222222222222222222",
+      "value": 100,
+      "proof": [/* proof array */]
+    }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "results": [
+      { "beacon_address": "0x1111...", "success": true, "error": null },
+      { "beacon_address": "0x2222...", "success": true, "error": null }
+    ]
+  },
+  "message": "Batch update completed: 2 succeeded, 0 failed"
+}
+```
+
+#### `POST /register_beacon`
+Register an existing beacon with a specified registry contract.
+
+**Request:**
+```json
+{
+  "beacon_address": "0x1234567890123456789012345678901234567890",
+  "registry_address": "0x9876543210987654321098765432109876543210"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": "Transaction hash: 0xabcdef...",
+  "message": "Beacon registered successfully"
+}
+```
+
+**Note:** If the beacon is already registered with the specified registry, the endpoint returns success with transaction hash `0x0000...0000` and message "Beacon was already registered".
+
+### Perpetual Endpoints
 
 #### `POST /deploy_perp_for_beacon`
-Deploy a perpetual for a beacon (not yet implemented).
+Deploy a perpetual contract for a beacon.
 
-**Headers:**
+**Request:**
+```json
+{
+  "beacon_address": "0x1234567890123456789012345678901234567890"
+}
 ```
-Authorization: Bearer <your_api_token>
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "beacon_address": "0x1234567890123456789012345678901234567890",
+    "perp_address": "0xabcdef...",
+    "pool_key": "0x123456...",
+    "transaction_hash": "0xfedcba..."
+  },
+  "message": "Perp deployed successfully for beacon"
+}
+```
+
+#### `POST /batch_deploy_perps_for_beacons`
+Deploy perpetual contracts for multiple beacons.
+
+**Request:**
+```json
+{
+  "beacon_addresses": [
+    "0x1111111111111111111111111111111111111111",
+    "0x2222222222222222222222222222222222222222"
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "results": [
+      {
+        "beacon_address": "0x1111...",
+        "perp_address": "0xaaaa...",
+        "pool_key": "0x1234...",
+        "success": true
+      },
+      {
+        "beacon_address": "0x2222...",
+        "perp_address": "0xbbbb...",
+        "pool_key": "0x5678...",
+        "success": true
+      }
+    ]
+  },
+  "message": "Batch perp deployment completed: 2 succeeded, 0 failed"
+}
+```
+
+#### `POST /batch_deposit_liquidity_for_perps`
+Deposit liquidity for multiple perpetual contracts.
+
+**Request:**
+```json
+{
+  "deposits": [
+    {
+      "perp_address": "0x1111111111111111111111111111111111111111",
+      "amount": "1000000000"
+    },
+    {
+      "perp_address": "0x2222222222222222222222222222222222222222",
+      "amount": "2000000000"
+    }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "results": [
+      {
+        "perp_address": "0x1111...",
+        "amount": "1000000000",
+        "success": true,
+        "error": null
+      },
+      {
+        "perp_address": "0x2222...",
+        "amount": "2000000000",
+        "success": true,
+        "error": null
+      }
+    ]
+  },
+  "message": "Batch liquidity deposit completed: 2 succeeded, 0 failed"
+}
+```
+
+### Wallet Endpoints
+
+#### `POST /fund_guest_wallet`
+Fund a guest wallet with ETH and USDC.
+
+**Request:**
+```json
+{
+  "guest_wallet_address": "0x1234567890123456789012345678901234567890",
+  "eth_amount": "0.1",
+  "usdc_amount": "100"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": "Guest wallet funded: 0.1 ETH and 100 USDC",
+  "message": "Wallet funded successfully"
+}
+```
+
+### Placeholder Endpoints (Not Implemented)
+
+#### `GET /all_beacons`
+List all registered beacons.
+
+**Response:**
+```json
+{
+  "success": false,
+  "data": null,
+  "message": "all_beacons endpoint not yet implemented"
+}
 ```
 
 ## Authentication

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::AlloyProvider;
+use tracing;
 
 /// API endpoint information for documentation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +109,21 @@ impl ApiEndpoints {
                 method: "POST".to_string(),
                 path: "/fund_guest_wallet".to_string(),
                 description: "Fund a guest wallet with specified USDC + ETH amounts (with limits)"
+                    .to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/create_verifiable_beacon".to_string(),
+                description: "Create a verifiable beacon with ZK proof support and TWAP".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/update_verifiable_beacon".to_string(),
+                description: "Update a verifiable beacon with zero-knowledge proof verification"
                     .to_string(),
                 requires_auth: true,
                 status: EndpointStatus::Working,
@@ -418,7 +434,7 @@ impl PerpConfig {
         );
         tracing::info!(
             "  - Calculated min margin: {} USDC",
-            calculated_min as f64 / 1_000_000.0
+            self.calculate_minimum_margin_usdc() as f64 / 1_000_000.0
         );
         tracing::info!(
             "  - Max opening leverage: {:.2}x",
@@ -469,6 +485,7 @@ impl Default for PerpConfig {
     }
 }
 
+#[derive(Clone)]
 pub struct AppState {
     pub provider: Arc<AlloyProvider>,
     pub alternate_provider: Option<Arc<AlloyProvider>>,
@@ -478,136 +495,16 @@ pub struct AppState {
     pub beacon_registry_abi: JsonAbi,
     pub perp_hook_abi: JsonAbi,
     pub multicall3_abi: JsonAbi,
+    pub dichotomous_beacon_factory_abi: JsonAbi,
+    pub step_beacon_abi: JsonAbi,
     pub beacon_factory_address: Address,
     pub perpcity_registry_address: Address,
     pub perp_hook_address: Address,
     pub usdc_address: Address,
+    pub dichotomous_beacon_factory_address: Option<Address>,
     pub usdc_transfer_limit: u128,
     pub eth_transfer_limit: u128,
     pub access_token: String,
     pub perp_config: PerpConfig,
     pub multicall3_address: Option<Address>, // Optional multicall3 contract for batch operations
 }
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ApiResponse<T> {
-    pub success: bool,
-    pub data: Option<T>,
-    pub message: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct UpdateBeaconRequest {
-    pub beacon_address: String,
-    pub value: u64,
-    pub proof: Vec<u8>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct BeaconUpdateData {
-    pub beacon_address: String,
-    pub value: u64,
-    pub proof: Vec<u8>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BatchUpdateBeaconRequest {
-    pub updates: Vec<BeaconUpdateData>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BeaconUpdateResult {
-    pub beacon_address: String,
-    pub success: bool,
-    pub transaction_hash: Option<String>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BatchUpdateBeaconResponse {
-    pub results: Vec<BeaconUpdateResult>,
-    pub total_requested: usize,
-    pub successful_updates: usize,
-    pub failed_updates: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreateBeaconRequest {
-    // TODO: Define the fields needed for creating a beacon
-    pub placeholder: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct RegisterBeaconRequest {
-    // TODO: Define the fields needed for registering a beacon
-    pub placeholder: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DeployPerpForBeaconRequest {
-    pub beacon_address: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DeployPerpForBeaconResponse {
-    pub perp_id: String, // 32-byte pool identifier (e.g., 0x48863de190e7...)
-    pub perp_hook_address: String, // 20-byte PerpHook contract address
-    pub transaction_hash: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BatchCreatePerpcityBeaconRequest {
-    pub count: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BatchCreatePerpcityBeaconResponse {
-    pub created_count: u32,
-    pub beacon_addresses: Vec<String>,
-    pub failed_count: u32,
-    pub errors: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DepositLiquidityForPerpRequest {
-    pub perp_id: String, // PoolId as hex string
-    /// USDC margin amount in 6 decimals (e.g., "50000000" for 50 USDC)
-    ///
-    /// **IMPORTANT**: Due to Uniswap V4 liquidity requirements and wide tick range [-23030, 23030],
-    /// minimum recommended amount is 10 USDC (10,000,000). Smaller amounts will likely fail
-    /// with execution revert due to insufficient liquidity.
-    ///
-    /// Current scaling: margin × 500,000 = final liquidity amount
-    pub margin_amount_usdc: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DepositLiquidityForPerpResponse {
-    pub maker_position_id: String, // Maker position ID from MakerPositionOpened event
-    pub approval_transaction_hash: String, // USDC approval transaction hash
-    pub deposit_transaction_hash: String, // Liquidity deposit transaction hash
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BatchDepositLiquidityForPerpsRequest {
-    pub liquidity_deposits: Vec<DepositLiquidityForPerpRequest>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BatchDepositLiquidityForPerpsResponse {
-    pub deposited_count: u32,
-    pub maker_position_ids: Vec<String>, // Maker position IDs as strings
-    pub failed_count: u32,
-    pub errors: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FundGuestWalletRequest {
-    pub wallet_address: String,
-    pub usdc_amount: String, // Amount in 6 decimals (e.g., "100000000" for 100 USDC)
-    pub eth_amount: String,  // Amount in wei (e.g., "1000000000000000" for 0.001 ETH)
-}
-
-#[cfg(test)]
-#[path = "models_test.rs"]
-mod models_test;

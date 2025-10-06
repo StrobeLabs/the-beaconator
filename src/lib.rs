@@ -14,6 +14,7 @@ pub mod fairings;
 pub mod guards;
 pub mod models;
 pub mod routes;
+pub mod services;
 
 use crate::models::{AppState, PerpConfig};
 use rocket::{Request, catch, catchers};
@@ -40,7 +41,9 @@ pub type AlloyProvider = alloy::providers::fillers::FillProvider<
     alloy::network::Ethereum,
 >;
 
-// Load ABIs from files
+/// Loads a contract ABI from a JSON file.
+///
+/// Reads the ABI file from the `abis/` directory and parses it into a JsonAbi struct.
 fn load_abi(name: &str) -> JsonAbi {
     let abi_path = format!("abis/{name}.json");
     let abi_content = std::fs::read_to_string(&abi_path)
@@ -49,7 +52,10 @@ fn load_abi(name: &str) -> JsonAbi {
         .unwrap_or_else(|_| panic!("Failed to parse ABI file: {abi_path}"))
 }
 
-/// Load perp configuration from environment variables with fallback to defaults
+/// Loads perp configuration from environment variables with fallback to defaults.
+///
+/// Reads perp-related configuration from environment variables, falling back to
+/// default values if not specified.
 fn load_perp_config() -> PerpConfig {
     let default_config = PerpConfig::default();
 
@@ -142,6 +148,10 @@ fn load_perp_config() -> PerpConfig {
     }
 }
 
+/// Creates and configures the Rocket application.
+///
+/// Initializes the application state, loads configuration from environment variables,
+/// sets up providers and wallets, and mounts all routes.
 pub async fn create_rocket() -> Rocket<Build> {
     // Load and cache environment variables
     dotenvy::dotenv().ok();
@@ -157,6 +167,8 @@ pub async fn create_rocket() -> Rocket<Build> {
     let beacon_registry_abi = load_abi("BeaconRegistry");
     let perp_hook_abi = load_abi("PerpHook");
     let multicall3_abi = load_abi("Multicall3");
+    let dichotomous_beacon_factory_abi = load_abi("DichotomousBeaconFactory");
+    let step_beacon_abi = load_abi("StepBeacon");
 
     // Load contract addresses
     let beacon_factory_address = Address::from_str(
@@ -190,6 +202,29 @@ pub async fn create_rocket() -> Rocket<Build> {
         tracing::info!("Multicall3 address configured: {:?}", multicall_addr);
     } else {
         tracing::warn!("MULTICALL3_ADDRESS not set - batch operations will be disabled");
+    }
+
+    // Load dichotomous beacon factory address from environment
+    let dichotomous_beacon_factory_address = env::var("DICHOTOMOUS_BEACON_FACTORY_ADDRESS")
+        .ok()
+        .and_then(|addr_str| {
+            Address::from_str(&addr_str)
+                .inspect_err(|e| {
+                    tracing::warn!(
+                        "Failed to parse DICHOTOMOUS_BEACON_FACTORY_ADDRESS '{}': {}",
+                        addr_str,
+                        e
+                    );
+                })
+                .ok()
+        });
+
+    if let Some(addr) = dichotomous_beacon_factory_address {
+        tracing::info!("Dichotomous beacon factory address loaded: {:?}", addr);
+    } else {
+        tracing::info!(
+            "DICHOTOMOUS_BEACON_FACTORY_ADDRESS not set - verifiable beacon route will be disabled"
+        );
     }
 
     let usdc_transfer_limit = env::var("USDC_TRANSFER_LIMIT")
@@ -323,10 +358,13 @@ pub async fn create_rocket() -> Rocket<Build> {
         beacon_registry_abi,
         perp_hook_abi,
         multicall3_abi,
+        dichotomous_beacon_factory_abi,
+        step_beacon_abi,
         beacon_factory_address,
         perpcity_registry_address,
         perp_hook_address,
         usdc_address,
+        dichotomous_beacon_factory_address,
         usdc_transfer_limit,
         eth_transfer_limit,
         access_token,
@@ -334,30 +372,38 @@ pub async fn create_rocket() -> Rocket<Build> {
         multicall3_address,
     };
 
+    let mut base_routes = rocket::routes![
+        routes::info::index,
+        routes::info::all_beacons,
+        routes::beacon::create_beacon,
+        routes::beacon::register_beacon,
+        routes::beacon::create_perpcity_beacon,
+        routes::beacon::batch_create_perpcity_beacon,
+        routes::perp::deploy_perp_for_beacon_endpoint,
+        routes::perp::batch_deploy_perps_for_beacons,
+        routes::perp::deposit_liquidity_for_perp_endpoint,
+        routes::perp::batch_deposit_liquidity_for_perps,
+        routes::beacon::update_beacon,
+        routes::beacon::batch_update_beacon,
+        routes::wallet::fund_guest_wallet,
+    ];
+
+    // Only register verifiable beacon route if factory address is configured
+    if dichotomous_beacon_factory_address.is_some() {
+        base_routes.extend(rocket::routes![routes::beacon::create_verifiable_beacon]);
+    }
+
     rocket::build()
         .manage(app_state)
         .attach(fairings::RequestLogger)
         .attach(fairings::PanicCatcher)
-        .mount(
-            "/",
-            rocket::routes![
-                routes::index,
-                routes::all_beacons,
-                routes::create_beacon,
-                routes::register_beacon,
-                routes::create_perpcity_beacon,
-                routes::batch_create_perpcity_beacon,
-                routes::deploy_perp_for_beacon_endpoint,
-                routes::deposit_liquidity_for_perp_endpoint,
-                routes::batch_deposit_liquidity_for_perps,
-                routes::update_beacon,
-                routes::batch_update_beacon,
-                routes::fund_guest_wallet
-            ],
-        )
+        .mount("/", base_routes)
         .register("/", catchers![catch_all_errors, catch_panic])
 }
 
+/// Catches all unhandled errors and returns a formatted error response.
+///
+/// Logs the error and sends it to Sentry for monitoring.
 #[catch(default)]
 fn catch_all_errors(status: rocket::http::Status, request: &Request) -> String {
     let error_msg = format!(
@@ -377,6 +423,9 @@ fn catch_all_errors(status: rocket::http::Status, request: &Request) -> String {
     )
 }
 
+/// Catches panic-related internal server errors.
+///
+/// Logs the panic and sends it to Sentry with fatal level.
 #[catch(500)]
 fn catch_panic(request: &Request) -> String {
     let error_msg = format!(
