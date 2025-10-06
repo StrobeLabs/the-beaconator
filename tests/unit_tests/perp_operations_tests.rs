@@ -134,8 +134,8 @@ async fn test_deposit_liquidity_min_leverage_violation() {
     let mut state = crate::test_utils::create_simple_test_app_state();
 
     // Set a high minimum opening leverage to force validation failure for small margin
-    // min_opening_leverage_x96 ~ 8x
-    state.perp_config.min_opening_leverage_x96 = (8.0_f64 * (2u128.pow(96) as f64)) as u128;
+    // min_opening_leverage_x96 = 8x (exact Q96 using bit-shift)
+    state.perp_config.min_opening_leverage_x96 = 8u128 << 96;
 
     let perp_id_32 = format!("0x{:064}", 2);
 

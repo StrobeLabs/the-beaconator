@@ -74,7 +74,16 @@ pub async fn execute_multicall(
     let tx_hash = receipt.transaction_hash;
     tracing::info!("Multicall transaction confirmed: {:?}", tx_hash);
 
-    Ok(receipt)
+    // Check transaction status - only return success if status is true
+    if receipt.status() {
+        tracing::info!("Multicall transaction succeeded (status: true)");
+        Ok(receipt)
+    } else {
+        let error_msg = format!("Multicall transaction {tx_hash} reverted (status: false)");
+        tracing::error!("{}", error_msg);
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        Err(error_msg)
+    }
 }
 
 /// Build a multicall Call3 struct from target address and encoded calldata
