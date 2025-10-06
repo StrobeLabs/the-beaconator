@@ -229,15 +229,29 @@ pub async fn create_beacon_via_factory(
         receipt.block_number
     );
 
-    // Parse the beacon address from the event logs
-    let beacon_address = parse_beacon_created_event(&receipt, factory_address)?;
+    // Validate transaction status before parsing events
+    if receipt.status() {
+        tracing::info!("Beacon creation transaction succeeded (status: true)");
 
-    tracing::info!("Beacon created at address: {}", beacon_address);
-    sentry::capture_message(
-        &format!("Beacon created via factory: {beacon_address}"),
-        sentry::Level::Info,
-    );
-    Ok(beacon_address)
+        // Parse the beacon address from the event logs
+        let beacon_address = parse_beacon_created_event(&receipt, factory_address)?;
+
+        tracing::info!("Beacon created at address: {}", beacon_address);
+        sentry::capture_message(
+            &format!("Beacon created via factory: {beacon_address}"),
+            sentry::Level::Info,
+        );
+        Ok(beacon_address)
+    } else {
+        let error_msg = format!(
+            "Beacon creation transaction {tx_hash} reverted (status: false) in block {:?}",
+            receipt.block_number
+        );
+        tracing::error!("{}", error_msg);
+        tracing::error!("Factory: {}, Owner: {}", factory_address, owner_address);
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        Err(error_msg)
+    }
 }
 
 /// Check if a transaction is already confirmed on-chain

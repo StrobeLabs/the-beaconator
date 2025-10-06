@@ -58,7 +58,8 @@ async fn test_register_beacon_both_addresses_invalid() {
 
 #[tokio::test]
 async fn test_register_beacon_zero_beacon_address() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -75,7 +76,8 @@ async fn test_register_beacon_zero_beacon_address() {
 
 #[tokio::test]
 async fn test_register_beacon_zero_registry_address() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -92,7 +94,8 @@ async fn test_register_beacon_zero_registry_address() {
 
 #[tokio::test]
 async fn test_register_beacon_network_failure() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -109,7 +112,8 @@ async fn test_register_beacon_network_failure() {
 
 #[tokio::test]
 async fn test_register_beacon_address_case_sensitivity() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -127,7 +131,8 @@ async fn test_register_beacon_address_case_sensitivity() {
 
 #[tokio::test]
 async fn test_register_beacon_address_without_0x_prefix() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -136,9 +141,10 @@ async fn test_register_beacon_address_without_0x_prefix() {
         registry_address: "0x1234567890123456789012345678901234567890".to_string(),
     });
 
-    // Hex strings without 0x prefix might parse but will fail at network level
+    // Alloy accepts hex strings without 0x prefix, so parsing succeeds
+    // but network call will fail with InternalServerError
     let result = register_beacon(request, token, state).await;
-    assert!(result.is_err());
+    assert_eq!(result.unwrap_err(), Status::InternalServerError);
 }
 
 #[tokio::test]
@@ -208,7 +214,8 @@ async fn test_register_beacon_request_deserialization() {
 
 #[tokio::test]
 async fn test_register_beacon_same_beacon_and_registry() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 

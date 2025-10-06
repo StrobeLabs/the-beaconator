@@ -125,6 +125,34 @@ pub async fn create_verifiable_beacon(
         }
     };
 
+    let tx_hash = receipt.transaction_hash;
+    tracing::info!(
+        "Verifiable beacon creation transaction confirmed with hash: {:?}",
+        tx_hash
+    );
+
+    // Check transaction status - only proceed if successful
+    if !receipt.status() {
+        let error_msg =
+            format!("Verifiable beacon creation transaction {tx_hash} reverted (status: false)");
+        tracing::error!("{}", error_msg);
+        tracing::error!(
+            "Factory: {}, Verifier: {}, Initial data: {}",
+            factory_address,
+            verifier_address,
+            request.initial_data
+        );
+        sentry::capture_message(
+            &format!(
+                "Verifiable beacon creation transaction reverted: {tx_hash} (factory: {factory_address})"
+            ),
+            sentry::Level::Error,
+        );
+        return Err(error_msg);
+    }
+
+    tracing::info!("Verifiable beacon creation transaction succeeded (status: true)");
+
     // Parse the BeaconCreated event from the transaction receipt
     let beacon_address = {
         let mut beacon_addr = None;
