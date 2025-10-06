@@ -9,6 +9,7 @@ use crate::routes::{
     IDichotomousBeaconFactory, execute_transaction_serialized, get_fresh_nonce_from_alternate,
     is_nonce_error,
 };
+use crate::services::transaction::events::parse_beacon_created_event;
 
 /// Creates a verifiable beacon using the DichotomousBeaconFactory.
 ///
@@ -154,39 +155,14 @@ pub async fn create_verifiable_beacon(
     tracing::info!("Verifiable beacon creation transaction succeeded (status: true)");
 
     // Parse the BeaconCreated event from the transaction receipt
-    let beacon_address = {
-        let mut beacon_addr = None;
-
-        // Look for the BeaconCreated event in the logs
-        for log in receipt.inner.logs().iter() {
-            // Check if this log is from our factory contract
-            if log.address() == factory_address {
-                // Try to decode as BeaconCreated event
-                match log.log_decode::<IDichotomousBeaconFactory::BeaconCreated>() {
-                    Ok(decoded_log) => {
-                        beacon_addr = Some(decoded_log.inner.data.beacon);
-                        tracing::info!(
-                            "Successfully parsed BeaconCreated event - beacon: {}, verifier: {}",
-                            decoded_log.inner.data.beacon,
-                            decoded_log.inner.data.verifier
-                        );
-                        break;
-                    }
-                    Err(e) => {
-                        tracing::debug!("Could not decode log as BeaconCreated: {}", e);
-                    }
-                }
-            }
-        }
-
-        beacon_addr.ok_or_else(|| {
-            let error_msg = "BeaconCreated event not found in transaction receipt".to_string();
-            tracing::error!("{}", error_msg);
-            tracing::error!("Total logs in receipt: {}", receipt.inner.logs().len());
-            sentry::capture_message("BeaconCreated event not found", sentry::Level::Error);
-            error_msg
-        })?
-    };
+    let beacon_address = parse_beacon_created_event(&receipt, factory_address).map_err(|e| {
+        tracing::error!("Failed to parse BeaconCreated event: {}", e);
+        sentry::capture_message(
+            &format!("Failed to parse verifiable BeaconCreated event: {e}"),
+            sentry::Level::Error,
+        );
+        e
+    })?;
 
     tracing::info!(
         "Verifiable beacon created successfully - Beacon: {}",
