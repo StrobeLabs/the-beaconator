@@ -251,7 +251,29 @@ async fn batch_update_with_multicall3(
 
                     let tx_hash = format!("{:?}", receipt.transaction_hash);
 
-                    // Call the view version to decode per-call results
+                    // First check transaction status
+                    if !receipt.status() {
+                        let error_msg = format!(
+                            "Batch update transaction reverted (status: false). Transaction hash: {tx_hash}"
+                        );
+                        tracing::error!("{}", error_msg);
+                        sentry::capture_message(&error_msg, sentry::Level::Error);
+
+                        // Return error for all beacons
+                        let mut results = Vec::new();
+                        for beacon_address in beacon_addresses {
+                            results.push((
+                                beacon_address,
+                                Err(format!("Transaction reverted: {tx_hash}")),
+                            ));
+                        }
+                        for (beacon_address, original_error) in invalid_addresses {
+                            results.push((beacon_address, Err(original_error)));
+                        }
+                        return results;
+                    }
+
+                    // Transaction succeeded, now check individual call results
                     let mut results = Vec::new();
 
                     match multicall_contract.aggregate3(calls).call().await {
@@ -340,8 +362,8 @@ async fn batch_update_with_multicall3(
                     for beacon_address in beacon_addresses {
                         results.push((beacon_address, Err(error_msg.clone())));
                     }
-                    for (beacon_address, _) in invalid_addresses {
-                        results.push((beacon_address, Err(error_msg.clone())));
+                    for (beacon_address, original_error) in invalid_addresses {
+                        results.push((beacon_address, Err(original_error)));
                     }
                     results
                 }

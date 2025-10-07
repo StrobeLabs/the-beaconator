@@ -12,8 +12,9 @@ async fn test_update_beacon_invalid_address() {
 
     let request = UpdateBeaconRequest {
         beacon_address: "invalid_address".to_string(),
-        value: 100,
-        proof: vec![1, 2, 3, 4],
+        proof: "0x01020304".to_string(),
+        public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+            .to_string(), // 100 in hex, padded to 32 bytes
     };
 
     let result = update_beacon(&app_state, request).await;
@@ -77,8 +78,9 @@ async fn test_update_beacon_empty_address() {
 
     let request = UpdateBeaconRequest {
         beacon_address: "".to_string(),
-        value: 100,
-        proof: vec![1, 2, 3, 4],
+        proof: "0x01020304".to_string(),
+        public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+            .to_string(),
     };
 
     let result = update_beacon(&app_state, request).await;
@@ -93,8 +95,9 @@ async fn test_update_beacon_zero_address() {
 
     let request = UpdateBeaconRequest {
         beacon_address: "0x0000000000000000000000000000000000000000".to_string(),
-        value: 100,
-        proof: vec![1, 2, 3, 4],
+        proof: "0x01020304".to_string(),
+        public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+            .to_string(),
     };
 
     // Valid address format, but should fail deterministically at network level
@@ -109,8 +112,9 @@ async fn test_update_beacon_max_address() {
 
     let request = UpdateBeaconRequest {
         beacon_address: "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF".to_string(),
-        value: 100,
-        proof: vec![1, 2, 3, 4],
+        proof: "0x01020304".to_string(),
+        public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+            .to_string(),
     };
 
     // Valid address format, but should fail deterministically at network level
@@ -123,19 +127,23 @@ async fn test_update_beacon_various_proof_sizes() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
     let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
 
+    let large_proof = format!("0x{}", "ff".repeat(100));
+    let very_large_proof = format!("0x{}", "00".repeat(1000));
+
     let test_proofs = vec![
-        vec![],           // Empty proof
-        vec![0],          // Single byte
-        vec![1, 2, 3],    // Small proof
-        vec![0xFF; 100],  // Large proof
-        vec![0x00; 1000], // Very large proof
+        "0x",                      // Empty proof
+        "0x00",                    // Single byte
+        "0x010203",                // Small proof
+        large_proof.as_str(),      // Large proof
+        very_large_proof.as_str(), // Very large proof
     ];
 
     for proof in test_proofs {
         let request = UpdateBeaconRequest {
             beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-            value: 100,
-            proof: proof.clone(),
+            proof: proof.to_string(),
+            public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+                .to_string(),
         };
 
         let result = update_beacon(&app_state, request).await;
@@ -145,21 +153,27 @@ async fn test_update_beacon_various_proof_sizes() {
 }
 
 #[tokio::test]
-async fn test_update_beacon_various_values() {
+async fn test_update_beacon_various_public_signals() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
     let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
 
-    let test_values = vec![0, 1, 100, 1000, u64::MAX];
+    let test_public_signals = vec![
+        "0x0000000000000000000000000000000000000000000000000000000000000000", // 0
+        "0x0000000000000000000000000000000000000000000000000000000000000001", // 1
+        "0x0000000000000000000000000000000000000000000000000000000000000064", // 100
+        "0x00000000000000000000000000000000000000000000000000000000000003e8", // 1000
+        "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", // max u256
+    ];
 
-    for value in test_values {
+    for public_signals in test_public_signals {
         let request = UpdateBeaconRequest {
             beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-            value,
-            proof: vec![1, 2, 3, 4],
+            proof: "0x01020304".to_string(),
+            public_signals: public_signals.to_string(),
         };
 
         let result = update_beacon(&app_state, request).await;
-        // Should fail deterministically at network level, not due to value
+        // Should fail deterministically at network level, not due to public signals value
         assert!(result.is_err());
     }
 }
@@ -295,12 +309,16 @@ async fn test_register_beacon_with_registry_max_addresses() {
 fn test_update_beacon_request_validation() {
     let request = UpdateBeaconRequest {
         beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-        value: 42,
-        proof: vec![1, 2, 3, 4, 5],
+        proof: "0x0102030405".to_string(),
+        public_signals: "0x000000000000000000000000000000000000000000000000000000000000002a"
+            .to_string(), // 42 in hex
     };
 
-    assert_eq!(request.value, 42);
-    assert_eq!(request.proof, vec![1, 2, 3, 4, 5]);
+    assert_eq!(request.proof, "0x0102030405");
+    assert_eq!(
+        request.public_signals,
+        "0x000000000000000000000000000000000000000000000000000000000000002a"
+    );
     assert!(request.beacon_address.starts_with("0x"));
 }
 
@@ -308,37 +326,40 @@ fn test_update_beacon_request_validation() {
 fn test_update_beacon_request_serialization() {
     let request = UpdateBeaconRequest {
         beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-        value: 12345,
-        proof: vec![10, 20, 30, 40, 50],
+        proof: "0x0a141e2832".to_string(), // [10, 20, 30, 40, 50] in hex
+        public_signals: "0x0000000000000000000000000000000000000000000000000000000000003039"
+            .to_string(), // 12345 in hex
     };
 
     let json = serde_json::to_string(&request).unwrap();
     let deserialized: UpdateBeaconRequest = serde_json::from_str(&json).unwrap();
 
     assert_eq!(deserialized.beacon_address, request.beacon_address);
-    assert_eq!(deserialized.value, request.value);
     assert_eq!(deserialized.proof, request.proof);
+    assert_eq!(deserialized.public_signals, request.public_signals);
 }
 
 #[test]
 fn test_update_beacon_request_edge_cases() {
-    // Test max value
+    // Test max u256 value in public signals
     let request_max = UpdateBeaconRequest {
         beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-        value: u64::MAX,
-        proof: vec![255u8; 1000],
+        proof: format!("0x{}", "ff".repeat(1000)), // Large proof
+        public_signals: "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            .to_string(), // max u256
     };
-    assert_eq!(request_max.value, u64::MAX);
-    assert_eq!(request_max.proof.len(), 1000);
+    assert_eq!(request_max.proof.len(), 2 + 2000); // "0x" + 2000 hex chars
+    assert_eq!(request_max.public_signals.len(), 2 + 64); // "0x" + 64 hex chars
 
     // Test zero value
     let request_zero = UpdateBeaconRequest {
         beacon_address: "0x0000000000000000000000000000000000000000".to_string(),
-        value: 0,
-        proof: vec![],
+        proof: "0x".to_string(), // Empty proof
+        public_signals: "0x0000000000000000000000000000000000000000000000000000000000000000"
+            .to_string(), // 0
     };
-    assert_eq!(request_zero.value, 0);
-    assert_eq!(request_zero.proof.len(), 0);
+    assert_eq!(request_zero.proof, "0x");
+    assert_eq!(request_zero.public_signals.len(), 2 + 64);
 }
 
 #[test]

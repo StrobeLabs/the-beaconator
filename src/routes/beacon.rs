@@ -352,7 +352,8 @@ pub async fn update_beacon(
     sentry::configure_scope(|scope| {
         scope.set_tag("endpoint", "/update_beacon");
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
-        scope.set_extra("value", request.value.into());
+        scope.set_extra("proof_length", request.proof.len().into());
+        scope.set_extra("public_signals_length", request.public_signals.len().into());
     });
 
     match service_update_beacon(state.inner(), request.into_inner()).await {
