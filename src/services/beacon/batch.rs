@@ -267,8 +267,8 @@ async fn batch_update_with_multicall3(
                                 Err(format!("Transaction reverted: {tx_hash}")),
                             ));
                         }
-                        for (beacon_address, _) in invalid_addresses {
-                            results.push((beacon_address, Err(error_msg.clone())));
+                        for (beacon_address, original_error) in invalid_addresses {
+                            results.push((beacon_address, Err(original_error)));
                         }
                         return results;
                     }
@@ -362,8 +362,8 @@ async fn batch_update_with_multicall3(
                     for beacon_address in beacon_addresses {
                         results.push((beacon_address, Err(error_msg.clone())));
                     }
-                    for (beacon_address, _) in invalid_addresses {
-                        results.push((beacon_address, Err(error_msg.clone())));
+                    for (beacon_address, original_error) in invalid_addresses {
+                        results.push((beacon_address, Err(original_error)));
                     }
                     results
                 }
