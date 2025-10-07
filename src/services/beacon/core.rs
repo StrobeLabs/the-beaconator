@@ -9,7 +9,7 @@ use crate::routes::{
     IBeacon, IBeaconFactory, IBeaconRegistry, execute_transaction_serialized,
     get_fresh_nonce_from_alternate, is_nonce_error,
 };
-use crate::services::transaction::events::parse_beacon_created_event;
+use crate::services::transaction::events::{parse_beacon_created_event, parse_data_updated_event};
 
 /// Create a beacon via the factory contract
 ///
@@ -619,9 +619,23 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
 
     tracing::info!("Updating beacon {} with proof data", beacon_address);
 
-    // Prepare the proof and public signals
-    let proof_bytes = Bytes::from(request.proof.clone());
-    let public_signals_bytes = Bytes::from(vec![0u8; 32]); // Placeholder for now
+    // Decode proof from hex string
+    let proof_bytes = match alloy::primitives::hex::decode(&request.proof) {
+        Ok(bytes) => Bytes::from(bytes),
+        Err(e) => {
+            tracing::error!("Invalid proof hex: {}", e);
+            return Err(format!("Invalid proof hex: {e}"));
+        }
+    };
+
+    // Decode public signals from hex string
+    let public_signals_bytes = match alloy::primitives::hex::decode(&request.public_signals) {
+        Ok(bytes) => Bytes::from(bytes),
+        Err(e) => {
+            tracing::error!("Invalid public signals hex: {}", e);
+            return Err(format!("Invalid public signals hex: {e}"));
+        }
+    };
 
     // Create contract instance using the sol! generated interface
     let contract = IBeacon::new(beacon_address, &*state.provider);
@@ -712,15 +726,32 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
         receipt.transaction_hash
     );
 
-    // Check transaction status - only success if true
-    if receipt.status() {
-        tracing::info!("Update transaction succeeded (status: true)");
-        Ok(tx_hash)
-    } else {
+    // First check transaction status
+    if !receipt.status() {
         let error_msg = format!("Update transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
         tracing::error!("Receipt: {:?}", receipt);
         sentry::capture_message(&error_msg, sentry::Level::Error);
-        Err(error_msg)
+        return Err(error_msg);
+    }
+
+    // Parse and validate DataUpdated event was emitted
+    match parse_data_updated_event(&receipt, beacon_address) {
+        Ok(new_data) => {
+            tracing::info!(
+                "Update transaction succeeded - beacon {} updated to data: {}",
+                beacon_address,
+                new_data
+            );
+            Ok(tx_hash)
+        }
+        Err(e) => {
+            let error_msg = format!(
+                "Transaction succeeded but DataUpdated event not found: {e}. This indicates the update may not have been applied."
+            );
+            tracing::error!("{}", error_msg);
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            Err(error_msg)
+        }
     }
 }

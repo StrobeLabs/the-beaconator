@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateBeaconRequest {
     pub beacon_address: String,
-    pub value: u64,
-    pub proof: Vec<u8>,
+    pub proof: String,          // ZK proof as hex string
+    pub public_signals: String, // Public signals as hex string (contains the new data value)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
