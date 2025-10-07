@@ -282,12 +282,44 @@ async fn batch_update_with_multicall3(
                             }
                         }
                         Err(e) => {
-                            // If we can't decode results, assume all succeeded (fallback)
-                            tracing::warn!(
-                                "Failed to decode multicall3 results: {e}, assuming all succeeded"
-                            );
-                            for beacon_address in beacon_addresses {
-                                results.push((beacon_address, Ok(tx_hash.clone())));
+                            // Can't decode individual results - check overall transaction status
+                            if receipt.status() {
+                                // Transaction succeeded but we can't decode individual results
+                                // Return partial success with warning
+                                let warning = format!(
+                                    "Batch update transaction succeeded but failed to decode individual results: {e}. Transaction hash: {tx_hash}"
+                                );
+                                tracing::warn!("{}", warning);
+                                sentry::capture_message(&warning, sentry::Level::Warning);
+
+                                // Return Ok for all beacons since transaction succeeded
+                                // Include a warning that we couldn't verify individual success
+                                for beacon_address in &beacon_addresses {
+                                    results.push((beacon_address.clone(), Ok(tx_hash.clone())));
+                                }
+
+                                // Add one error entry with the warning so it appears in response
+                                results.push((
+                                    String::new(),
+                                    Err(format!(
+                                        "Warning: Could not decode individual results: {e}"
+                                    )),
+                                ));
+                            } else {
+                                // Transaction failed
+                                let error_msg = format!(
+                                    "Batch update transaction failed (status: false). Transaction hash: {tx_hash}"
+                                );
+                                tracing::error!("{}", error_msg);
+                                sentry::capture_message(&error_msg, sentry::Level::Error);
+
+                                // Return error for all beacons
+                                for beacon_address in beacon_addresses {
+                                    results.push((
+                                        beacon_address,
+                                        Err(format!("Transaction reverted: {tx_hash}")),
+                                    ));
+                                }
                             }
                         }
                     }
@@ -401,8 +433,25 @@ async fn batch_create_beacons_with_multicall3(
                                         .collect()
                                 }
                                 Err(e) => {
-                                    let error_msg = format!("Failed to register beacons: {e}");
-                                    (1..=count).map(|i| (i, Err(error_msg.clone()))).collect()
+                                    // Beacons were created successfully but registration failed
+                                    // Return partial success: beacons exist on-chain but aren't registered
+                                    let warning_msg = format!(
+                                        "Beacons created but registration failed: {e}. Note: registerBeacon is idempotent and can be retried"
+                                    );
+                                    tracing::warn!("{}", warning_msg);
+                                    sentry::capture_message(&warning_msg, sentry::Level::Warning);
+
+                                    // Return Ok for each created beacon address
+                                    // The warning will appear in the errors list during result processing
+                                    let mut results: Vec<(u32, Result<String, String>)> = addresses
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(i, addr)| ((i + 1) as u32, Ok(addr)))
+                                        .collect();
+
+                                    // Add a single warning entry to inform about registration failure
+                                    results.push((0, Err(warning_msg)));
+                                    results
                                 }
                             }
                         }
@@ -431,6 +480,10 @@ async fn batch_create_beacons_with_multicall3(
 }
 
 /// Register multiple beacons using multicall3
+///
+/// This function is idempotent - calling registerBeacon multiple times on the same
+/// beacon is safe. The contract just sets `beacons[beacon] = true` and re-emits the event.
+/// This means registration can be safely retried if it fails.
 async fn register_beacons_with_multicall3(
     state: &AppState,
     multicall_address: Address,

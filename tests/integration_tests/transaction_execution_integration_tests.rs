@@ -113,6 +113,7 @@ async fn test_get_fresh_nonce_from_alternate_integration() {
 
 /// Test transaction mutex singleton behavior
 #[tokio::test]
+#[serial]
 #[ignore] // Temporarily disabled - hangs due to real network calls
 async fn test_transaction_mutex_singleton_integration() {
     // Get multiple references to the mutex
@@ -125,12 +126,18 @@ async fn test_transaction_mutex_singleton_integration() {
     assert!(Arc::ptr_eq(mutex2, mutex3), "Mutex should be singleton");
 
     // Test concurrent access to the singleton
+    let notify = Arc::new(tokio::sync::Notify::new());
+    let notify_clone = notify.clone();
     let mutex_clone = mutex1.clone();
     let handle = tokio::spawn(async move {
         let _lock = mutex_clone.lock().await;
+        notify_clone.notify_one(); // Signal that lock is acquired
         tokio::time::sleep(Duration::from_millis(10)).await;
         42
     });
+
+    // Wait for spawned task to acquire lock before starting timer
+    notify.notified().await;
 
     // This should wait for the above lock
     let start = std::time::Instant::now();

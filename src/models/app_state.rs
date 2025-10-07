@@ -94,7 +94,7 @@ impl ApiEndpoints {
             EndpointInfo {
                 method: "POST".to_string(),
                 path: "/update_beacon".to_string(),
-                description: "Update beacon data with zero-knowledge proof".to_string(),
+                description: "Update beacon data (supports both ownable and verifiable beacons)".to_string(),
                 requires_auth: true,
                 status: EndpointStatus::Working,
             },
@@ -117,14 +117,6 @@ impl ApiEndpoints {
                 method: "POST".to_string(),
                 path: "/create_verifiable_beacon".to_string(),
                 description: "Create a verifiable beacon with ZK proof support and TWAP".to_string(),
-                requires_auth: true,
-                status: EndpointStatus::Working,
-            },
-            EndpointInfo {
-                method: "POST".to_string(),
-                path: "/update_verifiable_beacon".to_string(),
-                description: "Update a verifiable beacon with zero-knowledge proof verification"
-                    .to_string(),
                 requires_auth: true,
                 status: EndpointStatus::Working,
             },

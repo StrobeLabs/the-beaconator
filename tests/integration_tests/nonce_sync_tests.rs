@@ -46,23 +46,22 @@ mod nonce_synchronization_tests {
         );
 
         // Test 3: AppState with alternate provider (isolated instances)
-        // Note: In isolated mode, the Anvil instance is properly cleaned up when
-        // create_app_state_with_alternate() returns, so the alternate provider will fail
-        // This is the expected behavior and demonstrates proper resource cleanup
-        let app_state_with_alternate = create_app_state_with_alternate().await;
+        // Keep the Anvil instance alive so the alternate provider can connect
+        let (app_state_with_alternate, _anvil_with_alternate) =
+            create_app_state_with_alternate().await;
         let alternate_nonce = get_fresh_nonce_from_alternate(&app_state_with_alternate).await;
 
-        // With isolated instances, the alternate provider should fail because
-        // the Anvil instance has been properly cleaned up
+        // With the Anvil instance kept alive, the alternate provider should succeed
         assert!(
-            alternate_nonce.is_err(),
-            "Alternate nonce sync should fail with isolated instances (proper cleanup)"
+            alternate_nonce.is_ok(),
+            "Alternate nonce sync should succeed with Anvil kept alive: {alternate_nonce:?}"
         );
+
+        // Verify the nonce is valid
+        let nonce_value = alternate_nonce.unwrap();
         assert!(
-            alternate_nonce
-                .unwrap_err()
-                .contains("error sending request"),
-            "Should fail with connection error due to proper Anvil cleanup"
+            nonce_value < 1000000,
+            "Nonce should be reasonable: {nonce_value}"
         );
 
         // Keep anvil instance alive for the duration of the test
@@ -306,7 +305,7 @@ mod nonce_synchronization_tests {
     }
 
     /// Helper function to create AppState with alternate provider for testing
-    async fn create_app_state_with_alternate() -> AppState {
+    async fn create_app_state_with_alternate() -> (AppState, crate::test_utils::AnvilManager) {
         // Note: anvil parameter already available from create_isolated_test_app_state()
 
         // Use isolated test app state
@@ -322,7 +321,7 @@ mod nonce_synchronization_tests {
         );
 
         app_state.alternate_provider = Some(alternate_provider);
-        app_state
+        (app_state, anvil)
     }
 
     /// Benchmark test for transaction serialization performance

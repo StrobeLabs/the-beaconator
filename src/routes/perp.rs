@@ -18,61 +18,9 @@ use crate::models::{
     DeployPerpForBeaconRequest, DeployPerpForBeaconResponse, DepositLiquidityForPerpRequest,
     DepositLiquidityForPerpResponse,
 };
-
-/// Parses the PerpCreated event from transaction receipt to extract the perp ID.
-///
-/// Searches through transaction logs to find the PerpCreated event emitted by the
-/// specified PerpHook contract and extracts the perp ID.
-fn parse_perp_created_event(
-    receipt: &alloy::rpc::types::TransactionReceipt,
-    perp_hook_address: Address,
-) -> Result<FixedBytes<32>, String> {
-    // Look for the PerpCreated event in the logs
-    for log in receipt.logs() {
-        // Check if this log is from our perp hook contract
-        if log.address() == perp_hook_address {
-            // Try to decode as PerpCreated event
-            if let Ok(decoded_log) = log.log_decode::<IPerpHook::PerpCreated>() {
-                let event_data = decoded_log.inner.data;
-                tracing::info!(
-                    "Successfully parsed PerpCreated event - perp ID: {}",
-                    event_data.perpId
-                );
-                return Ok(event_data.perpId);
-            }
-        }
-    }
-
-    Err("PerpCreated event not found in transaction receipt".to_string())
-}
-
-/// Parses the MakerPositionOpened event from transaction receipt.
-///
-/// Searches through transaction logs to find the MakerPositionOpened event for the
-/// specified perp ID and extracts the maker position ID.
-fn parse_maker_position_opened_event(
-    receipt: &alloy::rpc::types::TransactionReceipt,
-    perp_hook_address: Address,
-    expected_perp_id: FixedBytes<32>,
-) -> Result<U256, String> {
-    // Look for the MakerPositionOpened event in the logs
-    for log in receipt.logs() {
-        // Check if this log is from our perp hook contract
-        if log.address() == perp_hook_address {
-            // Try to decode as MakerPositionOpened event
-            if let Ok(decoded_log) = log.log_decode::<IPerpHook::MakerPositionOpened>() {
-                let event_data = decoded_log.inner.data;
-
-                // Verify this is the event for our perp ID
-                if event_data.perpId == expected_perp_id {
-                    return Ok(event_data.makerPosId);
-                }
-            }
-        }
-    }
-
-    Err("MakerPositionOpened event not found in transaction receipt".to_string())
-}
+use crate::services::transaction::events::{
+    parse_maker_position_opened_event, parse_perp_created_event,
+};
 
 /// Deploys a perpetual contract for a specific beacon.
 ///
