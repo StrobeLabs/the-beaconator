@@ -282,12 +282,44 @@ async fn batch_update_with_multicall3(
                             }
                         }
                         Err(e) => {
-                            // If we can't decode results, assume all succeeded (fallback)
-                            tracing::warn!(
-                                "Failed to decode multicall3 results: {e}, assuming all succeeded"
-                            );
-                            for beacon_address in beacon_addresses {
-                                results.push((beacon_address, Ok(tx_hash.clone())));
+                            // Can't decode individual results - check overall transaction status
+                            if receipt.status() {
+                                // Transaction succeeded but we can't decode individual results
+                                // Return partial success with warning
+                                let warning = format!(
+                                    "Batch update transaction succeeded but failed to decode individual results: {e}. Transaction hash: {tx_hash}"
+                                );
+                                tracing::warn!("{}", warning);
+                                sentry::capture_message(&warning, sentry::Level::Warning);
+
+                                // Return Ok for all beacons since transaction succeeded
+                                // Include a warning that we couldn't verify individual success
+                                for beacon_address in &beacon_addresses {
+                                    results.push((beacon_address.clone(), Ok(tx_hash.clone())));
+                                }
+
+                                // Add one error entry with the warning so it appears in response
+                                results.push((
+                                    String::new(),
+                                    Err(format!(
+                                        "Warning: Could not decode individual results: {e}"
+                                    )),
+                                ));
+                            } else {
+                                // Transaction failed
+                                let error_msg = format!(
+                                    "Batch update transaction failed (status: false). Transaction hash: {tx_hash}"
+                                );
+                                tracing::error!("{}", error_msg);
+                                sentry::capture_message(&error_msg, sentry::Level::Error);
+
+                                // Return error for all beacons
+                                for beacon_address in beacon_addresses {
+                                    results.push((
+                                        beacon_address,
+                                        Err(format!("Transaction reverted: {tx_hash}")),
+                                    ));
+                                }
                             }
                         }
                     }
