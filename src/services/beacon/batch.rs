@@ -401,8 +401,25 @@ async fn batch_create_beacons_with_multicall3(
                                         .collect()
                                 }
                                 Err(e) => {
-                                    let error_msg = format!("Failed to register beacons: {e}");
-                                    (1..=count).map(|i| (i, Err(error_msg.clone()))).collect()
+                                    // Beacons were created successfully but registration failed
+                                    // Return partial success: beacons exist on-chain but aren't registered
+                                    let warning_msg = format!(
+                                        "Beacons created but registration failed: {e}. Note: registerBeacon is idempotent and can be retried"
+                                    );
+                                    tracing::warn!("{}", warning_msg);
+                                    sentry::capture_message(&warning_msg, sentry::Level::Warning);
+
+                                    // Return Ok for each created beacon address
+                                    // The warning will appear in the errors list during result processing
+                                    let mut results: Vec<(u32, Result<String, String>)> = addresses
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(i, addr)| ((i + 1) as u32, Ok(addr)))
+                                        .collect();
+
+                                    // Add a single warning entry to inform about registration failure
+                                    results.push((0, Err(warning_msg)));
+                                    results
                                 }
                             }
                         }
@@ -431,6 +448,10 @@ async fn batch_create_beacons_with_multicall3(
 }
 
 /// Register multiple beacons using multicall3
+///
+/// This function is idempotent - calling registerBeacon multiple times on the same
+/// beacon is safe. The contract just sets `beacons[beacon] = true` and re-emits the event.
+/// This means registration can be safely retried if it fails.
 async fn register_beacons_with_multicall3(
     state: &AppState,
     multicall_address: Address,

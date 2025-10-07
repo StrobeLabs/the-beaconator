@@ -313,8 +313,8 @@ async fn test_address_parsing_in_nonce_context() {
     // Test address parsing that might be used with nonce functions
     let app_state = crate::test_utils::create_simple_test_app_state();
 
-    // Verify wallet address is valid
-    let wallet_addr_str = format!("{:?}", app_state.wallet_address);
+    // Verify wallet address is valid (use Display for canonical hex format)
+    let wallet_addr_str = app_state.wallet_address.to_string();
     assert!(wallet_addr_str.starts_with("0x"));
     assert_eq!(wallet_addr_str.len(), 42); // 0x + 40 hex chars
 

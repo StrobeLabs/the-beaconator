@@ -141,10 +141,9 @@ async fn test_register_beacon_address_without_0x_prefix() {
         registry_address: "0x1234567890123456789012345678901234567890".to_string(),
     });
 
-    // Alloy accepts hex strings without 0x prefix, so parsing succeeds
-    // but network call will fail with InternalServerError
+    // Address without 0x prefix should be rejected with BadRequest
     let result = register_beacon(request, token, state).await;
-    assert_eq!(result.unwrap_err(), Status::InternalServerError);
+    assert_eq!(result.unwrap_err(), Status::BadRequest);
 }
 
 #[tokio::test]

@@ -79,6 +79,17 @@ pub async fn register_beacon(
         scope.set_extra("registry_address", request.registry_address.clone().into());
     });
 
+    // Validate beacon address format (must start with 0x)
+    if !request.beacon_address.starts_with("0x") {
+        let error_msg = format!(
+            "Invalid beacon address '{}': must start with 0x prefix",
+            request.beacon_address
+        );
+        tracing::error!("{}", error_msg);
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        return Err(Status::BadRequest);
+    }
+
     // Parse the beacon address
     let beacon_address = match Address::from_str(&request.beacon_address) {
         Ok(addr) => addr,
@@ -89,6 +100,17 @@ pub async fn register_beacon(
             return Err(Status::BadRequest);
         }
     };
+
+    // Validate registry address format (must start with 0x)
+    if !request.registry_address.starts_with("0x") {
+        let error_msg = format!(
+            "Invalid registry address '{}': must start with 0x prefix",
+            request.registry_address
+        );
+        tracing::error!("{}", error_msg);
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        return Err(Status::BadRequest);
+    }
 
     // Parse the registry address
     let registry_address = match Address::from_str(&request.registry_address) {

@@ -127,12 +127,23 @@ pub async fn deploy_perp_for_beacon(
 
     // Additional validation: Check if beacon is already registered with PerpHook
     tracing::info!("Checking if beacon is already registered...");
+
+    // Encode beacons(address) call properly
+    // Function selector for beacons(address) is keccak256("beacons(address)")[:4] = 0x02a251a3
+    let mut calldata = Vec::new();
+    calldata.extend_from_slice(&alloy::primitives::hex!("02a251a3")); // beacons(address) selector
+
+    // ABI-encode the address parameter (left-padded to 32 bytes)
+    let mut encoded_address = vec![0u8; 12]; // 12 zero bytes for padding
+    encoded_address.extend_from_slice(beacon_address.as_slice()); // 20 bytes for address
+    calldata.extend_from_slice(&encoded_address);
+
     let beacon_registration_check = state
         .provider
         .call(
             alloy::rpc::types::TransactionRequest::default()
                 .to(state.perp_hook_address)
-                .input(alloy::primitives::hex!("8da5cb5b").to_vec().into()), // selector for beacons(address)
+                .input(calldata.into()),
         )
         .await;
 
@@ -900,6 +911,20 @@ pub async fn deposit_liquidity_for_perp(
         deposit_tx_hash
     );
 
+    // Check receipt status before parsing events
+    if !deposit_receipt.status() {
+        let error_msg =
+            format!("Liquidity deposit transaction {deposit_tx_hash} reverted (status: false)");
+        tracing::error!("{}", error_msg);
+        tracing::error!(
+            "Perp ID: {}, Margin: {}",
+            request.perp_id,
+            request.margin_amount_usdc
+        );
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        return Err(error_msg);
+    }
+
     // Parse the MakerPositionOpened event
     let maker_position_id =
         parse_maker_position_opened_event(&deposit_receipt, state.perp_hook_address, perp_id)?;
@@ -1126,6 +1151,17 @@ async fn execute_individual_deposit(
             Ok(Err(e)) => return Err(format!("Liquidity deposit transaction failed: {e}")),
             Err(_) => return Err("Timeout waiting for liquidity deposit".to_string()),
         };
+
+    // Check receipt status before parsing events
+    if !deposit_receipt.status() {
+        let error_msg = format!(
+            "Liquidity deposit transaction {:?} reverted (status: false)",
+            deposit_receipt.transaction_hash
+        );
+        tracing::error!("{}", error_msg);
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        return Err(error_msg);
+    }
 
     // Parse the MakerPositionOpened event
     let maker_position_id =
