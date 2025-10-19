@@ -3,15 +3,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateBeaconRequest {
     pub beacon_address: String,
-    pub proof: String,          // ZK proof as hex string
-    pub public_signals: String, // Public signals as hex string (contains the new data value)
+    pub proof: Vec<u8>,          // ZK proof as byte array
+    pub public_signals: Vec<u8>, // Public signals as byte array (contains the new data value)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BeaconUpdateData {
     pub beacon_address: String,
-    pub proof: String,          // ZK proof as hex string
-    pub public_signals: String, // Public signals as hex string
+    pub proof: Vec<u8>,          // ZK proof as byte array
+    pub public_signals: Vec<u8>, // Public signals as byte array
 }
 
 #[derive(Debug, Serialize, Deserialize)]
