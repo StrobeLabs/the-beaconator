@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, B256, Bytes};
+use alloy::primitives::{Address, B256};
 use alloy::providers::Provider;
 use std::{str::FromStr, time::Duration};
 use tokio::time::timeout;
@@ -619,11 +619,9 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
 
     tracing::info!("Updating beacon {} with proof data", beacon_address);
 
-    // Convert proof byte array to Bytes
-    let proof_bytes = Bytes::from(request.proof);
-
-    // Convert public signals byte array to Bytes
-    let public_signals_bytes = Bytes::from(request.public_signals);
+    // proof and public_signals are already Bytes (from 0x-hex JSON)
+    let proof_bytes = request.proof;
+    let public_signals_bytes = request.public_signals;
 
     // Create contract instance using the sol! generated interface
     let contract = IBeacon::new(beacon_address, &*state.provider);

@@ -99,11 +99,10 @@ async fn test_update_beacon_integration() {
     // Create update request
     let update_request = UpdateBeaconRequest {
         beacon_address: beacon_address.to_string(),
-        proof: hex::decode("0102030405060708").unwrap(),
-        public_signals: hex::decode(
-            "0000000000000000000000000000000000000000000000000000000000003039",
-        )
-        .unwrap(), // 12345 in hex
+        proof: "0x0102030405060708".parse().unwrap(),
+        public_signals: "0x0000000000000000000000000000000000000000000000000000000000003039"
+            .parse()
+            .unwrap(), // 12345 in hex
     };
 
     // Update beacon with proof
@@ -263,11 +262,10 @@ async fn test_beacon_operations_error_handling() {
     // Test invalid update request
     let invalid_update = UpdateBeaconRequest {
         beacon_address: "invalid_address".to_string(),
-        proof: hex::decode("01020304").unwrap(),
-        public_signals: hex::decode(
-            "0000000000000000000000000000000000000000000000000000000000000064",
-        )
-        .unwrap(), // 100 in hex
+        proof: "0x01020304".parse().unwrap(),
+        public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+            .parse()
+            .unwrap(), // 100 in hex
     };
 
     let update_result = update_beacon(&app_state, invalid_update).await;

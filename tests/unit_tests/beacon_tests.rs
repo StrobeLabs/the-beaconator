@@ -31,11 +31,10 @@ async fn test_batch_update_beacon_with_multicall3() {
 
     let update_data = BeaconUpdateData {
         beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-        proof: hex::decode("01020304").unwrap(), // Mock proof as bytes
-        public_signals: hex::decode(
-            "0000000000000000000000000000000000000000000000000000000000000064",
-        )
-        .unwrap(), // 100 encoded as bytes
+        proof: "0x01020304".parse().unwrap(), // Mock proof as bytes
+        public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+            .parse()
+            .unwrap(), // 100 encoded as bytes
     };
 
     let request = Json(BatchUpdateBeaconRequest {
@@ -66,11 +65,10 @@ async fn test_batch_update_beacon_without_multicall3() {
 
     let update_data = BeaconUpdateData {
         beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-        proof: hex::decode("01020304").unwrap(),
-        public_signals: hex::decode(
-            "0000000000000000000000000000000000000000000000000000000000000064",
-        )
-        .unwrap(),
+        proof: "0x01020304".parse().unwrap(),
+        public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+            .parse()
+            .unwrap(),
     };
 
     let request = Json(BatchUpdateBeaconRequest {
@@ -134,11 +132,10 @@ fn test_multicall3_atomic_behavior() {
     // Test that multicall3 calls are atomic (allowFailure: false)
     let update_data = BeaconUpdateData {
         beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-        proof: hex::decode("01020304").unwrap(),
-        public_signals: hex::decode(
-            "0000000000000000000000000000000000000000000000000000000000000064",
-        )
-        .unwrap(),
+        proof: "0x01020304".parse().unwrap(),
+        public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
+            .parse()
+            .unwrap(),
     };
 
     // Create mock multicall3 call and verify atomicity setting
