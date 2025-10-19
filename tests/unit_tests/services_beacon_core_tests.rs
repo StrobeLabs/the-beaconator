@@ -12,9 +12,10 @@ async fn test_update_beacon_invalid_address() {
 
     let request = UpdateBeaconRequest {
         beacon_address: "invalid_address".to_string(),
-        proof: "0x01020304".to_string(),
+        proof: "0x01020304".parse().unwrap(),
         public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
-            .to_string(), // 100 in hex, padded to 32 bytes
+            .parse()
+            .unwrap(), // 100 in hex, padded to 32 bytes
     };
 
     let result = update_beacon(&app_state, request).await;
@@ -78,9 +79,10 @@ async fn test_update_beacon_empty_address() {
 
     let request = UpdateBeaconRequest {
         beacon_address: "".to_string(),
-        proof: "0x01020304".to_string(),
+        proof: "0x01020304".parse().unwrap(),
         public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
-            .to_string(),
+            .parse()
+            .unwrap(),
     };
 
     let result = update_beacon(&app_state, request).await;
@@ -95,9 +97,10 @@ async fn test_update_beacon_zero_address() {
 
     let request = UpdateBeaconRequest {
         beacon_address: "0x0000000000000000000000000000000000000000".to_string(),
-        proof: "0x01020304".to_string(),
+        proof: "0x01020304".parse().unwrap(),
         public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
-            .to_string(),
+            .parse()
+            .unwrap(),
     };
 
     // Valid address format, but should fail deterministically at network level
@@ -112,9 +115,10 @@ async fn test_update_beacon_max_address() {
 
     let request = UpdateBeaconRequest {
         beacon_address: "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF".to_string(),
-        proof: "0x01020304".to_string(),
+        proof: "0x01020304".parse().unwrap(),
         public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
-            .to_string(),
+            .parse()
+            .unwrap(),
     };
 
     // Valid address format, but should fail deterministically at network level
@@ -138,12 +142,13 @@ async fn test_update_beacon_various_proof_sizes() {
         very_large_proof.as_str(), // Very large proof
     ];
 
-    for proof in test_proofs {
+    for proof_hex in test_proofs {
         let request = UpdateBeaconRequest {
             beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-            proof: proof.to_string(),
+            proof: proof_hex.parse().unwrap(),
             public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
-                .to_string(),
+                .parse()
+                .unwrap(),
         };
 
         let result = update_beacon(&app_state, request).await;
@@ -165,11 +170,11 @@ async fn test_update_beacon_various_public_signals() {
         "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", // max u256
     ];
 
-    for public_signals in test_public_signals {
+    for public_signals_hex in test_public_signals {
         let request = UpdateBeaconRequest {
             beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-            proof: "0x01020304".to_string(),
-            public_signals: public_signals.to_string(),
+            proof: "0x01020304".parse().unwrap(),
+            public_signals: public_signals_hex.parse().unwrap(),
         };
 
         let result = update_beacon(&app_state, request).await;
@@ -309,15 +314,18 @@ async fn test_register_beacon_with_registry_max_addresses() {
 fn test_update_beacon_request_validation() {
     let request = UpdateBeaconRequest {
         beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-        proof: "0x0102030405".to_string(),
+        proof: "0x0102030405".parse().unwrap(),
         public_signals: "0x000000000000000000000000000000000000000000000000000000000000002a"
-            .to_string(), // 42 in hex
+            .parse()
+            .unwrap(), // 42 in hex
     };
 
-    assert_eq!(request.proof, "0x0102030405");
+    assert_eq!(request.proof.as_ref(), &[0x01, 0x02, 0x03, 0x04, 0x05]);
     assert_eq!(
         request.public_signals,
         "0x000000000000000000000000000000000000000000000000000000000000002a"
+            .parse::<alloy::primitives::Bytes>()
+            .unwrap()
     );
     assert!(request.beacon_address.starts_with("0x"));
 }
@@ -326,9 +334,10 @@ fn test_update_beacon_request_validation() {
 fn test_update_beacon_request_serialization() {
     let request = UpdateBeaconRequest {
         beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-        proof: "0x0a141e2832".to_string(), // [10, 20, 30, 40, 50] in hex
+        proof: "0x0a141e2832".parse().unwrap(), // [10, 20, 30, 40, 50]
         public_signals: "0x0000000000000000000000000000000000000000000000000000000000003039"
-            .to_string(), // 12345 in hex
+            .parse()
+            .unwrap(), // 12345 in hex
     };
 
     let json = serde_json::to_string(&request).unwrap();
@@ -344,22 +353,24 @@ fn test_update_beacon_request_edge_cases() {
     // Test max u256 value in public signals
     let request_max = UpdateBeaconRequest {
         beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-        proof: format!("0x{}", "ff".repeat(1000)), // Large proof
+        proof: format!("0x{}", "ff".repeat(1000)).parse().unwrap(), // Large proof
         public_signals: "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-            .to_string(), // max u256
+            .parse()
+            .unwrap(), // max u256
     };
-    assert_eq!(request_max.proof.len(), 2 + 2000); // "0x" + 2000 hex chars
-    assert_eq!(request_max.public_signals.len(), 2 + 64); // "0x" + 64 hex chars
+    assert_eq!(request_max.proof.len(), 1000); // 1000 bytes
+    assert_eq!(request_max.public_signals.len(), 32); // 32 bytes (256 bits)
 
     // Test zero value
     let request_zero = UpdateBeaconRequest {
         beacon_address: "0x0000000000000000000000000000000000000000".to_string(),
-        proof: "0x".to_string(), // Empty proof
+        proof: "0x".parse().unwrap(), // Empty proof
         public_signals: "0x0000000000000000000000000000000000000000000000000000000000000000"
-            .to_string(), // 0
+            .parse()
+            .unwrap(), // 0
     };
-    assert_eq!(request_zero.proof, "0x");
-    assert_eq!(request_zero.public_signals.len(), 2 + 64);
+    assert_eq!(request_zero.proof.len(), 0);
+    assert_eq!(request_zero.public_signals.len(), 32); // 32 bytes
 }
 
 #[test]

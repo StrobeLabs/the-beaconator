@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, B256, Bytes};
+use alloy::primitives::{Address, B256};
 use alloy::providers::Provider;
 use std::{str::FromStr, time::Duration};
 use tokio::time::timeout;
@@ -619,23 +619,9 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
 
     tracing::info!("Updating beacon {} with proof data", beacon_address);
 
-    // Decode proof from hex string
-    let proof_bytes = match alloy::primitives::hex::decode(&request.proof) {
-        Ok(bytes) => Bytes::from(bytes),
-        Err(e) => {
-            tracing::error!("Invalid proof hex: {}", e);
-            return Err(format!("Invalid proof hex: {e}"));
-        }
-    };
-
-    // Decode public signals from hex string
-    let public_signals_bytes = match alloy::primitives::hex::decode(&request.public_signals) {
-        Ok(bytes) => Bytes::from(bytes),
-        Err(e) => {
-            tracing::error!("Invalid public signals hex: {}", e);
-            return Err(format!("Invalid public signals hex: {e}"));
-        }
-    };
+    // proof and public_signals are already Bytes (from 0x-hex JSON)
+    let proof_bytes = request.proof;
+    let public_signals_bytes = request.public_signals;
 
     // Create contract instance using the sol! generated interface
     let contract = IBeacon::new(beacon_address, &*state.provider);

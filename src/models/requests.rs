@@ -1,17 +1,18 @@
+use alloy::primitives::Bytes;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateBeaconRequest {
     pub beacon_address: String,
-    pub proof: String,          // ZK proof as hex string
-    pub public_signals: String, // Public signals as hex string (contains the new data value)
+    pub proof: Bytes,          // 0x-hex in JSON
+    pub public_signals: Bytes, // 0x-hex in JSON (contains the new data value)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BeaconUpdateData {
     pub beacon_address: String,
-    pub proof: String,          // ZK proof as hex string
-    pub public_signals: String, // Public signals as hex string
+    pub proof: Bytes,          // 0x-hex in JSON
+    pub public_signals: Bytes, // 0x-hex in JSON
 }
 
 #[derive(Debug, Serialize, Deserialize)]

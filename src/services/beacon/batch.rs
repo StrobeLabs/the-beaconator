@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, Bytes};
+use alloy::primitives::Address;
 use std::str::FromStr;
 
 use crate::models::{
@@ -193,29 +193,9 @@ async fn batch_update_with_multicall3(
             }
         };
 
-        // Parse proof and public signals from hex strings
-        let proof_bytes = match hex::decode(update_data.proof.trim_start_matches("0x")) {
-            Ok(bytes) => Bytes::from(bytes),
-            Err(e) => {
-                invalid_addresses.push((
-                    update_data.beacon_address.clone(),
-                    format!("Invalid proof hex: {e}"),
-                ));
-                continue;
-            }
-        };
-
-        let public_signals_bytes =
-            match hex::decode(update_data.public_signals.trim_start_matches("0x")) {
-                Ok(bytes) => Bytes::from(bytes),
-                Err(e) => {
-                    invalid_addresses.push((
-                        update_data.beacon_address.clone(),
-                        format!("Invalid public signals hex: {e}"),
-                    ));
-                    continue;
-                }
-            };
+        // proof and public_signals are already Bytes (from 0x-hex JSON)
+        let proof_bytes = update_data.proof.clone();
+        let public_signals_bytes = update_data.public_signals.clone();
 
         // Create the updateData call data using the IBeacon interface
         let beacon_contract = IBeacon::new(beacon_address, &*state.provider);

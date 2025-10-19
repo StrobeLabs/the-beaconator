@@ -31,9 +31,10 @@ async fn test_batch_update_beacon_with_multicall3() {
 
     let update_data = BeaconUpdateData {
         beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-        proof: "0x01020304".to_string(), // Mock proof as hex
+        proof: "0x01020304".parse().unwrap(), // Mock proof as bytes
         public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
-            .to_string(), // 100 encoded as hex
+            .parse()
+            .unwrap(), // 100 encoded as bytes
     };
 
     let request = Json(BatchUpdateBeaconRequest {
@@ -64,9 +65,10 @@ async fn test_batch_update_beacon_without_multicall3() {
 
     let update_data = BeaconUpdateData {
         beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-        proof: "0x01020304".to_string(),
+        proof: "0x01020304".parse().unwrap(),
         public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
-            .to_string(),
+            .parse()
+            .unwrap(),
     };
 
     let request = Json(BatchUpdateBeaconRequest {
@@ -130,9 +132,10 @@ fn test_multicall3_atomic_behavior() {
     // Test that multicall3 calls are atomic (allowFailure: false)
     let update_data = BeaconUpdateData {
         beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
-        proof: "0x01020304".to_string(),
+        proof: "0x01020304".parse().unwrap(),
         public_signals: "0x0000000000000000000000000000000000000000000000000000000000000064"
-            .to_string(),
+            .parse()
+            .unwrap(),
     };
 
     // Create mock multicall3 call and verify atomicity setting
