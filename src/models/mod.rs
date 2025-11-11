@@ -2,7 +2,7 @@ pub mod app_state;
 pub mod requests;
 pub mod responses;
 
-pub use app_state::{ApiEndpoints, ApiSummary, AppState, EndpointInfo, EndpointStatus, PerpConfig};
+pub use app_state::{ApiEndpoints, ApiSummary, AppState, EndpointInfo, EndpointStatus};
 pub use requests::{
     BatchCreatePerpcityBeaconRequest, BatchDeployPerpsForBeaconsRequest,
     BatchDepositLiquidityForPerpsRequest, BatchUpdateBeaconRequest, BeaconUpdateData,

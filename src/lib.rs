@@ -13,7 +13,7 @@ pub mod models;
 pub mod routes;
 pub mod services;
 
-use crate::models::{AppState, PerpConfig};
+use crate::models::AppState;
 use rocket::{Request, catch, catchers};
 
 // Let Rust infer the complex provider type
@@ -47,102 +47,6 @@ fn load_abi(name: &str) -> JsonAbi {
         .unwrap_or_else(|_| panic!("Failed to read ABI file: {abi_path}"));
     serde_json::from_str(&abi_content)
         .unwrap_or_else(|_| panic!("Failed to parse ABI file: {abi_path}"))
-}
-
-/// Loads perp configuration from environment variables with fallback to defaults.
-///
-/// Reads perp-related configuration from environment variables, falling back to
-/// default values if not specified.
-fn load_perp_config() -> PerpConfig {
-    let default_config = PerpConfig::default();
-
-    let parse_env_or_default = |key: &str, default: u128| -> u128 {
-        env::var(key)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(default)
-    };
-
-    let parse_env_or_default_i32 = |key: &str, default: i32| -> i32 {
-        env::var(key)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(default)
-    };
-
-    let parse_env_or_default_i128 = |key: &str, default: i128| -> i128 {
-        env::var(key)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(default)
-    };
-
-    let parse_env_or_default_u32 = |key: &str, default: u32| -> u32 {
-        env::var(key)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(default)
-    };
-
-    PerpConfig {
-        trading_fee_bps: parse_env_or_default_u32(
-            "PERP_TRADING_FEE_BPS",
-            default_config.trading_fee_bps,
-        ),
-        min_margin_usdc: parse_env_or_default(
-            "PERP_MIN_MARGIN_USDC",
-            default_config.min_margin_usdc,
-        ),
-        max_margin_usdc: parse_env_or_default(
-            "PERP_MAX_MARGIN_USDC",
-            default_config.max_margin_usdc,
-        ),
-        min_opening_leverage_x96: parse_env_or_default(
-            "PERP_MIN_OPENING_LEVERAGE_X96",
-            default_config.min_opening_leverage_x96,
-        ),
-        max_opening_leverage_x96: parse_env_or_default(
-            "PERP_MAX_OPENING_LEVERAGE_X96",
-            default_config.max_opening_leverage_x96,
-        ),
-        liquidation_leverage_x96: parse_env_or_default(
-            "PERP_LIQUIDATION_LEVERAGE_X96",
-            default_config.liquidation_leverage_x96,
-        ),
-        liquidation_fee_x96: parse_env_or_default(
-            "PERP_LIQUIDATION_FEE_X96",
-            default_config.liquidation_fee_x96,
-        ),
-        liquidation_fee_split_x96: parse_env_or_default(
-            "PERP_LIQUIDATION_FEE_SPLIT_X96",
-            default_config.liquidation_fee_split_x96,
-        ),
-        funding_interval_seconds: parse_env_or_default_i128(
-            "PERP_FUNDING_INTERVAL_SECONDS",
-            default_config.funding_interval_seconds,
-        ),
-        tick_spacing: parse_env_or_default_i32("PERP_TICK_SPACING", default_config.tick_spacing),
-        starting_sqrt_price_x96: parse_env_or_default(
-            "PERP_STARTING_SQRT_PRICE_X96",
-            default_config.starting_sqrt_price_x96,
-        ),
-        default_tick_lower: parse_env_or_default_i32(
-            "PERP_DEFAULT_TICK_LOWER",
-            default_config.default_tick_lower,
-        ),
-        default_tick_upper: parse_env_or_default_i32(
-            "PERP_DEFAULT_TICK_UPPER",
-            default_config.default_tick_upper,
-        ),
-        liquidity_scaling_factor: parse_env_or_default(
-            "PERP_LIQUIDITY_SCALING_FACTOR",
-            default_config.liquidity_scaling_factor,
-        ),
-        max_margin_per_perp_usdc: parse_env_or_default(
-            "PERP_MAX_MARGIN_PER_PERP_USDC",
-            default_config.max_margin_per_perp_usdc,
-        ),
-    }
 }
 
 /// Creates and configures the Rocket application.
@@ -237,36 +141,53 @@ pub async fn create_rocket() -> Rocket<Build> {
         .parse::<u128>()
         .expect("Failed to parse ETH_TRANSFER_LIMIT");
 
-    // Load perp configuration
-    let perp_config = load_perp_config();
+    // Load perp module addresses
+    let fees_module_address = Address::from_str(
+        &env::var("FEES_MODULE_ADDRESS").expect("FEES_MODULE_ADDRESS environment variable not set"),
+    )
+    .expect("Failed to parse FEES_MODULE_ADDRESS");
 
-    // Validate perp configuration on startup
-    if let Err(e) = perp_config.validate() {
-        tracing::error!("PerpConfig validation failed: {}", e);
-        panic!("Invalid PerpConfig: {e}");
+    let margin_ratios_module_address = Address::from_str(
+        &env::var("MARGIN_RATIOS_MODULE_ADDRESS")
+            .expect("MARGIN_RATIOS_MODULE_ADDRESS environment variable not set"),
+    )
+    .expect("Failed to parse MARGIN_RATIOS_MODULE_ADDRESS");
+
+    let lockup_period_module_address = Address::from_str(
+        &env::var("LOCKUP_PERIOD_MODULE_ADDRESS")
+            .expect("LOCKUP_PERIOD_MODULE_ADDRESS environment variable not set"),
+    )
+    .expect("Failed to parse LOCKUP_PERIOD_MODULE_ADDRESS");
+
+    let sqrt_price_impact_limit_module_address = Address::from_str(
+        &env::var("SQRT_PRICE_IMPACT_LIMIT_MODULE_ADDRESS")
+            .expect("SQRT_PRICE_IMPACT_LIMIT_MODULE_ADDRESS environment variable not set"),
+    )
+    .expect("Failed to parse SQRT_PRICE_IMPACT_LIMIT_MODULE_ADDRESS");
+
+    // Optional default starting price
+    let default_starting_sqrt_price_x96 = env::var("PERP_DEFAULT_STARTING_SQRT_PRICE_X96")
+        .ok()
+        .and_then(|s| s.parse::<u128>().ok());
+
+    // Log loaded module addresses for debugging
+    tracing::info!("Perp module addresses loaded:");
+    tracing::info!("  - Fees module: {:?}", fees_module_address);
+    tracing::info!(
+        "  - Margin ratios module: {:?}",
+        margin_ratios_module_address
+    );
+    tracing::info!(
+        "  - Lockup period module: {:?}",
+        lockup_period_module_address
+    );
+    tracing::info!(
+        "  - Price impact limit module: {:?}",
+        sqrt_price_impact_limit_module_address
+    );
+    if let Some(price) = default_starting_sqrt_price_x96 {
+        tracing::info!("  - Default starting sqrt price X96: {}", price);
     }
-
-    // Log loaded configuration for debugging
-    tracing::info!("Perp configuration loaded:");
-    tracing::info!(
-        "  - Trading fee: {}bps ({}%)",
-        perp_config.trading_fee_bps,
-        perp_config.trading_fee_bps as f64 / 100.0
-    );
-    tracing::info!(
-        "  - Max margin: {} USDC",
-        perp_config.max_margin_usdc as f64 / 1_000_000.0
-    );
-    tracing::info!("  - Tick spacing: {}", perp_config.tick_spacing);
-    tracing::info!(
-        "  - Funding interval: {}s ({}h)",
-        perp_config.funding_interval_seconds,
-        perp_config.funding_interval_seconds / 3600
-    );
-    tracing::info!(
-        "  - Max margin per perp: {} USDC",
-        perp_config.max_margin_per_perp_usdc as f64 / 1_000_000.0
-    );
 
     // Get environment configuration and chain ID
     let env_type = &rpc_config.env_type;
@@ -338,7 +259,11 @@ pub async fn create_rocket() -> Rocket<Build> {
         usdc_transfer_limit,
         eth_transfer_limit,
         access_token,
-        perp_config,
+        fees_module_address,
+        margin_ratios_module_address,
+        lockup_period_module_address,
+        sqrt_price_impact_limit_module_address,
+        default_starting_sqrt_price_x96,
         multicall3_address,
     };
 

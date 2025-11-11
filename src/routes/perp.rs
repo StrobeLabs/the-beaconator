@@ -611,21 +611,20 @@ async fn deposit_liquidity_for_perp(
     // Create contract instance using the sol! generated interface
     let contract = IPerpManager::new(state.perp_manager_address, &*state.provider);
 
-    // Use configuration from AppState instead of hardcoded values
-    let config = &state.perp_config;
-
-    let tick_spacing = config.tick_spacing;
-
-    // Use configured tick range for liquidity positions
-    let tick_lower = config.default_tick_lower;
-    let tick_upper = config.default_tick_upper;
+    // Use reasonable defaults for liquidity parameters
+    // These values provide a wide tick range suitable for most market conditions
+    let tick_spacing = 30i32;
+    let tick_lower = 24390i32; // Price ~11.5 (19x range centered on 50)
+    let tick_upper = 53850i32; // Price ~218 (19x range centered on 50)
 
     // Round to nearest tick spacing (ensure ticks are aligned)
     let tick_lower = (tick_lower / tick_spacing) * tick_spacing;
     let tick_upper = (tick_upper / tick_spacing) * tick_spacing;
 
-    // Use configured liquidity scaling factor
-    let liquidity = margin_amount_usdc * config.liquidity_scaling_factor;
+    // Use conservative liquidity scaling factor
+    // This converts USDC margin (6 decimals) to 18-decimal liquidity amount
+    let liquidity_scaling_factor = 500_000u128;
+    let liquidity = margin_amount_usdc * liquidity_scaling_factor;
 
     // Set reasonable defaults for slippage protection (max values mean no limit)
     let max_amt0_in = u128::MAX;
@@ -1308,119 +1307,44 @@ pub async fn deposit_liquidity_for_perp_endpoint(
         }
     };
 
-    // Validate margin amount range using computed minimum and configured maximum
-    let min_margin = state.perp_config.calculate_minimum_margin_usdc();
-    let max_margin = state.perp_config.max_margin_per_perp_usdc;
+    // Basic margin amount validation with reasonable limits
+    // Min: 10 USDC (based on empirical testing with Uniswap V4 and liquidity requirements)
+    // Max: 1000 USDC (reasonable per-position limit)
+    let min_margin = 10_000_000u128; // 10 USDC in 6 decimals
+    let max_margin = 1_000_000_000u128; // 1000 USDC in 6 decimals
 
     if margin_amount < min_margin {
         let error_msg = format!(
-            "Margin amount {} USDC is below computed minimum of {} USDC",
+            "Margin amount {} USDC is below minimum of {} USDC. Minimum based on Uniswap V4 liquidity requirements.",
             margin_amount as f64 / 1_000_000.0,
-            state.perp_config.minimum_margin_usdc_decimal()
+            min_margin as f64 / 1_000_000.0
         );
         tracing::error!("{}", error_msg);
-        tracing::error!("Minimum is calculated based on current configuration:");
-        tracing::error!(
-            "  - Tick range: [{}, {}]",
-            state.perp_config.default_tick_lower,
-            state.perp_config.default_tick_upper
-        );
-        tracing::error!(
-            "  - Liquidity scaling factor: {}",
-            state.perp_config.liquidity_scaling_factor
-        );
-        tracing::error!("  - Required minimum liquidity for Uniswap V4 operations");
-        tracing::error!(
-            "Please increase margin to {} USDC or more ({} in 6 decimals)",
-            state.perp_config.minimum_margin_usdc_decimal(),
-            min_margin
-        );
         sentry::capture_message(&error_msg, sentry::Level::Error);
         return Err(Status::BadRequest);
     }
 
     if margin_amount > max_margin {
         let error_msg = format!(
-            "Margin amount {} exceeds maximum limit of {} USDC ({} in 6 decimals)",
-            request.margin_amount_usdc,
-            max_margin as f64 / 1_000_000.0,
-            max_margin
-        );
-        tracing::error!("{}", error_msg);
-        tracing::error!("Please reduce margin amount to {} or less", max_margin);
-        tracing::error!("  Current limit: {} USDC", max_margin as f64 / 1_000_000.0);
-        tracing::error!(
-            "  Your request: {} USDC",
-            margin_amount as f64 / 1_000_000.0
-        );
-        sentry::capture_message(&error_msg, sentry::Level::Error);
-        return Err(Status::BadRequest);
-    }
-
-    // Pre-flight leverage validation to prevent contract rejections
-    if let Err(leverage_error) = state.perp_config.validate_leverage_bounds(margin_amount) {
-        let error_msg = format!(
-            "Leverage validation failed for margin amount {} USDC: {}",
+            "Margin amount {} USDC exceeds maximum limit of {} USDC",
             margin_amount as f64 / 1_000_000.0,
-            leverage_error
+            max_margin as f64 / 1_000_000.0
         );
         tracing::error!("{}", error_msg);
-        tracing::error!("Pre-flight validation details:");
-        tracing::error!(
-            "  - Margin amount: {} USDC",
-            margin_amount as f64 / 1_000_000.0
-        );
-        tracing::error!(
-            "  - Liquidity scaling factor: {}",
-            state.perp_config.liquidity_scaling_factor
-        );
-        tracing::error!(
-            "  - Max leverage allowed: {:.2}x",
-            state.perp_config.max_opening_leverage_x96 as f64 / (2_u128.pow(96) as f64)
-        );
-        if let Some(expected_leverage) =
-            state.perp_config.calculate_expected_leverage(margin_amount)
-        {
-            tracing::error!("  - Expected leverage: {:.2}x", expected_leverage);
-        }
-        tracing::error!("This validation prevents contract-level rejections.");
-        tracing::error!("Consider waiting for configuration updates or reducing margin amount.");
         sentry::capture_message(&error_msg, sentry::Level::Error);
         return Err(Status::BadRequest);
     }
 
-    // Pre-flight liquidity bounds validation
-    let (min_liquidity, max_liquidity) =
-        state.perp_config.calculate_liquidity_bounds(margin_amount);
-    let current_liquidity = margin_amount * state.perp_config.liquidity_scaling_factor;
+    // Contract will validate leverage and other constraints based on its module configuration
+    tracing::info!(
+        "Margin amount validated: {} USDC (range: {}-{} USDC)",
+        margin_amount as f64 / 1_000_000.0,
+        min_margin as f64 / 1_000_000.0,
+        max_margin as f64 / 1_000_000.0
+    );
 
-    if current_liquidity < min_liquidity {
-        let error_msg = format!(
-            "Liquidity validation failed: {} USDC margin produces liquidity {} below minimum {}",
-            margin_amount as f64 / 1_000_000.0,
-            current_liquidity,
-            min_liquidity
-        );
-        tracing::error!("{}", error_msg);
-        tracing::error!("This indicates the scaling factor is too low for the requested margin.");
-        sentry::capture_message(&error_msg, sentry::Level::Error);
-        return Err(Status::BadRequest);
-    }
-
-    if current_liquidity > max_liquidity {
-        let error_msg = format!(
-            "Liquidity validation failed: {} USDC margin produces liquidity {} above maximum {}",
-            margin_amount as f64 / 1_000_000.0,
-            current_liquidity,
-            max_liquidity
-        );
-        tracing::error!("{}", error_msg);
-        tracing::error!(
-            "This indicates the scaling factor is too high and will exceed leverage limits."
-        );
-        sentry::capture_message(&error_msg, sentry::Level::Error);
-        return Err(Status::BadRequest);
-    }
+    // Additional contract-level validations will be performed on-chain
+    tracing::info!("Contract will validate leverage and constraints based on module configuration");
 
     match deposit_liquidity_for_perp(state, perp_id, margin_amount).await {
         Ok(response) => {
@@ -1610,7 +1534,7 @@ pub async fn batch_deposit_liquidity_for_perps(
 
 // Helper function to execute batch liquidity deposits using multicall3 - single transaction with multiple calls
 async fn batch_deposit_liquidity_with_multicall3(
-    state: &AppState,
+    _state: &AppState,
     _multicall_address: Address,
     deposits: &[DepositLiquidityForPerpRequest],
 ) -> Vec<(String, Result<String, String>)> {
@@ -1658,15 +1582,15 @@ async fn batch_deposit_liquidity_with_multicall3(
             }
         };
 
-        // Validate margin amount range using computed minimum and configured maximum
-        let min_margin = state.perp_config.calculate_minimum_margin_usdc();
-        let max_margin = state.perp_config.max_margin_per_perp_usdc;
+        // Basic margin amount validation with reasonable limits
+        let min_margin = 10_000_000u128; // 10 USDC in 6 decimals
+        let max_margin = 1_000_000_000u128; // 1000 USDC in 6 decimals
 
         if margin_amount < min_margin {
             let error_msg = format!(
-                "Margin amount {} USDC is below computed minimum of {} USDC for deposit {index}",
+                "Margin amount {} USDC is below minimum of {} USDC for deposit {index}",
                 margin_amount as f64 / 1_000_000.0,
-                state.perp_config.minimum_margin_usdc_decimal()
+                min_margin as f64 / 1_000_000.0
             );
             results.push((deposit_request.perp_id.clone(), Err(error_msg)));
             continue;
@@ -1674,48 +1598,9 @@ async fn batch_deposit_liquidity_with_multicall3(
 
         if margin_amount > max_margin {
             let error_msg = format!(
-                "Margin amount {} exceeds maximum limit of {} USDC ({} in 6 decimals) for deposit {index}",
-                deposit_request.margin_amount_usdc,
-                max_margin as f64 / 1_000_000.0,
-                max_margin
-            );
-            results.push((deposit_request.perp_id.clone(), Err(error_msg)));
-            continue;
-        }
-
-        // Pre-flight leverage validation for batch items
-        if let Err(leverage_error) = state.perp_config.validate_leverage_bounds(margin_amount) {
-            let error_msg = format!(
-                "Leverage validation failed for deposit {index} (margin {} USDC): {}",
+                "Margin amount {} USDC exceeds maximum limit of {} USDC for deposit {index}",
                 margin_amount as f64 / 1_000_000.0,
-                leverage_error
-            );
-            results.push((deposit_request.perp_id.clone(), Err(error_msg)));
-            continue;
-        }
-
-        // Pre-flight liquidity bounds validation for batch items
-        let (min_liquidity, max_liquidity) =
-            state.perp_config.calculate_liquidity_bounds(margin_amount);
-        let current_liquidity = margin_amount * state.perp_config.liquidity_scaling_factor;
-
-        if current_liquidity < min_liquidity {
-            let error_msg = format!(
-                "Liquidity validation failed for deposit {index}: {} USDC margin produces liquidity {} below minimum {}",
-                margin_amount as f64 / 1_000_000.0,
-                current_liquidity,
-                min_liquidity
-            );
-            results.push((deposit_request.perp_id.clone(), Err(error_msg)));
-            continue;
-        }
-
-        if current_liquidity > max_liquidity {
-            let error_msg = format!(
-                "Liquidity validation failed for deposit {index}: {} USDC margin produces liquidity {} above maximum {}",
-                margin_amount as f64 / 1_000_000.0,
-                current_liquidity,
-                max_liquidity
+                max_margin as f64 / 1_000_000.0
             );
             results.push((deposit_request.perp_id.clone(), Err(error_msg)));
             continue;
