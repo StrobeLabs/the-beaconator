@@ -48,7 +48,7 @@ fn test_event_parsing_with_empty_receipt() {
     assert!(
         result
             .unwrap_err()
-            .contains("MakerPositionOpened event not found")
+            .contains("PositionOpened event (maker) not found")
     );
 }
 
@@ -116,7 +116,7 @@ fn test_perp_id_patterns() {
         assert!(
             result
                 .unwrap_err()
-                .contains("MakerPositionOpened event not found")
+                .contains("PositionOpened event (maker) not found")
         );
     }
 }
@@ -149,7 +149,7 @@ fn test_error_message_content() {
         parse_maker_position_opened_event(&receipt, address, FixedBytes::<32>::from([0u8; 32]));
     assert!(maker_result.is_err());
     let maker_error = maker_result.unwrap_err();
-    assert!(maker_error.contains("MakerPositionOpened"));
+    assert!(maker_error.contains("PositionOpened"));
     assert!(maker_error.contains("not found"));
 }
 

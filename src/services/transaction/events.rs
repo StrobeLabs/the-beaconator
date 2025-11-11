@@ -1,7 +1,7 @@
 use alloy::primitives::{Address, FixedBytes, U256};
 use tracing;
 
-use crate::routes::{IBeacon, IBeaconFactory, IPerpHook};
+use crate::routes::{IBeacon, IBeaconFactory, IPerpManager};
 
 /// Parse the BeaconCreated event from transaction receipt to get beacon address
 ///
@@ -132,21 +132,21 @@ pub fn parse_beacon_created_events_from_multicall(
 ///
 /// # Arguments
 /// * `receipt` - The transaction receipt containing event logs
-/// * `perp_hook_address` - The address of the perp hook contract
+/// * `perp_manager_address` - The address of the perp hook contract
 ///
 /// # Returns
 /// * `Ok(FixedBytes<32>)` - The perp ID from the PerpCreated event
 /// * `Err(String)` - Error message if event not found or parsing failed
 pub fn parse_perp_created_event(
     receipt: &alloy::rpc::types::TransactionReceipt,
-    perp_hook_address: Address,
+    perp_manager_address: Address,
 ) -> Result<FixedBytes<32>, String> {
     // Look for the PerpCreated event in the logs
     for log in receipt.logs() {
         // Check if this log is from our perp hook contract
-        if log.address() == perp_hook_address {
+        if log.address() == perp_manager_address {
             // Try to decode as PerpCreated event
-            if let Ok(decoded_log) = log.log_decode::<IPerpHook::PerpCreated>() {
+            if let Ok(decoded_log) = log.log_decode::<IPerpManager::PerpCreated>() {
                 let event_data = decoded_log.inner.data;
                 tracing::info!(
                     "Successfully parsed PerpCreated event - perp ID: {}",
@@ -164,7 +164,7 @@ pub fn parse_perp_created_event(
 ///
 /// # Arguments
 /// * `receipt` - The transaction receipt containing event logs
-/// * `perp_hook_address` - The address of the perp hook contract
+/// * `perp_manager_address` - The address of the perp hook contract
 /// * `expected_perp_id` - The perp ID to match in the event
 ///
 /// # Returns
@@ -172,26 +172,26 @@ pub fn parse_perp_created_event(
 /// * `Err(String)` - Error message if event not found or parsing failed
 pub fn parse_maker_position_opened_event(
     receipt: &alloy::rpc::types::TransactionReceipt,
-    perp_hook_address: Address,
+    perp_manager_address: Address,
     expected_perp_id: FixedBytes<32>,
 ) -> Result<U256, String> {
-    // Look for the MakerPositionOpened event in the logs
+    // Look for the PositionOpened event in the logs (PerpManager uses unified event for maker and taker)
     for log in receipt.logs() {
-        // Check if this log is from our perp hook contract
-        if log.address() == perp_hook_address {
-            // Try to decode as MakerPositionOpened event
-            if let Ok(decoded_log) = log.log_decode::<IPerpHook::MakerPositionOpened>() {
+        // Check if this log is from our perp manager contract
+        if log.address() == perp_manager_address {
+            // Try to decode as PositionOpened event
+            if let Ok(decoded_log) = log.log_decode::<IPerpManager::PositionOpened>() {
                 let event_data = decoded_log.inner.data;
 
-                // Verify this is the event for our perp ID
-                if event_data.perpId == expected_perp_id {
-                    return Ok(event_data.makerPosId);
+                // Verify this is the event for our perp ID and it's a maker position
+                if event_data.perpId == expected_perp_id && event_data.isMaker {
+                    return Ok(event_data.posId);
                 }
             }
         }
     }
 
-    Err("MakerPositionOpened event not found in transaction receipt".to_string())
+    Err("PositionOpened event (maker) not found in transaction receipt".to_string())
 }
 
 // Tests moved to tests/unit_tests/transaction_events_tests.rs

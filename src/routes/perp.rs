@@ -1,16 +1,18 @@
-use alloy::primitives::{Address, FixedBytes, Signed, U160, U256, Uint};
+use alloy::primitives::{Address, FixedBytes, Signed, U160, U256};
 use alloy::providers::Provider;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing;
 
 use super::{
-    IERC20, IPerpHook, execute_transaction_serialized, get_fresh_nonce_from_alternate,
+    IERC20, IPerpManager, execute_transaction_serialized, get_fresh_nonce_from_alternate,
     is_nonce_error,
 };
+use crate::AlloyProvider;
 use crate::guards::ApiToken;
 use crate::models::{
     ApiResponse, AppState, BatchDeployPerpsForBeaconsRequest, BatchDeployPerpsForBeaconsResponse,
@@ -24,19 +26,33 @@ use crate::services::transaction::events::{
 
 /// Deploys a perpetual contract for a specific beacon.
 ///
-/// Creates a new perpetual pool using the PerpHook contract with configuration
-/// from AppState. Returns the perp ID and transaction hash on success.
+/// Creates a new perpetual pool using the PerpManager contract with modular plugin configuration.
+/// Returns the perp ID and transaction hash on success.
 async fn deploy_perp_for_beacon(
     state: &AppState,
     beacon_address: Address,
+    fees_module: Address,
+    margin_ratios_module: Address,
+    lockup_period_module: Address,
+    sqrt_price_impact_limit_module: Address,
+    starting_sqrt_price_x96: U160,
 ) -> Result<DeployPerpForBeaconResponse, String> {
     tracing::info!("Starting perp deployment for beacon: {}", beacon_address);
 
     // Log environment details
     tracing::info!("Environment details:");
-    tracing::info!("  - PerpHook address: {}", state.perp_hook_address);
+    tracing::info!("  - PerpManager address: {}", state.perp_manager_address);
     tracing::info!("  - Wallet address: {}", state.wallet_address);
     tracing::info!("  - USDC address: {}", state.usdc_address);
+    tracing::info!("Modular configuration:");
+    tracing::info!("  - Fees module: {}", fees_module);
+    tracing::info!("  - Margin ratios module: {}", margin_ratios_module);
+    tracing::info!("  - Lockup period module: {}", lockup_period_module);
+    tracing::info!(
+        "  - Sqrt price impact limit module: {}",
+        sqrt_price_impact_limit_module
+    );
+    tracing::info!("  - Starting sqrt price X96: {}", starting_sqrt_price_x96);
 
     // Check wallet balance first
     match state.provider.get_balance(state.wallet_address).await {
@@ -50,7 +66,7 @@ async fn deploy_perp_for_beacon(
     }
 
     // Create contract instance using the sol! generated interface
-    let contract = IPerpHook::new(state.perp_hook_address, &*state.provider);
+    let contract = IPerpManager::new(state.perp_manager_address, &*state.provider);
 
     // Validate beacon exists and has code deployed
     tracing::info!("Validating beacon address exists...");
@@ -128,129 +144,38 @@ async fn deploy_perp_for_beacon(
         Err(e) => {
             tracing::warn!("Beacon contract may not have getData() function: {}", e);
             tracing::warn!(
-                "  - The perp deployment may fail if PerpHook expects a standard beacon"
+                "  - The perp deployment may fail if PerpManager expects a standard beacon"
             );
         }
     }
 
-    // Additional validation: Check if beacon is already registered with PerpHook
-    tracing::info!("Checking if beacon is already registered...");
-    let beacon_registration_check = state
-        .provider
-        .call(
-            alloy::rpc::types::TransactionRequest::default()
-                .to(state.perp_hook_address)
-                .input(alloy::primitives::hex!("8da5cb5b").to_vec().into()), // selector for beacons(address)
-        )
-        .await;
-
-    match beacon_registration_check {
-        Ok(_) => {
-            tracing::warn!("Beacon may already be registered with PerpHook");
-            tracing::warn!("This could cause the deployment to revert");
-        }
-        Err(e) => {
-            tracing::info!("Beacon appears to be unregistered (or check failed): {}", e);
-        }
-    }
-
-    // Use configuration from AppState instead of hardcoded values
-    let config = &state.perp_config;
-    tracing::info!("Perp configuration:");
-    tracing::info!(
-        "  - Trading fee: {} bps ({}%)",
-        config.trading_fee_bps,
-        config.trading_fee_bps as f64 / 100.0
-    );
-    tracing::info!(
-        "  - Max margin: {} USDC",
-        config.max_margin_usdc as f64 / 1_000_000.0
-    );
-    tracing::info!("  - Tick spacing: {}", config.tick_spacing);
-    tracing::info!(
-        "  - Funding interval: {} seconds",
-        config.funding_interval_seconds
-    );
-
-    let trading_fee = Uint::<24, 1>::from(config.trading_fee_bps);
-    let min_margin = config.min_margin_usdc;
-    let max_margin = config.max_margin_usdc;
-    let min_opening_leverage_x96 = config.min_opening_leverage_x96;
-    let max_opening_leverage_x96 = config.max_opening_leverage_x96;
-    let liquidation_leverage_x96 = config.liquidation_leverage_x96;
-    let liquidation_fee_x96 = config.liquidation_fee_x96;
-    let liquidation_fee_split_x96 = config.liquidation_fee_split_x96;
-    let funding_interval = config.funding_interval_seconds;
-    let tick_spacing = Signed::<24, 1>::try_from(config.tick_spacing).map_err(|e| {
-        let error = format!("Invalid tick spacing conversion: {e}");
-        tracing::error!("{}", error);
-        error
-    })?;
-    let starting_sqrt_price_x96 = U160::from(config.starting_sqrt_price_x96);
-
-    tracing::info!("CreatePerpParams parameters (12 fields total):");
+    // Prepare the CreatePerpParams struct with modular configuration
+    tracing::info!("CreatePerpParams parameters (6 fields - modular architecture):");
     tracing::info!("  1. beacon: {} (address)", beacon_address);
-    tracing::info!("  2. tradingFee: {} (uint24)", trading_fee);
-    tracing::info!("  3. minMargin: {} (uint128)", min_margin);
-    tracing::info!("  4. maxMargin: {} (uint128)", max_margin);
+    tracing::info!("  2. fees: {} (IFees module)", fees_module);
     tracing::info!(
-        "  5. minOpeningLeverageX96: {} (uint128)",
-        min_opening_leverage_x96
+        "  3. marginRatios: {} (IMarginRatios module)",
+        margin_ratios_module
     );
     tracing::info!(
-        "  6. maxOpeningLeverageX96: {} (uint128)",
-        max_opening_leverage_x96
+        "  4. lockupPeriod: {} (ILockupPeriod module)",
+        lockup_period_module
     );
     tracing::info!(
-        "  7. liquidationLeverageX96: {} (uint128)",
-        liquidation_leverage_x96
+        "  5. sqrtPriceImpactLimit: {} (ISqrtPriceImpactLimit module)",
+        sqrt_price_impact_limit_module
     );
-    tracing::info!("  8. liquidationFeeX96: {} (uint128)", liquidation_fee_x96);
     tracing::info!(
-        "  9. liquidationFeeSplitX96: {} (uint128)",
-        liquidation_fee_split_x96
-    );
-    tracing::info!("  10. fundingInterval: {} (int128)", funding_interval);
-    tracing::info!("  11. tickSpacing: {} (int24)", tick_spacing);
-    tracing::info!(
-        "  12. startingSqrtPriceX96: {} (uint160)",
+        "  6. startingSqrtPriceX96: {} (uint160)",
         starting_sqrt_price_x96
     );
 
-    // Verify values match your successful transaction
-    tracing::info!("Verifying parameter values:");
-    if config.trading_fee_bps == 5000 && min_margin == 0 && max_margin == 1000000000 {
-        tracing::info!("  Basic parameters match successful transaction");
-    } else {
-        tracing::warn!("  Basic parameters don't match expected values!");
-        tracing::warn!(
-            "    - trading_fee_bps: {} (expected 5000)",
-            config.trading_fee_bps
-        );
-        tracing::warn!("    - min_margin: {} (expected 0)", min_margin);
-        tracing::warn!("    - max_margin: {} (expected 1000000000)", max_margin);
-    }
-
-    // Note about the missing parameter
-    tracing::info!("NOTE: The deployed contract does NOT use tradingFeeCreatorSplitX96");
-    tracing::info!("  - The source code includes it, but the deployed version doesn't");
-    tracing::info!(
-        "  - This is why your manual transaction worked with 12 parameters instead of 13"
-    );
-
-    // Prepare the CreatePerpParams struct - matches the DEPLOYED contract (no tradingFeeCreatorSplitX96)
-    let create_perp_params = IPerpHook::CreatePerpParams {
+    let create_perp_params = IPerpManager::CreatePerpParams {
         beacon: beacon_address,
-        tradingFee: trading_fee,
-        minMargin: min_margin,
-        maxMargin: max_margin,
-        minOpeningLeverageX96: min_opening_leverage_x96,
-        maxOpeningLeverageX96: max_opening_leverage_x96,
-        liquidationLeverageX96: liquidation_leverage_x96,
-        liquidationFeeX96: liquidation_fee_x96,
-        liquidationFeeSplitX96: liquidation_fee_split_x96,
-        fundingInterval: funding_interval,
-        tickSpacing: tick_spacing,
+        fees: fees_module,
+        marginRatios: margin_ratios_module,
+        lockupPeriod: lockup_period_module,
+        sqrtPriceImpactLimit: sqrt_price_impact_limit_module,
         startingSqrtPriceX96: starting_sqrt_price_x96,
     };
 
@@ -258,84 +183,98 @@ async fn deploy_perp_for_beacon(
     tracing::info!("Initiating createPerp transaction...");
 
     // Send the transaction and wait for confirmation (serialized)
-    tracing::info!("Sending createPerp transaction to PerpHook contract...");
+    tracing::info!("Sending createPerp transaction to PerpManager contract...");
     let pending_tx = execute_transaction_serialized(async {
         contract
             .createPerp(create_perp_params)
             .send()
             .await
             .map_err(|e| {
-            let error_type = match e.to_string().as_str() {
-                s if s.contains("execution reverted") => "Contract Execution Reverted",
-                s if s.contains("insufficient funds") => "Insufficient Funds",
-                s if s.contains("gas") => "Gas Related Error",
-                s if s.contains("nonce") => "Nonce Error",
-                s if s.contains("connection") || s.contains("timeout") => {
-                    "Network Connection Error"
+                let error_type = match e.to_string().as_str() {
+                    s if s.contains("execution reverted") => "Contract Execution Reverted",
+                    s if s.contains("insufficient funds") => "Insufficient Funds",
+                    s if s.contains("gas") => "Gas Related Error",
+                    s if s.contains("nonce") => "Nonce Error",
+                    s if s.contains("connection") || s.contains("timeout") => {
+                        "Network Connection Error"
+                    }
+                    s if s.contains("unauthorized") || s.contains("forbidden") => {
+                        "Authorization Error"
+                    }
+                    _ => "Unknown Transaction Error",
+                };
+
+                let error_msg = format!("{error_type}: {e}");
+                tracing::error!("{}", error_msg);
+                tracing::error!("Transaction send error details: {:?}", e);
+
+                // Try to decode revert reason if it's an execution revert
+                if let Some(revert_reason) = try_decode_revert_reason(&e) {
+                    tracing::error!("{}", revert_reason);
                 }
-                s if s.contains("unauthorized") || s.contains("forbidden") => "Authorization Error",
-                _ => "Unknown Transaction Error",
-            };
 
-            let error_msg = format!("{error_type}: {e}");
-            tracing::error!("{}", error_msg);
-            tracing::error!("Transaction send error details: {:?}", e);
+                tracing::error!("Contract call details:");
+                tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
+                tracing::error!("  - Beacon address: {}", beacon_address);
+                tracing::error!("  - Provider type: Alloy HTTP provider");
 
-            // Try to decode revert reason if it's an execution revert
-            if let Some(revert_reason) = try_decode_revert_reason(&e) {
-                tracing::error!("{}", revert_reason);
-            }
+                // Add specific troubleshooting hints based on error type
+                match error_type {
+                    "Contract Execution Reverted" => {
+                        tracing::error!("Troubleshooting hints:");
+                        tracing::error!("  - Check if PerpManager contract is properly deployed");
+                        tracing::error!("  - Verify beacon address exists and is valid");
+                        tracing::error!("  - Ensure all module addresses are correct and deployed");
+                        tracing::error!(
+                            "  - Check if external contracts (PoolManager, modules) are available"
+                        );
+                        tracing::error!(
+                            "  - Verify beacon is not already registered with PerpManager"
+                        );
+                        tracing::error!("  - Check if beacon implements the expected interface");
+                        tracing::error!("  - Verify PerpManager contract has required permissions");
+                        tracing::error!("  - Verify module contracts are properly configured");
 
-            tracing::error!("Contract call details:");
-            tracing::error!("  - PerpHook address: {}", state.perp_hook_address);
-            tracing::error!("  - Beacon address: {}", beacon_address);
-            tracing::error!("  - Provider type: Alloy HTTP provider");
-
-            // Add specific troubleshooting hints based on error type
-            match error_type {
-                "Contract Execution Reverted" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Check if PerpHook contract is properly deployed");
-                    tracing::error!("  - Verify beacon address exists and is valid");
-                    tracing::error!("  - Ensure all constructor parameters are correct");
-                    tracing::error!(
-                        "  - Check if external contracts (PoolManager, Router, etc.) are available"
-                    );
-                    tracing::error!("  - Verify beacon is not already registered with PerpHook");
-                    tracing::error!("  - Check if beacon implements the expected interface");
-                    tracing::error!("  - Verify PerpHook contract has required permissions");
-
-                    // Additional debugging for execution reverted
-                    tracing::error!("Execution revert analysis:");
-                    tracing::error!("  - Beacon address: {} (has code deployed)", beacon_address);
-                    tracing::error!("  - PerpHook address: {}", state.perp_hook_address);
-                    tracing::error!("  - Trading fee: {} bps", config.trading_fee_bps);
-                    tracing::error!("  - Tick spacing: {}", config.tick_spacing);
-                    tracing::error!("  - Starting price: {}", config.starting_sqrt_price_x96);
-                    tracing::error!("  - Max margin: {} USDC", config.max_margin_usdc);
+                        // Additional debugging for execution reverted
+                        tracing::error!("Execution revert analysis:");
+                        tracing::error!(
+                            "  - Beacon address: {} (has code deployed)",
+                            beacon_address
+                        );
+                        tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
+                        tracing::error!("  - Fees module: {}", fees_module);
+                        tracing::error!("  - Margin ratios module: {}", margin_ratios_module);
+                        tracing::error!("  - Lockup period module: {}", lockup_period_module);
+                        tracing::error!(
+                            "  - Sqrt price impact limit module: {}",
+                            sqrt_price_impact_limit_module
+                        );
+                        tracing::error!("  - Starting sqrt price X96: {}", starting_sqrt_price_x96);
+                    }
+                    "Insufficient Funds" => {
+                        tracing::error!("Troubleshooting hints:");
+                        tracing::error!("  - Check wallet ETH balance for gas fees");
+                        tracing::error!(
+                            "  - Verify USDC balance if contract requires token transfers"
+                        );
+                    }
+                    "Gas Related Error" => {
+                        tracing::error!("Troubleshooting hints:");
+                        tracing::error!("  - Try increasing gas limit");
+                        tracing::error!("  - Check current network gas prices");
+                    }
+                    "Network Connection Error" => {
+                        tracing::error!("Troubleshooting hints:");
+                        tracing::error!("  - Check RPC endpoint connectivity");
+                        tracing::error!("  - Verify network is accessible");
+                        tracing::error!("  - Try again as this might be temporary");
+                    }
+                    _ => {}
                 }
-                "Insufficient Funds" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Check wallet ETH balance for gas fees");
-                    tracing::error!("  - Verify USDC balance if contract requires token transfers");
-                }
-                "Gas Related Error" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Try increasing gas limit");
-                    tracing::error!("  - Check current network gas prices");
-                }
-                "Network Connection Error" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Check RPC endpoint connectivity");
-                    tracing::error!("  - Verify network is accessible");
-                    tracing::error!("  - Try again as this might be temporary");
-                }
-                _ => {}
-            }
 
-            sentry::capture_message(&error_msg, sentry::Level::Error);
-            error_msg
-        })
+                sentry::capture_message(&error_msg, sentry::Level::Error);
+                error_msg
+            })
     })
     .await?;
 
@@ -406,17 +345,17 @@ async fn deploy_perp_for_beacon(
     );
 
     // Parse the perp ID from the PerpCreated event
-    let perp_id = parse_perp_created_event(&receipt, state.perp_hook_address)?;
+    let perp_id = parse_perp_created_event(&receipt, state.perp_manager_address)?;
 
     tracing::info!("Successfully deployed perp with ID: {}", perp_id);
     tracing::info!(
-        "Perp is managed by PerpHook contract: {}",
-        state.perp_hook_address
+        "Perp is managed by PerpManager contract: {}",
+        state.perp_manager_address
     );
 
     Ok(DeployPerpForBeaconResponse {
         perp_id: perp_id.to_string(),
-        perp_hook_address: state.perp_hook_address.to_string(),
+        perp_manager_address: state.perp_manager_address.to_string(),
         transaction_hash: tx_hash.to_string(),
     })
 }
@@ -425,7 +364,7 @@ async fn deploy_perp_for_beacon(
 struct ContractErrorDecoder;
 
 impl ContractErrorDecoder {
-    // Known PerpHook error signatures
+    // Known PerpManager error signatures
     const OPENING_LEVERAGE_OUT_OF_BOUNDS: &'static str = "0x239b350f";
     const OPENING_MARGIN_OUT_OF_BOUNDS: &'static str = "0xcd4916f9";
     const INVALID_LIQUIDITY: &'static str = "0x7e05cd27";
@@ -564,7 +503,7 @@ impl ContractErrorDecoder {
             if let Ok(pool_address) = Address::from_str(&format!("0x{}", &pool_id_hex[24..])) {
                 let param2_value = u128::from_str_radix(param2_hex, 16).unwrap_or(0);
                 Some(format!(
-                    "Unknown contract error (0xfb8f41b2) - pool: {pool_address}, value: {param2_value}. This error signature is not recognized in the PerpHook contract."
+                    "Unknown contract error (0xfb8f41b2) - pool: {pool_address}, value: {param2_value}. This error signature is not recognized in the PerpManager contract."
                 ))
             } else {
                 Some("Unknown contract error (0xfb8f41b2) with parameters. Check contract logs for details.".to_string())
@@ -583,6 +522,38 @@ impl ContractErrorDecoder {
             Some(
                 "Unknown contract error (0xfb8f41b2). Check contract logs for details.".to_string(),
             )
+        }
+    }
+}
+
+/// Helper function to validate that a module address has deployed code
+async fn validate_module_address(
+    provider: &Arc<AlloyProvider>,
+    address: Address,
+    module_name: &str,
+) -> Result<(), String> {
+    match provider.get_code_at(address).await {
+        Ok(code) => {
+            if code.is_empty() {
+                let error_msg = format!(
+                    "{module_name} address {address} has no deployed code (not a contract)"
+                );
+                tracing::error!("{}", error_msg);
+                Err(error_msg)
+            } else {
+                tracing::info!(
+                    "{} address {} validated ({} bytes of code)",
+                    module_name,
+                    address,
+                    code.len()
+                );
+                Ok(())
+            }
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to validate {module_name} address {address}: {e}");
+            tracing::error!("{}", error_msg);
+            Err(error_msg)
         }
     }
 }
@@ -638,7 +609,7 @@ async fn deposit_liquidity_for_perp(
     );
 
     // Create contract instance using the sol! generated interface
-    let contract = IPerpHook::new(state.perp_hook_address, &*state.provider);
+    let contract = IPerpManager::new(state.perp_manager_address, &*state.provider);
 
     // Use configuration from AppState instead of hardcoded values
     let config = &state.perp_config;
@@ -656,13 +627,20 @@ async fn deposit_liquidity_for_perp(
     // Use configured liquidity scaling factor
     let liquidity = margin_amount_usdc * config.liquidity_scaling_factor;
 
-    let open_maker_params = IPerpHook::OpenMakerPositionParams {
-        margin: margin_amount_usdc,
+    // Set reasonable defaults for slippage protection (max values mean no limit)
+    let max_amt0_in = u128::MAX;
+    let max_amt1_in = u128::MAX;
+
+    let open_maker_params = IPerpManager::OpenMakerPositionParams {
+        holder: state.wallet_address,
+        margin: U256::from(margin_amount_usdc),
         liquidity,
         tickLower: Signed::<24, 1>::try_from(tick_lower)
             .map_err(|e| format!("Invalid tick lower: {e}"))?,
         tickUpper: Signed::<24, 1>::try_from(tick_upper)
             .map_err(|e| format!("Invalid tick upper: {e}"))?,
+        maxAmt0In: max_amt0_in,
+        maxAmt1In: max_amt1_in,
     };
 
     tracing::info!(
@@ -673,11 +651,11 @@ async fn deposit_liquidity_for_perp(
         liquidity
     );
 
-    // First, approve USDC spending by the PerpHook contract
+    // First, approve USDC spending by the PerpManager contract
     tracing::info!(
-        "Approving USDC spending: {} USDC for PerpHook contract {}",
+        "Approving USDC spending: {} USDC for PerpManager contract {}",
         margin_amount_usdc as f64 / 1_000_000.0,
-        state.perp_hook_address
+        state.perp_manager_address
     );
 
     // USDC approval with RPC fallback (serialized)
@@ -686,7 +664,7 @@ async fn deposit_liquidity_for_perp(
         // Try primary RPC first
         tracing::info!("Approving USDC spending with primary RPC");
         let result = usdc_contract
-            .approve(state.perp_hook_address, U256::from(margin_amount_usdc))
+            .approve(state.perp_manager_address, U256::from(margin_amount_usdc))
             .send()
             .await;
 
@@ -717,7 +695,7 @@ async fn deposit_liquidity_for_perp(
                     let alt_usdc_contract = IERC20::new(state.usdc_address, &**alternate_provider);
 
                     match alt_usdc_contract
-                        .approve(state.perp_hook_address, U256::from(margin_amount_usdc))
+                        .approve(state.perp_manager_address, U256::from(margin_amount_usdc))
                         .send()
                         .await
                     {
@@ -875,7 +853,7 @@ async fn deposit_liquidity_for_perp(
         // Try primary RPC first
         tracing::info!("Opening maker position with primary RPC");
         let result = contract
-            .openMakerPosition(perp_id, open_maker_params.clone())
+            .openMakerPos(perp_id, open_maker_params.clone())
             .send()
             .await;
 
@@ -922,10 +900,10 @@ async fn deposit_liquidity_for_perp(
                     }
 
                     let alt_contract =
-                        IPerpHook::new(state.perp_hook_address, &**alternate_provider);
+                        IPerpManager::new(state.perp_manager_address, &**alternate_provider);
 
                     match alt_contract
-                        .openMakerPosition(perp_id, open_maker_params.clone())
+                        .openMakerPos(perp_id, open_maker_params.clone())
                         .send()
                         .await
                     {
@@ -1055,7 +1033,7 @@ async fn deposit_liquidity_for_perp(
 
     // Parse the maker position ID from the MakerPositionOpened event
     let maker_pos_id =
-        parse_maker_position_opened_event(&receipt, state.perp_hook_address, perp_id)?;
+        parse_maker_position_opened_event(&receipt, state.perp_manager_address, perp_id)?;
 
     tracing::info!(
         "Parsed maker position ID {} from MakerPositionOpened event",
@@ -1071,8 +1049,8 @@ async fn deposit_liquidity_for_perp(
 
 /// Deploys a perpetual contract for a specific beacon.
 ///
-/// Creates a new perpetual pool using the PerpHook contract for the specified beacon address.
-/// Returns the perp ID, PerpHook address, and transaction hash on success.
+/// Creates a new perpetual pool using the PerpManager contract for the specified beacon address.
+/// Returns the perp ID, PerpManager address, and transaction hash on success.
 #[post("/deploy_perp_for_beacon", data = "<request>")]
 pub async fn deploy_perp_for_beacon_endpoint(
     request: Json<DeployPerpForBeaconRequest>,
@@ -1087,8 +1065,8 @@ pub async fn deploy_perp_for_beacon_endpoint(
         scope.set_tag("endpoint", "/deploy_perp_for_beacon");
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
         scope.set_extra(
-            "perp_hook_address",
-            state.perp_hook_address.to_string().into(),
+            "perp_manager_address",
+            state.perp_manager_address.to_string().into(),
         );
         scope.set_extra("wallet_address", state.wallet_address.to_string().into());
     });
@@ -1104,13 +1082,134 @@ pub async fn deploy_perp_for_beacon_endpoint(
         }
     };
 
+    // Parse module addresses
+    let fees_module = match Address::from_str(&request.fees_module) {
+        Ok(addr) => addr,
+        Err(e) => {
+            let error_msg = format!(
+                "Invalid fees module address '{}': {}",
+                request.fees_module, e
+            );
+            tracing::error!("{}", error_msg);
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    let margin_ratios_module = match Address::from_str(&request.margin_ratios_module) {
+        Ok(addr) => addr,
+        Err(e) => {
+            let error_msg = format!(
+                "Invalid margin ratios module address '{}': {}",
+                request.margin_ratios_module, e
+            );
+            tracing::error!("{}", error_msg);
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    let lockup_period_module = match Address::from_str(&request.lockup_period_module) {
+        Ok(addr) => addr,
+        Err(e) => {
+            let error_msg = format!(
+                "Invalid lockup period module address '{}': {}",
+                request.lockup_period_module, e
+            );
+            tracing::error!("{}", error_msg);
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    let sqrt_price_impact_limit_module =
+        match Address::from_str(&request.sqrt_price_impact_limit_module) {
+            Ok(addr) => addr,
+            Err(e) => {
+                let error_msg = format!(
+                    "Invalid sqrt price impact limit module address '{}': {}",
+                    request.sqrt_price_impact_limit_module, e
+                );
+                tracing::error!("{}", error_msg);
+                sentry::capture_message(&error_msg, sentry::Level::Error);
+                return Err(Status::BadRequest);
+            }
+        };
+
+    // Validate all module addresses have deployed code
+    tracing::info!("Validating module addresses...");
+
+    if let Err(e) = validate_module_address(&state.provider, fees_module, "Fees module").await {
+        sentry::capture_message(&e, sentry::Level::Error);
+        return Err(Status::BadRequest);
+    }
+
+    if let Err(e) = validate_module_address(
+        &state.provider,
+        margin_ratios_module,
+        "Margin ratios module",
+    )
+    .await
+    {
+        sentry::capture_message(&e, sentry::Level::Error);
+        return Err(Status::BadRequest);
+    }
+
+    if let Err(e) = validate_module_address(
+        &state.provider,
+        lockup_period_module,
+        "Lockup period module",
+    )
+    .await
+    {
+        sentry::capture_message(&e, sentry::Level::Error);
+        return Err(Status::BadRequest);
+    }
+
+    if let Err(e) = validate_module_address(
+        &state.provider,
+        sqrt_price_impact_limit_module,
+        "Sqrt price impact limit module",
+    )
+    .await
+    {
+        sentry::capture_message(&e, sentry::Level::Error);
+        return Err(Status::BadRequest);
+    }
+
+    tracing::info!("All module addresses validated successfully");
+
+    // Parse starting sqrt price
+    let starting_sqrt_price_x96 = match U160::from_str(&request.starting_sqrt_price_x96) {
+        Ok(price) => price,
+        Err(e) => {
+            let error_msg = format!(
+                "Invalid starting sqrt price X96 '{}': {}",
+                request.starting_sqrt_price_x96, e
+            );
+            tracing::error!("{}", error_msg);
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            return Err(Status::BadRequest);
+        }
+    };
+
     tracing::info!("Starting perp deployment process...");
-    match deploy_perp_for_beacon(state, beacon_address).await {
+    match deploy_perp_for_beacon(
+        state,
+        beacon_address,
+        fees_module,
+        margin_ratios_module,
+        lockup_period_module,
+        sqrt_price_impact_limit_module,
+        starting_sqrt_price_x96,
+    )
+    .await
+    {
         Ok(response) => {
             let message = "Perp deployed successfully!";
             tracing::info!("{}", message);
             tracing::info!("Perp ID: {}", response.perp_id);
-            tracing::info!("PerpHook address: {}", response.perp_hook_address);
+            tracing::info!("PerpManager address: {}", response.perp_manager_address);
             tracing::info!("Transaction hash: {}", response.transaction_hash);
             sentry::capture_message(
                 &format!(
@@ -1130,7 +1229,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
             tracing::error!("{}", error_msg);
             tracing::error!("Error context:");
             tracing::error!("  - Beacon address: {}", beacon_address);
-            tracing::error!("  - PerpHook address: {}", state.perp_hook_address);
+            tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
             tracing::error!("  - Wallet address: {}", state.wallet_address);
             tracing::error!("  - USDC address: {}", state.usdc_address);
 
@@ -1138,17 +1237,17 @@ pub async fn deploy_perp_for_beacon_endpoint(
             tracing::error!("Recommended next steps:");
             if e.contains("execution reverted") {
                 tracing::error!(
-                    "  1. Verify PerpHook contract is deployed at {}",
-                    state.perp_hook_address
+                    "  1. Verify PerpManager contract is deployed at {}",
+                    state.perp_manager_address
                 );
                 tracing::error!(
                     "  2. Check beacon address {} exists and is valid",
                     beacon_address
                 );
                 tracing::error!(
-                    "  3. Ensure external contracts (PoolManager, Router) are accessible"
+                    "  3. Ensure external contracts (PoolManager, modules) are accessible"
                 );
-                tracing::error!("  4. Review transaction parameters for correctness");
+                tracing::error!("  4. Review module addresses and parameters for correctness");
             } else if e.contains("insufficient funds") {
                 tracing::error!("  1. Check wallet balance and ensure sufficient ETH for gas");
                 tracing::error!("  2. Verify USDC balance if contract requires token transfers");
@@ -1348,7 +1447,7 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             tracing::error!("Error context:");
             tracing::error!("  - Perp ID: {}", request.perp_id);
             tracing::error!("  - Margin amount: {} USDC", request.margin_amount_usdc);
-            tracing::error!("  - PerpHook address: {}", state.perp_hook_address);
+            tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
             tracing::error!("  - Wallet address: {}", state.wallet_address);
 
             // Check for the specific unknown error 0xfb8f41b2 and provide detailed analysis
@@ -1356,14 +1455,17 @@ pub async fn deposit_liquidity_for_perp_endpoint(
                 tracing::error!("Unknown contract error 0xfb8f41b2 detected");
                 tracing::error!("   This error is NOT related to pool initialization");
                 tracing::error!("   Error parameters suggest:");
-                tracing::error!("     - Contract: {} (PerpHook)", state.perp_hook_address);
+                tracing::error!(
+                    "     - Contract: {} (PerpManager)",
+                    state.perp_manager_address
+                );
                 tracing::error!("     - Position/ID: 0 (may indicate new position)");
                 tracing::error!("     - Amount: {} USDC", margin_amount as f64 / 1_000_000.0);
                 tracing::error!("   Possible causes:");
                 tracing::error!("     - Insufficient USDC balance or allowance");
                 tracing::error!("     - Invalid perp configuration or state");
                 tracing::error!("     - Contract access control or validation failure");
-                tracing::error!("     - Custom business logic restriction in PerpHook");
+                tracing::error!("     - Custom business logic restriction in PerpManager");
 
                 // Add specific troubleshooting for this error
                 tracing::error!("   Troubleshooting steps:");
@@ -1372,8 +1474,8 @@ pub async fn deposit_liquidity_for_perp_endpoint(
                     state.wallet_address
                 );
                 tracing::error!(
-                    "     2. Check USDC allowance for PerpHook: {}",
-                    state.perp_hook_address
+                    "     2. Check USDC allowance for PerpManager: {}",
+                    state.perp_manager_address
                 );
                 tracing::error!(
                     "     3. Verify perp {} exists and is active",
@@ -1637,7 +1739,7 @@ async fn batch_deposit_liquidity_with_multicall3(
 
 /// Deploys perpetual contracts for multiple beacons in a batch operation.
 ///
-/// Creates perpetual pools for each specified beacon address using the PerpHook contract.
+/// Creates perpetual pools for each specified beacon address using the PerpManager contract.
 /// Returns detailed results including perp IDs for successful deployments.
 #[post("/batch_deploy_perps_for_beacons", data = "<request>")]
 pub async fn batch_deploy_perps_for_beacons(
@@ -1659,6 +1761,48 @@ pub async fn batch_deploy_perps_for_beacons(
         tracing::warn!("Invalid beacon count: {}", beacon_count);
         return Err(Status::BadRequest);
     }
+
+    // Parse module addresses (shared across all perps in the batch)
+    let fees_module = match Address::from_str(&request.fees_module) {
+        Ok(addr) => addr,
+        Err(e) => {
+            tracing::error!("Invalid fees module address: {}", e);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    let margin_ratios_module = match Address::from_str(&request.margin_ratios_module) {
+        Ok(addr) => addr,
+        Err(e) => {
+            tracing::error!("Invalid margin ratios module address: {}", e);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    let lockup_period_module = match Address::from_str(&request.lockup_period_module) {
+        Ok(addr) => addr,
+        Err(e) => {
+            tracing::error!("Invalid lockup period module address: {}", e);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    let sqrt_price_impact_limit_module =
+        match Address::from_str(&request.sqrt_price_impact_limit_module) {
+            Ok(addr) => addr,
+            Err(e) => {
+                tracing::error!("Invalid sqrt price impact limit module address: {}", e);
+                return Err(Status::BadRequest);
+            }
+        };
+
+    let starting_sqrt_price_x96 = match U160::from_str(&request.starting_sqrt_price_x96) {
+        Ok(price) => price,
+        Err(e) => {
+            tracing::error!("Invalid starting sqrt price X96: {}", e);
+            return Err(Status::BadRequest);
+        }
+    };
 
     let mut perp_ids = Vec::new();
     let mut errors = Vec::new();
@@ -1685,7 +1829,17 @@ pub async fn batch_deploy_perps_for_beacons(
             }
         };
 
-        match deploy_perp_for_beacon(state, beacon_addr).await {
+        match deploy_perp_for_beacon(
+            state,
+            beacon_addr,
+            fees_module,
+            margin_ratios_module,
+            lockup_period_module,
+            sqrt_price_impact_limit_module,
+            starting_sqrt_price_x96,
+        )
+        .await
+        {
             Ok(response) => {
                 let perp_id = response.perp_id.clone();
                 perp_ids.push(response.perp_id);

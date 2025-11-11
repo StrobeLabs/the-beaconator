@@ -1,136 +1,254 @@
 [
     {
-        "type": "constructor",
         "inputs": [
             {
-                "name": "owner",
-                "type": "address",
-                "internalType": "address"
-            }
-        ],
-        "stateMutability": "nonpayable"
-    },
-    {
-        "type": "function",
-        "name": "getData",
-        "inputs": [],
-        "outputs": [
-            {
-                "name": "",
-                "type": "uint256",
-                "internalType": "uint256"
+                "internalType": "contract IVerifierWrapper",
+                "name": "verifierWrapper",
+                "type": "address"
             },
             {
-                "name": "",
-                "type": "uint256",
-                "internalType": "uint256"
-            }
-        ],
-        "stateMutability": "view"
-    },
-    {
-        "type": "function",
-        "name": "owner",
-        "inputs": [],
-        "outputs": [
+                "internalType": "uint256",
+                "name": "initialData",
+                "type": "uint256"
+            },
             {
-                "name": "",
-                "type": "address",
-                "internalType": "address"
+                "internalType": "uint32",
+                "name": "initialCardinalityNext",
+                "type": "uint32"
             }
         ],
-        "stateMutability": "view"
+        "stateMutability": "nonpayable",
+        "type": "constructor"
     },
     {
-        "type": "function",
-        "name": "renounceOwnership",
-        "inputs": [],
-        "outputs": [],
-        "stateMutability": "nonpayable"
-    },
-    {
-        "type": "function",
-        "name": "transferOwnership",
         "inputs": [
             {
-                "name": "newOwner",
-                "type": "address",
-                "internalType": "address"
-            }
-        ],
-        "outputs": [],
-        "stateMutability": "nonpayable"
-    },
-    {
-        "type": "function",
-        "name": "updateData",
-        "inputs": [
-            {
+                "internalType": "bytes",
                 "name": "proof",
-                "type": "bytes",
-                "internalType": "bytes"
+                "type": "bytes"
             },
             {
+                "internalType": "bytes",
                 "name": "publicSignals",
-                "type": "bytes",
-                "internalType": "bytes"
+                "type": "bytes"
             }
         ],
-        "outputs": [],
-        "stateMutability": "nonpayable"
+        "name": "InvalidProof",
+        "type": "error"
     },
     {
-        "type": "event",
-        "name": "DataUpdated",
         "inputs": [
             {
-                "name": "data",
-                "type": "uint256",
-                "indexed": false,
-                "internalType": "uint256"
-            }
-        ],
-        "anonymous": false
-    },
-    {
-        "type": "event",
-        "name": "OwnershipTransferred",
-        "inputs": [
-            {
-                "name": "previousOwner",
-                "type": "address",
-                "indexed": true,
-                "internalType": "address"
+                "internalType": "bytes",
+                "name": "proof",
+                "type": "bytes"
             },
             {
-                "name": "newOwner",
-                "type": "address",
-                "indexed": true,
-                "internalType": "address"
+                "internalType": "bytes",
+                "name": "publicSignals",
+                "type": "bytes"
             }
         ],
-        "anonymous": false
+        "name": "ProofAlreadyUsed",
+        "type": "error"
     },
     {
-        "type": "error",
-        "name": "OwnableInvalidOwner",
+        "anonymous": false,
         "inputs": [
             {
-                "name": "owner",
-                "type": "address",
-                "internalType": "address"
+                "indexed": false,
+                "internalType": "uint256",
+                "name": "data",
+                "type": "uint256"
             }
-        ]
+        ],
+        "name": "DataUpdated",
+        "type": "event"
     },
     {
-        "type": "error",
-        "name": "OwnableUnauthorizedAccount",
+        "inputs": [],
+        "name": "MAX_DATA",
+        "outputs": [
+            {
+                "internalType": "int256",
+                "name": "",
+                "type": "int256"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "MIN_DATA",
+        "outputs": [
+            {
+                "internalType": "int256",
+                "name": "",
+                "type": "int256"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "VERIFIER_WRAPPER",
+        "outputs": [
+            {
+                "internalType": "contract IVerifierWrapper",
+                "name": "",
+                "type": "address"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "data",
+        "outputs": [
+            {
+                "internalType": "uint256",
+                "name": "",
+                "type": "uint256"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "getData",
+        "outputs": [
+            {
+                "internalType": "uint256",
+                "name": "",
+                "type": "uint256"
+            },
+            {
+                "internalType": "uint256",
+                "name": "",
+                "type": "uint256"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
         "inputs": [
             {
-                "name": "account",
-                "type": "address",
-                "internalType": "address"
+                "internalType": "uint32",
+                "name": "twapSecondsAgo",
+                "type": "uint32"
             }
-        ]
+        ],
+        "name": "getTwap",
+        "outputs": [
+            {
+                "internalType": "uint256",
+                "name": "twapPrice",
+                "type": "uint256"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "uint32",
+                "name": "cardinalityNext",
+                "type": "uint32"
+            }
+        ],
+        "name": "increaseCardinalityNext",
+        "outputs": [
+            {
+                "internalType": "uint32",
+                "name": "cardinalityNextOld",
+                "type": "uint32"
+            },
+            {
+                "internalType": "uint32",
+                "name": "cardinalityNextNew",
+                "type": "uint32"
+            }
+        ],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "timestamp",
+        "outputs": [
+            {
+                "internalType": "uint256",
+                "name": "",
+                "type": "uint256"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "twapState",
+        "outputs": [
+            {
+                "internalType": "uint32",
+                "name": "index",
+                "type": "uint32"
+            },
+            {
+                "internalType": "uint32",
+                "name": "cardinality",
+                "type": "uint32"
+            },
+            {
+                "internalType": "uint32",
+                "name": "cardinalityNext",
+                "type": "uint32"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "bytes",
+                "name": "proof",
+                "type": "bytes"
+            },
+            {
+                "internalType": "bytes",
+                "name": "publicSignals",
+                "type": "bytes"
+            }
+        ],
+        "name": "updateData",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "bytes",
+                "name": "",
+                "type": "bytes"
+            }
+        ],
+        "name": "usedProofs",
+        "outputs": [
+            {
+                "internalType": "bool",
+                "name": "",
+                "type": "bool"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
     }
 ]
