@@ -1,14 +1,11 @@
 use alloy::{
     json_abi::JsonAbi,
-    network::EthereumWallet,
     primitives::{Address, utils::format_ether},
-    providers::{Provider, ProviderBuilder, WalletProvider},
-    signers::{Signer, local::PrivateKeySigner},
+    providers::Provider,
 };
 use rocket::{Build, Rocket};
 use std::env;
 use std::str::FromStr;
-use std::sync::Arc;
 
 pub mod fairings;
 pub mod guards;
@@ -156,7 +153,9 @@ pub async fn create_rocket() -> Rocket<Build> {
     // Load and cache environment variables
     dotenvy::dotenv().ok();
 
-    let rpc_url = env::var("RPC_URL").unwrap_or_else(|_| "https://mainnet.base.org".to_string());
+    // Load RPC configuration from environment
+    let rpc_config = services::rpc::RpcConfig::from_env()
+        .unwrap_or_else(|e| panic!("Failed to load RPC configuration: {e}"));
 
     let access_token = env::var("BEACONATOR_ACCESS_TOKEN")
         .expect("BEACONATOR_ACCESS_TOKEN environment variable not set");
@@ -165,7 +164,7 @@ pub async fn create_rocket() -> Rocket<Build> {
     let beacon_abi = load_abi("Beacon");
     let beacon_factory_abi = load_abi("BeaconFactory");
     let beacon_registry_abi = load_abi("BeaconRegistry");
-    let perp_hook_abi = load_abi("PerpHook");
+    let perp_manager_abi = load_abi("PerpManager");
     let multicall3_abi = load_abi("Multicall3");
     let dichotomous_beacon_factory_abi = load_abi("DichotomousBeaconFactory");
     let step_beacon_abi = load_abi("StepBeacon");
@@ -183,10 +182,11 @@ pub async fn create_rocket() -> Rocket<Build> {
     )
     .expect("Failed to parse perpcity registry address");
 
-    let perp_hook_address = Address::from_str(
-        &env::var("PERP_HOOK_ADDRESS").expect("PERP_HOOK_ADDRESS environment variable not set"),
+    let perp_manager_address = Address::from_str(
+        &env::var("PERP_MANAGER_ADDRESS")
+            .expect("PERP_MANAGER_ADDRESS environment variable not set"),
     )
-    .expect("Failed to parse perp hook address");
+    .expect("Failed to parse perp manager address");
 
     let usdc_address = Address::from_str(
         &env::var("USDC_ADDRESS").expect("USDC_ADDRESS environment variable not set"),
@@ -268,9 +268,8 @@ pub async fn create_rocket() -> Rocket<Build> {
         perp_config.max_margin_per_perp_usdc as f64 / 1_000_000.0
     );
 
-    // Get environment configuration
-    let env_type = env::var("ENV").expect("ENV environment variable not set");
-
+    // Get environment configuration and chain ID
+    let env_type = &rpc_config.env_type;
     let chain_id = match env_type.to_lowercase().as_str() {
         "testnet" => 84532u64,  // Base Sepolia testnet
         "mainnet" => 8453u64,   // Base mainnet
@@ -280,30 +279,29 @@ pub async fn create_rocket() -> Rocket<Build> {
         ),
     };
 
-    // Parse the wallet and create EthereumWallet
+    // Parse the wallet private key
     let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY environment variable not set");
-    let signer = private_key
-        .parse::<PrivateKeySigner>()
-        .expect("Failed to parse private key")
-        .with_chain_id(Some(chain_id));
 
-    let wallet = EthereumWallet::from(signer);
+    // Build RPC providers using the RPC module
+    let rpc_providers = rpc_config
+        .build_providers(&private_key, chain_id)
+        .unwrap_or_else(|e| panic!("Failed to build RPC providers: {e}"));
 
-    // Create provider with wallet using modern Alloy patterns
-    let provider_impl = ProviderBuilder::new()
-        .wallet(wallet)
-        .connect_http(rpc_url.parse().expect("Invalid RPC URL"));
+    let provider = rpc_providers.primary;
+    let alternate_provider = rpc_providers.alternate;
+
+    // Get wallet address
+    let wallet_address = services::rpc::RpcConfig::get_wallet_address(&private_key)
+        .expect("Failed to get wallet address");
 
     // Log wallet configuration for debugging
-    let wallet_address = provider_impl.default_signer_address();
     tracing::info!("Wallet configured:");
     tracing::info!("  - Address: {:?}", wallet_address);
     tracing::info!("  - Chain ID: {:?}", chain_id);
     tracing::info!("  - ENV: {}", env_type);
-    tracing::info!("  - RPC URL: {}", rpc_url);
 
     // Check wallet balance and nonce for debugging
-    match provider_impl.get_balance(wallet_address).await {
+    match provider.get_balance(wallet_address).await {
         Ok(balance) => {
             tracing::info!("Wallet balance: {} ETH", format_ether(balance));
         }
@@ -312,7 +310,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         }
     }
 
-    match provider_impl.get_transaction_count(wallet_address).await {
+    match provider.get_transaction_count(wallet_address).await {
         Ok(nonce) => {
             tracing::info!("Wallet nonce: {}", nonce);
         }
@@ -321,34 +319,6 @@ pub async fn create_rocket() -> Rocket<Build> {
         }
     }
 
-    let provider = Arc::new(provider_impl);
-
-    // Setup alternate provider if BEACONATOR_ALTERNATE_RPC is provided
-    let alternate_provider = if let Ok(alternate_rpc_url) = env::var("BEACONATOR_ALTERNATE_RPC") {
-        tracing::info!("Setting up alternate RPC provider: {}", alternate_rpc_url);
-
-        // Create alternate provider with same wallet
-        let alternate_signer = private_key
-            .parse::<PrivateKeySigner>()
-            .expect("Failed to parse private key for alternate provider")
-            .with_chain_id(Some(chain_id));
-
-        let alternate_wallet = EthereumWallet::from(alternate_signer);
-
-        let provider = ProviderBuilder::new()
-            .wallet(alternate_wallet)
-            .connect_http(
-                alternate_rpc_url
-                    .parse()
-                    .expect("Invalid alternate RPC URL"),
-            );
-        tracing::info!("Alternate RPC provider setup successful");
-        Some(Arc::new(provider))
-    } else {
-        tracing::info!("No alternate RPC configured (BEACONATOR_ALTERNATE_RPC not set)");
-        None
-    };
-
     let app_state = AppState {
         provider,
         alternate_provider,
@@ -356,13 +326,13 @@ pub async fn create_rocket() -> Rocket<Build> {
         beacon_abi,
         beacon_factory_abi,
         beacon_registry_abi,
-        perp_hook_abi,
+        perp_manager_abi,
         multicall3_abi,
         dichotomous_beacon_factory_abi,
         step_beacon_abi,
         beacon_factory_address,
         perpcity_registry_address,
-        perp_hook_address,
+        perp_manager_address,
         usdc_address,
         dichotomous_beacon_factory_address,
         usdc_transfer_limit,

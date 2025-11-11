@@ -42,11 +42,21 @@ pub struct CreateVerifiableBeaconRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeployPerpForBeaconRequest {
     pub beacon_address: String,
+    pub fees_module: String,
+    pub margin_ratios_module: String,
+    pub lockup_period_module: String,
+    pub sqrt_price_impact_limit_module: String,
+    pub starting_sqrt_price_x96: String, // Q96 format as string
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BatchDeployPerpsForBeaconsRequest {
     pub beacon_addresses: Vec<String>,
+    pub fees_module: String,
+    pub margin_ratios_module: String,
+    pub lockup_period_module: String,
+    pub sqrt_price_impact_limit_module: String,
+    pub starting_sqrt_price_x96: String, // Q96 format as string
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -65,6 +75,14 @@ pub struct DepositLiquidityForPerpRequest {
     ///
     /// Current scaling: margin × 500,000 = final liquidity amount
     pub margin_amount_usdc: String,
+    /// Optional holder address (defaults to wallet address if not provided)
+    pub holder: Option<String>,
+    /// Maximum amount of token0 to deposit (slippage protection)
+    /// Optional - defaults to a reasonable max if not provided
+    pub max_amt0_in: Option<String>,
+    /// Maximum amount of token1 to deposit (slippage protection)
+    /// Optional - defaults to a reasonable max if not provided
+    pub max_amt1_in: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

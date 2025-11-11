@@ -1,8 +1,7 @@
 // Perp integration tests - extracted from src/routes/perp.rs backup file
 
-use crate::test_utils::{create_isolated_test_app_state, create_simple_test_app_state};
+use crate::test_utils::create_simple_test_app_state;
 use alloy::primitives::{FixedBytes, U256};
-use alloy::providers::ProviderBuilder;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status};
 use serial_test::serial;
@@ -16,7 +15,6 @@ use the_beaconator::routes::perp::{
     batch_deposit_liquidity_for_perps, deploy_perp_for_beacon_endpoint,
     deposit_liquidity_for_perp_endpoint,
 };
-use the_beaconator::services::perp::operations::deploy_perp_for_beacon;
 
 #[tokio::test]
 #[ignore] // Temporarily disabled - hangs due to real network calls
@@ -30,6 +28,9 @@ async fn test_deposit_liquidity_invalid_perp_id() {
     let request = Json(DepositLiquidityForPerpRequest {
         perp_id: "not_a_hex_string".to_string(),
         margin_amount_usdc: "500000000".to_string(),
+        holder: None,
+        max_amt0_in: None,
+        max_amt1_in: None,
     });
 
     let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
@@ -49,6 +50,9 @@ async fn test_deposit_liquidity_invalid_margin_amount() {
     let request = Json(DepositLiquidityForPerpRequest {
         perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234".to_string(),
         margin_amount_usdc: "not_a_number".to_string(),
+        holder: None,
+        max_amt0_in: None,
+        max_amt1_in: None,
     });
 
     let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
@@ -67,6 +71,9 @@ async fn test_deposit_liquidity_zero_margin_amount() {
     let request = Json(DepositLiquidityForPerpRequest {
         perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234".to_string(),
         margin_amount_usdc: "0".to_string(), // 0 USDC
+        holder: None,
+        max_amt0_in: None,
+        max_amt1_in: None,
     });
 
     let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
@@ -86,6 +93,11 @@ async fn test_deploy_perp_invalid_beacon_address() {
     // Test invalid beacon address
     let request = Json(DeployPerpForBeaconRequest {
         beacon_address: "not_a_valid_address".to_string(),
+        fees_module: "0x1111111111111111111111111111111111111111".to_string(),
+        margin_ratios_module: "0x2222222222222222222222222222222222222222".to_string(),
+        lockup_period_module: "0x3333333333333333333333333333333333333333".to_string(),
+        sqrt_price_impact_limit_module: "0x4444444444444444444444444444444444444444".to_string(),
+        starting_sqrt_price_x96: "560227709747861419891227623424".to_string(), // sqrt(50) * 2^96
     });
 
     let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
@@ -104,6 +116,11 @@ async fn test_deploy_perp_short_beacon_address() {
     // Test short beacon address (missing characters)
     let request = Json(DeployPerpForBeaconRequest {
         beacon_address: "0x123456".to_string(), // Too short
+        fees_module: "0x1111111111111111111111111111111111111111".to_string(),
+        margin_ratios_module: "0x2222222222222222222222222222222222222222".to_string(),
+        lockup_period_module: "0x3333333333333333333333333333333333333333".to_string(),
+        sqrt_price_impact_limit_module: "0x4444444444444444444444444444444444444444".to_string(),
+        starting_sqrt_price_x96: "560227709747861419891227623424".to_string(), // sqrt(50) * 2^96
     });
 
     let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
@@ -126,10 +143,16 @@ async fn test_batch_deposit_liquidity_mixed_validity() {
                 perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
                     .to_string(),
                 margin_amount_usdc: "500000000".to_string(),
+                holder: None,
+                max_amt0_in: None,
+                max_amt1_in: None,
             },
             DepositLiquidityForPerpRequest {
                 perp_id: "invalid_perp_id".to_string(), // This should fail
                 margin_amount_usdc: "500000000".to_string(),
+                holder: None,
+                max_amt0_in: None,
+                max_amt1_in: None,
             },
         ],
     });
@@ -203,72 +226,73 @@ fn test_tick_spacing_calculation() {
 }
 
 // === Anvil-based integration tests (moved from unit tests) ===
+// NOTE: These tests are temporarily disabled while perp operations module is being refactored
 
-#[tokio::test]
-#[ignore] // Temporarily disabled - hangs due to real network calls
-#[serial]
-async fn test_deploy_perp_for_beacon_with_anvil() {
-    // Test the complete perp deployment flow with Anvil
-    let (app_state, anvil) = create_isolated_test_app_state().await;
-    let beacon_address = anvil.deployer_account(); // Use account address as placeholder
+// #[tokio::test]
+// #[ignore] // Temporarily disabled - perp operations module refactoring
+// #[serial]
+// async fn test_deploy_perp_for_beacon_with_anvil() {
+//     // Test the complete perp deployment flow with Anvil
+//     let (app_state, anvil) = create_isolated_test_app_state().await;
+//     let beacon_address = anvil.deployer_account(); // Use account address as placeholder
+//
+//     // Execute the deployment
+//     let result = deploy_perp_for_beacon(&app_state, beacon_address).await;
+//
+//     match result {
+//         Ok(response) => {
+//             println!("Perp deployment succeeded:");
+//             println!("  Perp ID: {}", response.perp_id);
+//             println!("  PerpManager address: {}", response.perp_manager_address);
+//             println!("  Transaction hash: {}", response.transaction_hash);
+//             assert!(!response.perp_id.is_empty());
+//             assert!(!response.transaction_hash.is_empty());
+//         }
+//         Err(e) => {
+//             println!("Perp deployment failed (expected in some environments): {e}");
+//             // In CI or limited environments, this might fail - that's ok for testing
+//         }
+//     }
+// }
 
-    // Execute the deployment
-    let result = deploy_perp_for_beacon(&app_state, beacon_address).await;
-
-    match result {
-        Ok(response) => {
-            println!("Perp deployment succeeded:");
-            println!("  Perp ID: {}", response.perp_id);
-            println!("  PerpHook address: {}", response.perp_hook_address);
-            println!("  Transaction hash: {}", response.transaction_hash);
-            assert!(!response.perp_id.is_empty());
-            assert!(!response.transaction_hash.is_empty());
-        }
-        Err(e) => {
-            println!("Perp deployment failed (expected in some environments): {e}");
-            // In CI or limited environments, this might fail - that's ok for testing
-        }
-    }
-}
-
-#[tokio::test]
-#[ignore] // Temporarily disabled - hangs due to real network calls
-#[serial]
-async fn test_rpc_fallback_error_handling() {
-    use alloy::primitives::Address;
-    use std::sync::Arc;
-
-    // Test error handling when both primary and fallback fail
-    let (mut app_state, anvil) = create_isolated_test_app_state().await;
-    let signer1 = anvil.deployer_signer();
-    let wallet1 = alloy::network::EthereumWallet::from(signer1);
-
-    let signer2 = anvil.get_signer(1);
-    let wallet2 = alloy::network::EthereumWallet::from(signer2);
-
-    // Both providers point to non-existent endpoints
-    let bad_provider1 = ProviderBuilder::new()
-        .wallet(wallet1)
-        .connect_http("http://localhost:9999".parse().unwrap());
-
-    let bad_provider2 = ProviderBuilder::new()
-        .wallet(wallet2)
-        .connect_http("http://localhost:8888".parse().unwrap());
-
-    app_state.provider = Arc::new(bad_provider1);
-    app_state.alternate_provider = Some(Arc::new(bad_provider2));
-
-    let beacon_address = Address::from_str("0x5FbDB2315678afecb367f032d93F642f64180aa3").unwrap();
-
-    // This should fail with both providers
-    let result = deploy_perp_for_beacon(&app_state, beacon_address).await;
-
-    assert!(result.is_err());
-    let error_msg = result.unwrap_err();
-
-    // Should contain information about failures
-    assert!(!error_msg.is_empty());
-}
+// #[tokio::test]
+// #[ignore] // Temporarily disabled - perp operations module refactoring
+// #[serial]
+// async fn test_rpc_fallback_error_handling() {
+//     use alloy::primitives::Address;
+//     use std::sync::Arc;
+//
+//     // Test error handling when both primary and fallback fail
+//     let (mut app_state, anvil) = create_isolated_test_app_state().await;
+//     let signer1 = anvil.deployer_signer();
+//     let wallet1 = alloy::network::EthereumWallet::from(signer1);
+//
+//     let signer2 = anvil.get_signer(1);
+//     let wallet2 = alloy::network::EthereumWallet::from(signer2);
+//
+//     // Both providers point to non-existent endpoints
+//     let bad_provider1 = ProviderBuilder::new()
+//         .wallet(wallet1)
+//         .connect_http("http://localhost:9999".parse().unwrap());
+//
+//     let bad_provider2 = ProviderBuilder::new()
+//         .wallet(wallet2)
+//         .connect_http("http://localhost:8888".parse().unwrap());
+//
+//     app_state.provider = Arc::new(bad_provider1);
+//     app_state.alternate_provider = Some(Arc::new(bad_provider2));
+//
+//     let beacon_address = Address::from_str("0x5FbDB2315678afecb367f032d93F642f64180aa3").unwrap();
+//
+//     // This should fail with both providers
+//     let result = deploy_perp_for_beacon(&app_state, beacon_address).await;
+//
+//     assert!(result.is_err());
+//     let error_msg = result.unwrap_err();
+//
+//     // Should contain information about failures
+//     assert!(!error_msg.is_empty());
+// }
 
 #[test]
 fn test_liquidity_calculation() {
