@@ -84,41 +84,45 @@ sol! {
     }
 
     #[sol(rpc)]
-    interface IPerpHook {
-        // This struct matches the DEPLOYED PerpHook contract on Base Sepolia
-        // Note: tradingFeeCreatorSplitX96 is NOT included in the deployed version
+    interface IPerpManager {
+        // Module interfaces for modular configuration
+        type IFees is address;
+        type IMarginRatios is address;
+        type ILockupPeriod is address;
+        type ISqrtPriceImpactLimit is address;
+
+        // Modular CreatePerpParams struct - uses plugin modules instead of hardcoded values
         struct CreatePerpParams {
             address beacon;
-            uint24 tradingFee;
-            uint128 minMargin;
-            uint128 maxMargin;
-            uint128 minOpeningLeverageX96;
-            uint128 maxOpeningLeverageX96;
-            uint128 liquidationLeverageX96;
-            uint128 liquidationFeeX96;
-            uint128 liquidationFeeSplitX96;
-            int128 fundingInterval;
-            int24 tickSpacing;
+            IFees fees;
+            IMarginRatios marginRatios;
+            ILockupPeriod lockupPeriod;
+            ISqrtPriceImpactLimit sqrtPriceImpactLimit;
             uint160 startingSqrtPriceX96;
         }
 
         function createPerp(CreatePerpParams memory params) external returns (bytes32 perpId);
-        event PerpCreated(bytes32 perpId, address beacon, uint256 markPriceX96);
+        event PerpCreated(bytes32 perpId, address beacon, uint256 sqrtPriceX96, uint256 indexPriceX96);
 
         // Perp info struct - simplified version for checking if perp exists
         struct PerpInfo {
             address beacon;
-            uint128 maxOpeningMargin;
-            uint128 minOpeningMargin;
+            IFees fees;
+            IMarginRatios marginRatios;
+            ILockupPeriod lockupPeriod;
+            ISqrtPriceImpactLimit sqrtPriceImpactLimit;
         }
 
         function perps(bytes32 perpId) external view returns (PerpInfo memory);
 
         struct OpenMakerPositionParams {
-            uint128 margin;
+            address holder;
+            uint256 margin;
             uint128 liquidity;
             int24 tickLower;
             int24 tickUpper;
+            uint128 maxAmt0In;
+            uint128 maxAmt1In;
         }
 
         struct MakerInfo {
@@ -127,7 +131,7 @@ sol! {
             int24 tickUpper;
             uint160 sqrtPriceLowerX96;
             uint160 sqrtPriceUpperX96;
-            uint128 margin;
+            uint256 margin;
             uint128 liquidity;
             uint128 perpsBorrowed;
             uint128 usdBorrowed;
@@ -135,8 +139,8 @@ sol! {
             int128 entryTwPremiumDivBySqrtPriceX96;
         }
 
-        function openMakerPosition(bytes32 perpId, OpenMakerPositionParams memory params) external returns (uint256 makerPosId);
-        event MakerPositionOpened(bytes32 perpId, uint256 makerPosId, MakerInfo makerPos, uint256 markPriceX96);
+        function openMakerPos(bytes32 perpId, OpenMakerPositionParams memory params) external returns (uint256 posId);
+        event PositionOpened(bytes32 perpId, uint256 sqrtPriceX96, uint256 longOI, uint256 shortOI, uint256 posId, bool isMaker, int256 entryPerpDelta);
     }
 }
 

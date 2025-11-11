@@ -26,7 +26,7 @@ pub struct BatchUpdateBeaconResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeployPerpForBeaconResponse {
     pub perp_id: String, // 32-byte pool identifier (e.g., 0x48863de190e7...)
-    pub perp_hook_address: String, // 20-byte PerpHook contract address
+    pub perp_manager_address: String, // 20-byte PerpManager contract address
     pub transaction_hash: String,
 }
 

@@ -78,7 +78,7 @@ use the_beaconator::routes::test_utils::mock_contract_deployment;
 
 #[tokio::test]
 async fn test_contract_deployment() {
-    let deployment = mock_contract_deployment("PerpHook").await;
+    let deployment = mock_contract_deployment("PerpManager").await;
     assert_ne!(deployment.address, Address::ZERO);
     assert_eq!(deployment.gas_used, 1000000);
 }
@@ -343,7 +343,7 @@ impl TestDeployment {
         tracing::info!("Test contracts deployed:");
         tracing::info!("  - BeaconFactory: {}", beacon_factory);
         tracing::info!("  - BeaconRegistry: {}", beacon_registry);
-        tracing::info!("  - PerpHook: {}", perp_hook);
+        tracing::info!("  - PerpManager: {}", perp_hook);
         tracing::info!("  - USDC: {}", usdc);
 
         Ok(Self {
@@ -374,7 +374,7 @@ pub async fn create_test_app_state() -> AppState {
     let beacon_abi = load_test_abi("Beacon");
     let beacon_factory_abi = load_test_abi("BeaconFactory");
     let beacon_registry_abi = load_test_abi("BeaconRegistry");
-    let perp_hook_abi = load_test_abi("PerpHook");
+    let perp_manager_abi = load_test_abi("PerpManager");
 
     AppState {
         provider: deployment.provider,
@@ -383,13 +383,13 @@ pub async fn create_test_app_state() -> AppState {
         beacon_abi,
         beacon_factory_abi,
         beacon_registry_abi,
-        perp_hook_abi,
+        perp_manager_abi,
         multicall3_abi: load_test_abi("Multicall3"),
         dichotomous_beacon_factory_abi: JsonAbi::new(), // Mock ABI for tests
         step_beacon_abi: JsonAbi::new(),                // Mock ABI for tests
         beacon_factory_address: deployment.beacon_factory,
         perpcity_registry_address: deployment.beacon_registry,
-        perp_hook_address: deployment.perp_hook,
+        perp_manager_address: deployment.perp_hook,
         usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
         dichotomous_beacon_factory_address: None, // Not configured by default in tests
         usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
@@ -417,7 +417,7 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
     let beacon_abi = load_test_abi("Beacon");
     let beacon_factory_abi = load_test_abi("BeaconFactory");
     let beacon_registry_abi = load_test_abi("BeaconRegistry");
-    let perp_hook_abi = load_test_abi("PerpHook");
+    let perp_manager_abi = load_test_abi("PerpManager");
 
     let app_state = AppState {
         provider: deployment.provider,
@@ -426,13 +426,13 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
         beacon_abi,
         beacon_factory_abi,
         beacon_registry_abi,
-        perp_hook_abi,
+        perp_manager_abi,
         multicall3_abi: load_test_abi("Multicall3"),
         dichotomous_beacon_factory_abi: JsonAbi::new(), // Mock ABI for tests
         step_beacon_abi: JsonAbi::new(),                // Mock ABI for tests
         beacon_factory_address: deployment.beacon_factory,
         perpcity_registry_address: deployment.beacon_registry,
-        perp_hook_address: deployment.perp_hook,
+        perp_manager_address: deployment.perp_hook,
         usdc_address: deployment.usdc,
         dichotomous_beacon_factory_address: None, // Not configured by default in tests
         usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
@@ -472,13 +472,13 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
         beacon_abi: load_test_abi("Beacon"),
         beacon_factory_abi: load_test_abi("BeaconFactory"),
         beacon_registry_abi: load_test_abi("BeaconRegistry"),
-        perp_hook_abi: load_test_abi("PerpHook"),
+        perp_manager_abi: load_test_abi("PerpManager"),
         multicall3_abi: load_test_abi("Multicall3"),
         dichotomous_beacon_factory_abi: JsonAbi::new(), // Mock ABI for tests
         step_beacon_abi: JsonAbi::new(),                // Mock ABI for tests
         beacon_factory_address: deployment.beacon_factory,
         perpcity_registry_address: deployment.beacon_registry,
-        perp_hook_address: deployment.perp_hook,
+        perp_manager_address: deployment.perp_hook,
         usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
         dichotomous_beacon_factory_address: None, // Not configured by default in tests
         usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
@@ -530,7 +530,7 @@ pub async fn mock_contract_deployment(name: &str) -> ContractDeploymentResult {
         "BeaconRegistry" => {
             Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0").unwrap()
         }
-        "PerpHook" => Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9").unwrap(),
+        "PerpManager" => Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9").unwrap(),
         _ => Address::from_str("0x0000000000000000000000000000000000000000").unwrap(),
     };
 
@@ -559,7 +559,7 @@ pub fn create_simple_test_app_state() -> AppState {
         beacon_abi: JsonAbi::new(),
         beacon_factory_abi: JsonAbi::new(),
         beacon_registry_abi: JsonAbi::new(),
-        perp_hook_abi: JsonAbi::new(),
+        perp_manager_abi: JsonAbi::new(),
         multicall3_abi: JsonAbi::new(),
         dichotomous_beacon_factory_abi: JsonAbi::new(),
         step_beacon_abi: JsonAbi::new(),
@@ -567,7 +567,8 @@ pub fn create_simple_test_app_state() -> AppState {
             .unwrap(),
         perpcity_registry_address: Address::from_str("0x2345678901234567890123456789012345678901")
             .unwrap(),
-        perp_hook_address: Address::from_str("0x3456789012345678901234567890123456789012").unwrap(),
+        perp_manager_address: Address::from_str("0x3456789012345678901234567890123456789012")
+            .unwrap(),
         usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
         dichotomous_beacon_factory_address: None, // Not configured by default in tests
         usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
@@ -591,7 +592,7 @@ pub fn create_test_app_state_with_provider(
         beacon_abi: JsonAbi::new(),
         beacon_factory_abi: JsonAbi::new(),
         beacon_registry_abi: JsonAbi::new(),
-        perp_hook_abi: JsonAbi::new(),
+        perp_manager_abi: JsonAbi::new(),
         multicall3_abi: JsonAbi::new(),
         dichotomous_beacon_factory_abi: JsonAbi::new(),
         step_beacon_abi: JsonAbi::new(),
@@ -599,7 +600,8 @@ pub fn create_test_app_state_with_provider(
             .unwrap(),
         perpcity_registry_address: Address::from_str("0x2345678901234567890123456789012345678901")
             .unwrap(),
-        perp_hook_address: Address::from_str("0x3456789012345678901234567890123456789012").unwrap(),
+        perp_manager_address: Address::from_str("0x3456789012345678901234567890123456789012")
+            .unwrap(),
         usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
         dichotomous_beacon_factory_address: None, // Not configured by default in tests
         usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
@@ -645,8 +647,8 @@ mod tests {
         let beacon_abi = load_test_abi("Beacon");
         assert!(!beacon_abi.functions.is_empty());
 
-        let perp_hook_abi = load_test_abi("PerpHook");
-        assert!(!perp_hook_abi.functions.is_empty());
+        let perp_manager_abi = load_test_abi("PerpManager");
+        assert!(!perp_manager_abi.functions.is_empty());
     }
 
     #[tokio::test]
@@ -655,7 +657,7 @@ mod tests {
         let app_state = create_test_app_state().await;
         assert_ne!(app_state.wallet_address, Address::ZERO);
         assert_ne!(app_state.beacon_factory_address, Address::ZERO);
-        assert_ne!(app_state.perp_hook_address, Address::ZERO);
+        assert_ne!(app_state.perp_manager_address, Address::ZERO);
     }
 
     #[tokio::test]

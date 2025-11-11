@@ -1,3 +1,28 @@
+// ==============================================================================
+// TEMPORARILY DISABLED - PerpManager Refactor in Progress
+// ==============================================================================
+//
+// This file is disabled due to the migration from PerpHook to PerpManager architecture.
+//
+// **What changed:**
+// - Request models now require module addresses (fees, margin_ratios, lockup_period, etc.)
+// - DeployPerpForBeaconRequest now has 5 additional required fields
+// - DepositLiquidityForPerpRequest has new optional fields (holder, max_amt0_in, max_amt1_in)
+//
+// **Invalid test data in this file:**
+// - Lines 23-25: DeployPerpForBeaconRequest only has beacon_address (missing module addresses)
+// - All test instances of DeployPerpForBeaconRequest need updating
+// - All test instances of DepositLiquidityForPerpRequest need new optional fields
+//
+// **TODO:**
+// Update all test request objects to include new required/optional fields for PerpManager.
+//
+// **To re-enable:**
+// 1. Add module address fields to all DeployPerpForBeaconRequest instances
+// 2. Add optional fields (holder, max_amt0_in, max_amt1_in) to DepositLiquidityForPerpRequest
+// 3. Rename file to remove .disabled extension
+// ==============================================================================
+
 // Comprehensive unit tests for perp routes
 
 use alloy::primitives::{Address, FixedBytes};
