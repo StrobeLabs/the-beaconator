@@ -138,13 +138,35 @@ ENV=testnet
 
 ## API Documentation
 
-**Interactive Documentation:** Visit `/rapidoc/` when the server is running for complete API documentation with try-it-out functionality.
+**OpenAPI Spec:** Available at `/openapi.json` when the server is running.
 
-**Auto-Generated Clients:** Python and TypeScript clients are available in `clients/` directory:
-- Python: See `clients/python/README.md`
-- TypeScript: See `clients/typescript/README.md`
+**Generate API Clients:**
 
-**OpenAPI Spec:** Available at `/openapi.json`
+The Beaconator provides an OpenAPI 3.0 specification that can be used to generate type-safe API clients in any language.
+
+Generate the spec:
+```bash
+cargo run --example generate_openapi > openapi.json
+```
+
+Generate TypeScript client:
+```bash
+npm install -D openapi-typescript
+npx openapi-typescript openapi.json -o api.ts
+```
+
+Generate Python client:
+```bash
+pipx install openapi-python-client
+openapi-python-client generate --path openapi.json --output-path client/python
+```
+
+**Interactive Documentation:**
+
+You can view interactive API documentation using any OpenAPI UI viewer:
+- [RapiDoc](https://rapidocweb.com/): `npx serve` then open with RapiDoc
+- [Swagger UI](https://swagger.io/tools/swagger-ui/): Upload `openapi.json`
+- [Redoc](https://redocly.com/): `npx @redocly/cli preview-docs openapi.json`
 
 **Full Documentation:** See the [Beaconator section](../strobe-docs) for comprehensive documentation.
 

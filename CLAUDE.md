@@ -74,47 +74,40 @@ Key patterns:
 - Contract instantiation uses `&*state.provider` to dereference Arc
 - AppState stores wallet address separately for easy access
 
-## API Documentation & Clients
+## API Documentation
 
 ### OpenAPI Integration
 
 The API is fully documented with OpenAPI 3.0 using `rocket_okapi`:
-- **Interactive docs**: Available at `/rapidoc/` when server is running
-- **OpenAPI spec**: Served at `/openapi.json`
-- **Generation**: `cargo run --example generate_openapi > openapi.json`
+- **OpenAPI spec**: Served at `/openapi.json` when server is running
+- **Spec generation**: `cargo run --example generate_openapi > openapi.json`
 
 All endpoints are annotated with `#[openapi(tag = "...")]` macros for automatic documentation generation.
 
-### Generated Clients
+### Generating API Clients
 
-Auto-generated API clients are available in `clients/`:
+The OpenAPI spec can be used to generate type-safe clients in any language:
 
-**Python Client** (`clients/python/`):
-- Full async/sync support with type hints
-- 55 generated files with models and API modules
-- Install: `pip install -e clients/python`
-- Usage: See `clients/python/README.md`
-
-**TypeScript Client** (`clients/typescript/`):
-- Complete type safety with 1033 lines of TypeScript definitions
-- Compatible with `openapi-fetch`
-- Usage: See `clients/typescript/README.md`
-
-### Regenerating Clients
-
-After API changes:
+**TypeScript:**
 ```bash
-# Regenerate OpenAPI spec
-cargo run --example generate_openapi > openapi.json
-
-# Generate TypeScript client
-npm run generate:ts
-
-# Generate Python client
-openapi-python-client generate --path openapi.json --output-path clients/python --meta none
+npm install -D openapi-typescript
+npx openapi-typescript openapi.json -o api.ts
 ```
 
-See `clients/README.md` for complete documentation.
+**Python:**
+```bash
+pipx install openapi-python-client
+openapi-python-client generate --path openapi.json --output-path client/python
+```
+
+**Other languages:** Use any OpenAPI 3.0 code generator (e.g., openapi-generator, Swagger Codegen).
+
+### Viewing API Documentation
+
+Use any OpenAPI viewer to explore the API interactively:
+- RapiDoc: `npx serve` then open with RapiDoc
+- Swagger UI: Upload `openapi.json`
+- Redoc: `npx @redocly/cli preview-docs openapi.json`
 
 ## Environment Configuration
 

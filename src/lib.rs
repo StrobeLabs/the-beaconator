@@ -4,11 +4,7 @@ use alloy::{
     providers::Provider,
 };
 use rocket::{Build, Rocket};
-use rocket_okapi::{
-    openapi_get_routes_spec,
-    rapidoc::{GeneralConfig, HideShowConfig, RapiDocConfig, make_rapidoc},
-    settings::{OpenApiSettings, UrlObject},
-};
+use rocket_okapi::{openapi_get_routes_spec, settings::OpenApiSettings};
 use std::env;
 use std::str::FromStr;
 
@@ -311,32 +307,15 @@ pub async fn create_rocket() -> Rocket<Build> {
     let openapi_json =
         serde_json::to_string(&openapi_spec).expect("Failed to serialize OpenAPI spec");
 
-    // Create base rocket instance with OpenAPI support
-    let rocket = rocket::build()
+    // Create rocket instance with OpenAPI support
+    rocket::build()
         .manage(app_state)
         .attach(fairings::RequestLogger)
         .attach(fairings::PanicCatcher)
         .mount("/", routes)
         .mount("/", rocket::routes![serve_openapi_spec])
-        .manage(openapi_json);
-
-    // Configure and mount RapiDoc UI
-    let rapidoc_config = RapiDocConfig {
-        general: GeneralConfig {
-            spec_urls: vec![UrlObject::new("Beaconator API", "/openapi.json")],
-            ..Default::default()
-        },
-        hide_show: HideShowConfig {
-            allow_spec_url_load: false,
-            allow_spec_file_load: false,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    let rocket = rocket.mount("/rapidoc/", make_rapidoc(&rapidoc_config));
-
-    rocket.register("/", catchers![catch_all_errors, catch_panic])
+        .manage(openapi_json)
+        .register("/", catchers![catch_all_errors, catch_panic])
 }
 
 /// Catches all unhandled errors and returns a formatted error response.
