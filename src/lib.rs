@@ -6,7 +6,7 @@ use alloy::{
 use rocket::{Build, Rocket};
 use rocket_okapi::{
     openapi_get_routes_spec,
-    rapidoc::{make_rapidoc, GeneralConfig, HideShowConfig, RapiDocConfig},
+    rapidoc::{GeneralConfig, HideShowConfig, RapiDocConfig, make_rapidoc},
     settings::{OpenApiSettings, UrlObject},
 };
 use std::env;
@@ -56,7 +56,9 @@ fn load_abi(name: &str) -> JsonAbi {
 
 /// Serves the OpenAPI JSON specification at /openapi.json
 #[rocket::get("/openapi.json")]
-fn serve_openapi_spec(openapi_json: &rocket::State<String>) -> (rocket::http::Status, (rocket::http::ContentType, String)) {
+fn serve_openapi_spec(
+    openapi_json: &rocket::State<String>,
+) -> (rocket::http::Status, (rocket::http::ContentType, String)) {
     (
         rocket::http::Status::Ok,
         (rocket::http::ContentType::JSON, openapi_json.to_string()),
@@ -306,8 +308,8 @@ pub async fn create_rocket() -> Rocket<Build> {
     ];
 
     // Serve the OpenAPI spec at /openapi.json
-    let openapi_json = serde_json::to_string(&openapi_spec)
-        .expect("Failed to serialize OpenAPI spec");
+    let openapi_json =
+        serde_json::to_string(&openapi_spec).expect("Failed to serialize OpenAPI spec");
 
     // Create base rocket instance with OpenAPI support
     let rocket = rocket::build()

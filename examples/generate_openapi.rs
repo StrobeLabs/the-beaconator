@@ -30,8 +30,8 @@ fn main() {
     ];
 
     // Serialize to pretty JSON
-    let json = serde_json::to_string_pretty(&openapi_spec)
-        .expect("Failed to serialize OpenAPI spec");
+    let json =
+        serde_json::to_string_pretty(&openapi_spec).expect("Failed to serialize OpenAPI spec");
 
     // Print to stdout
     println!("{json}");
