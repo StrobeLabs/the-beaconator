@@ -80,7 +80,7 @@ Key patterns:
 
 The API is fully documented with OpenAPI 3.0 using `rocket_okapi`:
 - **OpenAPI spec**: Served at `/openapi.json` when server is running
-- **Spec generation**: `cargo run --example generate_openapi > openapi.json`
+- **Spec generation**: Start the server and download from `/openapi.json`
 
 All endpoints are annotated with `#[openapi(tag = "...")]` macros for automatic documentation generation.
 

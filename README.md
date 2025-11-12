@@ -144,9 +144,13 @@ ENV=testnet
 
 The Beaconator provides an OpenAPI 3.0 specification that can be used to generate type-safe API clients in any language.
 
-Generate the spec:
+Generate the spec by running the server and accessing `/openapi.json`:
 ```bash
-cargo run --example generate_openapi > openapi.json
+# Start the server
+make dev
+
+# In another terminal, download the spec
+curl http://localhost:8000/openapi.json > openapi.json
 ```
 
 Generate TypeScript client:
