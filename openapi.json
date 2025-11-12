@@ -1,0 +1,1384 @@
+   Compiling darling_core v0.13.4
+   Compiling hashbrown v0.12.3
+   Compiling indexmap v1.9.3
+   Compiling schemars v0.8.22
+   Compiling darling_macro v0.13.4
+   Compiling okapi v0.7.0
+   Compiling darling v0.13.4
+   Compiling rocket_okapi_codegen v0.9.0
+   Compiling rocket_okapi v0.9.0
+   Compiling the-beaconator v0.1.0 (/Users/kokobhadra/source/strobe/the-beaconator)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.53s
+     Running `target/debug/examples/generate_openapi`
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "the-beaconator",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "tags": [
+          "Information"
+        ],
+        "description": "Returns API summary and available endpoints.\n\nProvides an overview of The Beaconator API including total endpoints, working endpoints, and not yet implemented endpoints. This endpoint does not require authentication.",
+        "operationId": "routes_info_index",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_ApiSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/all_beacons": {
+      "get": {
+        "tags": [
+          "Information"
+        ],
+        "description": "Lists all registered beacons.\n\nThis endpoint is not yet implemented and returns a placeholder response. Requires Bearer token authentication.",
+        "operationId": "routes_info_all_beacons",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_Array_of_String"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/create_beacon": {
+      "post": {
+        "tags": [
+          "Beacon"
+        ],
+        "description": "Creates a new beacon via the beacon factory.\n\nCreates a beacon using the beacon factory contract for the authenticated wallet address.",
+        "operationId": "routes_beacon_create_beacon",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBeaconRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_String"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/register_beacon": {
+      "post": {
+        "tags": [
+          "Beacon"
+        ],
+        "description": "Registers an existing beacon with the registry.\n\nRegisters a previously created beacon with the PerpCity registry contract.",
+        "operationId": "routes_beacon_register_beacon",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterBeaconRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_String"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/create_perpcity_beacon": {
+      "post": {
+        "tags": [
+          "Beacon"
+        ],
+        "description": "Creates a single PerpCity beacon.\n\nCreates a new beacon via the beacon factory and registers it with the PerpCity registry. Returns the address of the created beacon on success.",
+        "operationId": "routes_beacon_create_perpcity_beacon",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_String"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/batch_create_perpcity_beacon": {
+      "post": {
+        "tags": [
+          "Beacon"
+        ],
+        "description": "Creates multiple PerpCity beacons in a batch operation.\n\nCreates the specified number of beacons (1-100) via the beacon factory and registers them with the PerpCity registry. Returns details about successful and failed creations.",
+        "operationId": "routes_beacon_batch_create_perpcity_beacon",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchCreatePerpcityBeaconRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_BatchCreatePerpcityBeaconResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/deploy_perp_for_beacon": {
+      "post": {
+        "tags": [
+          "Perpetual"
+        ],
+        "description": "Deploys a perpetual contract for a specific beacon.\n\nCreates a new perpetual pool using the PerpManager contract for the specified beacon address. Returns the perp ID, PerpManager address, and transaction hash on success.",
+        "operationId": "routes_perp_deploy_perp_for_beacon_endpoint",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeployPerpForBeaconRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_DeployPerpForBeaconResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/batch_deploy_perps_for_beacons": {
+      "post": {
+        "tags": [
+          "Perpetual"
+        ],
+        "description": "Deploys perpetual contracts for multiple beacons in a batch operation.\n\nCreates perpetual pools for each specified beacon address using the PerpManager contract. Returns detailed results including perp IDs for successful deployments.",
+        "operationId": "routes_perp_batch_deploy_perps_for_beacons",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchDeployPerpsForBeaconsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_BatchDeployPerpsForBeaconsResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/deposit_liquidity_for_perp": {
+      "post": {
+        "tags": [
+          "Perpetual"
+        ],
+        "description": "Deposits liquidity for a specific perpetual contract.\n\nApproves USDC spending and deposits the specified margin amount as liquidity for the given perp ID. Returns the maker position ID and transaction hashes.",
+        "operationId": "routes_perp_deposit_liquidity_for_perp_endpoint",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DepositLiquidityForPerpRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_DepositLiquidityForPerpResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/batch_deposit_liquidity_for_perps": {
+      "post": {
+        "tags": [
+          "Perpetual"
+        ],
+        "description": "Deposits liquidity for multiple perpetual contracts in a batch operation.\n\nProcesses multiple liquidity deposits, each with their own perp ID and margin amount. Returns detailed results for each deposit attempt.",
+        "operationId": "routes_perp_batch_deposit_liquidity_for_perps",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchDepositLiquidityForPerpsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_BatchDepositLiquidityForPerpsResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/update_beacon": {
+      "post": {
+        "tags": [
+          "Beacon"
+        ],
+        "description": "Updates a beacon with new data using a zero-knowledge proof.\n\nValidates the provided proof and public signals, then updates the beacon's data. Returns the transaction hash on success.",
+        "operationId": "routes_beacon_update_beacon",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBeaconRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_String"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/batch_update_beacon": {
+      "post": {
+        "tags": [
+          "Beacon"
+        ],
+        "description": "Updates multiple beacons with new data using zero-knowledge proofs.\n\nProcesses a batch of beacon updates, each with their own proof and public signals. Returns detailed results for each update attempt.",
+        "operationId": "routes_beacon_batch_update_beacon",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchUpdateBeaconRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_BatchUpdateBeaconResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/fund_guest_wallet": {
+      "post": {
+        "tags": [
+          "Wallet"
+        ],
+        "description": "Funds a guest wallet with USDC and ETH.\n\nTransfers the specified amounts of USDC and ETH from the beaconator wallet to the guest wallet address. Validates transfer limits and available balances.",
+        "operationId": "routes_wallet_fund_guest_wallet",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FundGuestWalletRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_String"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_String"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/create_verifiable_beacon": {
+      "post": {
+        "tags": [
+          "Beacon"
+        ],
+        "description": "Creates a verifiable beacon with Halo2 proof verification.\n\nCreates a new verifiable beacon using the DichotomousBeaconFactory with the specified verifier contract address, initial data value, and TWAP cardinality.",
+        "operationId": "routes_beacon_create_verifiable_beacon",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateVerifiableBeaconRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_for_String"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiResponse_for_ApiSummary": {
+        "description": "Standard API response wrapper",
+        "type": "object",
+        "required": [
+          "message",
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "description": "Whether the request succeeded",
+            "type": "boolean"
+          },
+          "data": {
+            "description": "Response data (null if request failed)",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ApiSummary"
+              }
+            ],
+            "nullable": true
+          },
+          "message": {
+            "description": "Human-readable message about the result",
+            "type": "string"
+          }
+        }
+      },
+      "ApiSummary": {
+        "type": "object",
+        "required": [
+          "deprecated",
+          "endpoints",
+          "not_implemented",
+          "total_endpoints",
+          "working_endpoints"
+        ],
+        "properties": {
+          "total_endpoints": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0.0
+          },
+          "working_endpoints": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0.0
+          },
+          "not_implemented": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0.0
+          },
+          "deprecated": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0.0
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EndpointInfo"
+            }
+          }
+        }
+      },
+      "EndpointInfo": {
+        "description": "API endpoint information for documentation",
+        "type": "object",
+        "required": [
+          "description",
+          "method",
+          "path",
+          "requires_auth",
+          "status"
+        ],
+        "properties": {
+          "method": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "requires_auth": {
+            "type": "boolean"
+          },
+          "status": {
+            "$ref": "#/components/schemas/EndpointStatus"
+          }
+        }
+      },
+      "EndpointStatus": {
+        "type": "string",
+        "enum": [
+          "Working",
+          "NotImplemented",
+          "Deprecated"
+        ]
+      },
+      "ApiResponse_for_Array_of_String": {
+        "description": "Standard API response wrapper",
+        "type": "object",
+        "required": [
+          "message",
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "description": "Whether the request succeeded",
+            "type": "boolean"
+          },
+          "data": {
+            "description": "Response data (null if request failed)",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "message": {
+            "description": "Human-readable message about the result",
+            "type": "string"
+          }
+        }
+      },
+      "ApiResponse_for_String": {
+        "description": "Standard API response wrapper",
+        "type": "object",
+        "required": [
+          "message",
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "description": "Whether the request succeeded",
+            "type": "boolean"
+          },
+          "data": {
+            "description": "Response data (null if request failed)",
+            "type": "string",
+            "nullable": true
+          },
+          "message": {
+            "description": "Human-readable message about the result",
+            "type": "string"
+          }
+        }
+      },
+      "CreateBeaconRequest": {
+        "description": "Create a new beacon (not yet implemented)",
+        "type": "object",
+        "required": [
+          "placeholder"
+        ],
+        "properties": {
+          "placeholder": {
+            "description": "Placeholder field until implementation is complete",
+            "type": "string"
+          }
+        }
+      },
+      "RegisterBeaconRequest": {
+        "description": "Register an existing beacon with the registry",
+        "type": "object",
+        "required": [
+          "beacon_address",
+          "registry_address"
+        ],
+        "properties": {
+          "beacon_address": {
+            "description": "Ethereum address of the beacon contract",
+            "type": "string"
+          },
+          "registry_address": {
+            "description": "Ethereum address of the beacon registry contract",
+            "type": "string"
+          }
+        }
+      },
+      "ApiResponse_for_BatchCreatePerpcityBeaconResponse": {
+        "description": "Standard API response wrapper",
+        "type": "object",
+        "required": [
+          "message",
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "description": "Whether the request succeeded",
+            "type": "boolean"
+          },
+          "data": {
+            "description": "Response data (null if request failed)",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BatchCreatePerpcityBeaconResponse"
+              }
+            ],
+            "nullable": true
+          },
+          "message": {
+            "description": "Human-readable message about the result",
+            "type": "string"
+          }
+        }
+      },
+      "BatchCreatePerpcityBeaconResponse": {
+        "description": "Response from batch Perpcity beacon creation",
+        "type": "object",
+        "required": [
+          "beacon_addresses",
+          "created_count",
+          "errors",
+          "failed_count"
+        ],
+        "properties": {
+          "created_count": {
+            "description": "Number of successfully created beacons",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          },
+          "beacon_addresses": {
+            "description": "List of beacon addresses (hex strings with 0x prefix)",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "failed_count": {
+            "description": "Number of failed creations",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          },
+          "errors": {
+            "description": "Error messages for failed creations",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "BatchCreatePerpcityBeaconRequest": {
+        "description": "Batch create multiple Perpcity beacons",
+        "type": "object",
+        "required": [
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "description": "Number of beacons to create (1-100)",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          }
+        }
+      },
+      "ApiResponse_for_DeployPerpForBeaconResponse": {
+        "description": "Standard API response wrapper",
+        "type": "object",
+        "required": [
+          "message",
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "description": "Whether the request succeeded",
+            "type": "boolean"
+          },
+          "data": {
+            "description": "Response data (null if request failed)",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DeployPerpForBeaconResponse"
+              }
+            ],
+            "nullable": true
+          },
+          "message": {
+            "description": "Human-readable message about the result",
+            "type": "string"
+          }
+        }
+      },
+      "DeployPerpForBeaconResponse": {
+        "description": "Response from deploying a perpetual contract",
+        "type": "object",
+        "required": [
+          "perp_id",
+          "perp_manager_address",
+          "transaction_hash"
+        ],
+        "properties": {
+          "perp_id": {
+            "description": "32-byte perpetual pool identifier (hex string with 0x prefix)",
+            "type": "string"
+          },
+          "perp_manager_address": {
+            "description": "Address of the PerpManager contract",
+            "type": "string"
+          },
+          "transaction_hash": {
+            "description": "Transaction hash",
+            "type": "string"
+          }
+        }
+      },
+      "DeployPerpForBeaconRequest": {
+        "description": "Deploy a perpetual contract for a specific beacon",
+        "type": "object",
+        "required": [
+          "beacon_address",
+          "fees_module",
+          "lockup_period_module",
+          "margin_ratios_module",
+          "sqrt_price_impact_limit_module",
+          "starting_sqrt_price_x96"
+        ],
+        "properties": {
+          "beacon_address": {
+            "description": "Ethereum address of the beacon contract",
+            "type": "string"
+          },
+          "fees_module": {
+            "description": "Address of the fees configuration module",
+            "type": "string"
+          },
+          "margin_ratios_module": {
+            "description": "Address of the margin ratios configuration module",
+            "type": "string"
+          },
+          "lockup_period_module": {
+            "description": "Address of the lockup period configuration module",
+            "type": "string"
+          },
+          "sqrt_price_impact_limit_module": {
+            "description": "Address of the sqrt price impact limit configuration module",
+            "type": "string"
+          },
+          "starting_sqrt_price_x96": {
+            "description": "Starting sqrt price in Q96 format as string",
+            "type": "string"
+          }
+        }
+      },
+      "ApiResponse_for_BatchDeployPerpsForBeaconsResponse": {
+        "description": "Standard API response wrapper",
+        "type": "object",
+        "required": [
+          "message",
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "description": "Whether the request succeeded",
+            "type": "boolean"
+          },
+          "data": {
+            "description": "Response data (null if request failed)",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BatchDeployPerpsForBeaconsResponse"
+              }
+            ],
+            "nullable": true
+          },
+          "message": {
+            "description": "Human-readable message about the result",
+            "type": "string"
+          }
+        }
+      },
+      "BatchDeployPerpsForBeaconsResponse": {
+        "description": "Response from batch perpetual deployment",
+        "type": "object",
+        "required": [
+          "deployed_count",
+          "errors",
+          "failed_count",
+          "perp_ids"
+        ],
+        "properties": {
+          "deployed_count": {
+            "description": "Number of successfully deployed perpetuals",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          },
+          "perp_ids": {
+            "description": "List of perpetual pool IDs (hex strings with 0x prefix)",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "failed_count": {
+            "description": "Number of failed deployments",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          },
+          "errors": {
+            "description": "Error messages for failed deployments",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "BatchDeployPerpsForBeaconsRequest": {
+        "description": "Batch deploy perpetual contracts for multiple beacons",
+        "type": "object",
+        "required": [
+          "beacon_addresses",
+          "fees_module",
+          "lockup_period_module",
+          "margin_ratios_module",
+          "sqrt_price_impact_limit_module",
+          "starting_sqrt_price_x96"
+        ],
+        "properties": {
+          "beacon_addresses": {
+            "description": "List of beacon addresses to deploy perps for",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fees_module": {
+            "description": "Address of the fees configuration module",
+            "type": "string"
+          },
+          "margin_ratios_module": {
+            "description": "Address of the margin ratios configuration module",
+            "type": "string"
+          },
+          "lockup_period_module": {
+            "description": "Address of the lockup period configuration module",
+            "type": "string"
+          },
+          "sqrt_price_impact_limit_module": {
+            "description": "Address of the sqrt price impact limit configuration module",
+            "type": "string"
+          },
+          "starting_sqrt_price_x96": {
+            "description": "Starting sqrt price in Q96 format as string",
+            "type": "string"
+          }
+        }
+      },
+      "ApiResponse_for_DepositLiquidityForPerpResponse": {
+        "description": "Standard API response wrapper",
+        "type": "object",
+        "required": [
+          "message",
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "description": "Whether the request succeeded",
+            "type": "boolean"
+          },
+          "data": {
+            "description": "Response data (null if request failed)",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DepositLiquidityForPerpResponse"
+              }
+            ],
+            "nullable": true
+          },
+          "message": {
+            "description": "Human-readable message about the result",
+            "type": "string"
+          }
+        }
+      },
+      "DepositLiquidityForPerpResponse": {
+        "description": "Response from depositing liquidity to a perpetual",
+        "type": "object",
+        "required": [
+          "approval_transaction_hash",
+          "deposit_transaction_hash",
+          "maker_position_id"
+        ],
+        "properties": {
+          "maker_position_id": {
+            "description": "Maker position ID from MakerPositionOpened event",
+            "type": "string"
+          },
+          "approval_transaction_hash": {
+            "description": "USDC approval transaction hash",
+            "type": "string"
+          },
+          "deposit_transaction_hash": {
+            "description": "Liquidity deposit transaction hash",
+            "type": "string"
+          }
+        }
+      },
+      "DepositLiquidityForPerpRequest": {
+        "description": "Deposit liquidity for a perpetual contract",
+        "type": "object",
+        "required": [
+          "margin_amount_usdc",
+          "perp_id"
+        ],
+        "properties": {
+          "perp_id": {
+            "description": "Perpetual pool ID as hex string (with or without 0x prefix)",
+            "type": "string"
+          },
+          "margin_amount_usdc": {
+            "description": "USDC margin amount in 6 decimals (e.g., \"50000000\" for 50 USDC)\n\nMargin constraints are enforced by on-chain modules. The margin ratios module defines minimum and maximum allowed margins based on market configuration.\n\nCurrent liquidity scaling: margin × 500,000 = final liquidity amount",
+            "type": "string"
+          },
+          "holder": {
+            "description": "Optional holder address (defaults to wallet address if not provided)",
+            "type": "string",
+            "nullable": true
+          },
+          "max_amt0_in": {
+            "description": "Maximum amount of token0 to deposit (slippage protection), optional",
+            "type": "string",
+            "nullable": true
+          },
+          "max_amt1_in": {
+            "description": "Maximum amount of token1 to deposit (slippage protection), optional",
+            "type": "string",
+            "nullable": true
+          },
+          "tick_spacing": {
+            "description": "Tick spacing for the liquidity position (defaults to 30)",
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "tick_lower": {
+            "description": "Lower tick bound for the liquidity position (defaults to 24390)",
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "tick_upper": {
+            "description": "Upper tick bound for the liquidity position (defaults to 53850)",
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        }
+      },
+      "ApiResponse_for_BatchDepositLiquidityForPerpsResponse": {
+        "description": "Standard API response wrapper",
+        "type": "object",
+        "required": [
+          "message",
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "description": "Whether the request succeeded",
+            "type": "boolean"
+          },
+          "data": {
+            "description": "Response data (null if request failed)",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BatchDepositLiquidityForPerpsResponse"
+              }
+            ],
+            "nullable": true
+          },
+          "message": {
+            "description": "Human-readable message about the result",
+            "type": "string"
+          }
+        }
+      },
+      "BatchDepositLiquidityForPerpsResponse": {
+        "description": "Response from batch liquidity deposit operation",
+        "type": "object",
+        "required": [
+          "deposited_count",
+          "errors",
+          "failed_count",
+          "maker_position_ids"
+        ],
+        "properties": {
+          "deposited_count": {
+            "description": "Number of successful deposits",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          },
+          "maker_position_ids": {
+            "description": "List of maker position IDs",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "failed_count": {
+            "description": "Number of failed deposits",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          },
+          "errors": {
+            "description": "Error messages for failed deposits",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "BatchDepositLiquidityForPerpsRequest": {
+        "description": "Batch deposit liquidity for multiple perpetual contracts",
+        "type": "object",
+        "required": [
+          "liquidity_deposits"
+        ],
+        "properties": {
+          "liquidity_deposits": {
+            "description": "List of liquidity deposits to process",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DepositLiquidityForPerpRequest"
+            }
+          }
+        }
+      },
+      "UpdateBeaconRequest": {
+        "description": "Update an existing beacon with new data using a zero-knowledge proof",
+        "type": "object",
+        "required": [
+          "beacon_address",
+          "proof",
+          "public_signals"
+        ],
+        "properties": {
+          "beacon_address": {
+            "description": "Ethereum address of the beacon contract (with or without 0x prefix)",
+            "type": "string"
+          },
+          "proof": {
+            "description": "Zero-knowledge proof data as hex string (with 0x prefix)",
+            "type": "string"
+          },
+          "public_signals": {
+            "description": "Public signals from the proof as hex string (with 0x prefix), contains the new data value",
+            "type": "string"
+          }
+        }
+      },
+      "ApiResponse_for_BatchUpdateBeaconResponse": {
+        "description": "Standard API response wrapper",
+        "type": "object",
+        "required": [
+          "message",
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "description": "Whether the request succeeded",
+            "type": "boolean"
+          },
+          "data": {
+            "description": "Response data (null if request failed)",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BatchUpdateBeaconResponse"
+              }
+            ],
+            "nullable": true
+          },
+          "message": {
+            "description": "Human-readable message about the result",
+            "type": "string"
+          }
+        }
+      },
+      "BatchUpdateBeaconResponse": {
+        "description": "Response from batch beacon update operation",
+        "type": "object",
+        "required": [
+          "failed_updates",
+          "results",
+          "successful_updates",
+          "total_requested"
+        ],
+        "properties": {
+          "results": {
+            "description": "Individual results for each beacon",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BeaconUpdateResult"
+            }
+          },
+          "total_requested": {
+            "description": "Total number of updates requested",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0.0
+          },
+          "successful_updates": {
+            "description": "Number of successful updates",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0.0
+          },
+          "failed_updates": {
+            "description": "Number of failed updates",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0.0
+          }
+        }
+      },
+      "BeaconUpdateResult": {
+        "description": "Result of updating a single beacon",
+        "type": "object",
+        "required": [
+          "beacon_address",
+          "success"
+        ],
+        "properties": {
+          "beacon_address": {
+            "description": "Address of the beacon that was updated",
+            "type": "string"
+          },
+          "success": {
+            "description": "Whether the update succeeded",
+            "type": "boolean"
+          },
+          "transaction_hash": {
+            "description": "Transaction hash (if successful)",
+            "type": "string",
+            "nullable": true
+          },
+          "error": {
+            "description": "Error message (if failed)",
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "BatchUpdateBeaconRequest": {
+        "description": "Batch update multiple beacons with zero-knowledge proofs",
+        "type": "object",
+        "required": [
+          "updates"
+        ],
+        "properties": {
+          "updates": {
+            "description": "List of beacon updates to process",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BeaconUpdateData"
+            }
+          }
+        }
+      },
+      "BeaconUpdateData": {
+        "description": "Beacon update data for batch operations",
+        "type": "object",
+        "required": [
+          "beacon_address",
+          "proof",
+          "public_signals"
+        ],
+        "properties": {
+          "beacon_address": {
+            "description": "Ethereum address of the beacon contract (with or without 0x prefix)",
+            "type": "string"
+          },
+          "proof": {
+            "description": "Zero-knowledge proof data as hex string (with 0x prefix)",
+            "type": "string"
+          },
+          "public_signals": {
+            "description": "Public signals from the proof as hex string (with 0x prefix)",
+            "type": "string"
+          }
+        }
+      },
+      "FundGuestWalletRequest": {
+        "description": "Fund a guest wallet with USDC and ETH",
+        "type": "object",
+        "required": [
+          "eth_amount",
+          "usdc_amount",
+          "wallet_address"
+        ],
+        "properties": {
+          "wallet_address": {
+            "description": "Ethereum address of the wallet to fund",
+            "type": "string"
+          },
+          "usdc_amount": {
+            "description": "USDC amount in 6 decimals (e.g., \"100000000\" for 100 USDC)",
+            "type": "string"
+          },
+          "eth_amount": {
+            "description": "ETH amount in wei (e.g., \"1000000000000000\" for 0.001 ETH)",
+            "type": "string"
+          }
+        }
+      },
+      "CreateVerifiableBeaconRequest": {
+        "description": "Create a verifiable beacon with zero-knowledge proof support and TWAP",
+        "type": "object",
+        "required": [
+          "initial_cardinality",
+          "initial_data",
+          "verifier_address"
+        ],
+        "properties": {
+          "verifier_address": {
+            "description": "Halo2 verifier contract address",
+            "type": "string"
+          },
+          "initial_data": {
+            "description": "Initial data value (MUST be pre-scaled by 2^96 if representing a decimal)",
+            "type": "string"
+          },
+          "initial_cardinality": {
+            "description": "Initial TWAP observation slots (typically 100-1000)",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "description": "Bearer token authentication. Include your API token in the Authorization header as: `Authorization: Bearer YOUR_TOKEN`",
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "API token"
+      }
+    }
+  }
+}
