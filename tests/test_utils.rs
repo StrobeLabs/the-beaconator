@@ -135,7 +135,7 @@ use alloy::{
 };
 use std::str::FromStr;
 use std::sync::Arc;
-use the_beaconator::models::{AppState, PerpConfig};
+use the_beaconator::models::AppState;
 use tokio::sync::OnceCell;
 
 /// Anvil configuration and utilities
@@ -395,7 +395,21 @@ pub async fn create_test_app_state() -> AppState {
         usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
         eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
         access_token: "test_token".to_string(),
-        perp_config: PerpConfig::default(),
+        fees_module_address: Address::from_str("0x4567890123456789012345678901234567890123")
+            .unwrap(),
+        margin_ratios_module_address: Address::from_str(
+            "0x5678901234567890123456789012345678901234",
+        )
+        .unwrap(),
+        lockup_period_module_address: Address::from_str(
+            "0x6789012345678901234567890123456789012345",
+        )
+        .unwrap(),
+        sqrt_price_impact_limit_module_address: Address::from_str(
+            "0x7890123456789012345678901234567890123456",
+        )
+        .unwrap(),
+        default_starting_sqrt_price_x96: Some(560227709747861419891227623424), // sqrt(50) * 2^96
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
@@ -438,7 +452,21 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
         usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
         eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
         access_token: "test_token".to_string(),
-        perp_config: PerpConfig::default(),
+        fees_module_address: Address::from_str("0x4567890123456789012345678901234567890123")
+            .unwrap(),
+        margin_ratios_module_address: Address::from_str(
+            "0x5678901234567890123456789012345678901234",
+        )
+        .unwrap(),
+        lockup_period_module_address: Address::from_str(
+            "0x6789012345678901234567890123456789012345",
+        )
+        .unwrap(),
+        sqrt_price_impact_limit_module_address: Address::from_str(
+            "0x7890123456789012345678901234567890123456",
+        )
+        .unwrap(),
+        default_starting_sqrt_price_x96: Some(560227709747861419891227623424), // sqrt(50) * 2^96
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
@@ -484,7 +512,21 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
         usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
         eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
         access_token: "test_token".to_string(),
-        perp_config: PerpConfig::default(),
+        fees_module_address: Address::from_str("0x4567890123456789012345678901234567890123")
+            .unwrap(),
+        margin_ratios_module_address: Address::from_str(
+            "0x5678901234567890123456789012345678901234",
+        )
+        .unwrap(),
+        lockup_period_module_address: Address::from_str(
+            "0x6789012345678901234567890123456789012345",
+        )
+        .unwrap(),
+        sqrt_price_impact_limit_module_address: Address::from_str(
+            "0x7890123456789012345678901234567890123456",
+        )
+        .unwrap(),
+        default_starting_sqrt_price_x96: Some(560227709747861419891227623424), // sqrt(50) * 2^96
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
@@ -574,7 +616,21 @@ pub fn create_simple_test_app_state() -> AppState {
         usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
         eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
         access_token: "test_token".to_string(),
-        perp_config: PerpConfig::default(),
+        fees_module_address: Address::from_str("0x4567890123456789012345678901234567890123")
+            .unwrap(),
+        margin_ratios_module_address: Address::from_str(
+            "0x5678901234567890123456789012345678901234",
+        )
+        .unwrap(),
+        lockup_period_module_address: Address::from_str(
+            "0x6789012345678901234567890123456789012345",
+        )
+        .unwrap(),
+        sqrt_price_impact_limit_module_address: Address::from_str(
+            "0x7890123456789012345678901234567890123456",
+        )
+        .unwrap(),
+        default_starting_sqrt_price_x96: Some(560227709747861419891227623424), // sqrt(50) * 2^96
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
@@ -607,7 +663,21 @@ pub fn create_test_app_state_with_provider(
         usdc_transfer_limit: 1_000_000_000,       // 1000 USDC
         eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
         access_token: "test_token".to_string(),
-        perp_config: PerpConfig::default(),
+        fees_module_address: Address::from_str("0x4567890123456789012345678901234567890123")
+            .unwrap(),
+        margin_ratios_module_address: Address::from_str(
+            "0x5678901234567890123456789012345678901234",
+        )
+        .unwrap(),
+        lockup_period_module_address: Address::from_str(
+            "0x6789012345678901234567890123456789012345",
+        )
+        .unwrap(),
+        sqrt_price_impact_limit_module_address: Address::from_str(
+            "0x7890123456789012345678901234567890123456",
+        )
+        .unwrap(),
+        default_starting_sqrt_price_x96: Some(560227709747861419891227623424), // sqrt(50) * 2^96
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests

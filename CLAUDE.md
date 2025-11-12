@@ -81,11 +81,15 @@ Copy `env.example` to `.env` and configure:
 ```bash
 RPC_URL=https://mainnet.base.org           # Base chain RPC URL
 ENV=mainnet|testnet|localnet               # Network type
-BEACONATOR_ACCESS_TOKEN=your_secret_token  # API authentication  
+BEACONATOR_ACCESS_TOKEN=your_secret_token  # API authentication
 PRIVATE_KEY=0x...                          # Wallet private key (without 0x)
 BEACON_FACTORY_ADDRESS=0x...               # Factory contract address
-PERPCITY_REGISTRY_ADDRESS=0x...            # Registry contract address  
-PERP_HOOK_ADDRESS=0x...                    # PerpHook contract address
+PERPCITY_REGISTRY_ADDRESS=0x...            # Registry contract address
+PERP_MANAGER_ADDRESS=0x...                 # PerpManager contract address
+FEES_MODULE_ADDRESS=0x...                  # Fees configuration module
+MARGIN_RATIOS_MODULE_ADDRESS=0x...         # Margin ratios configuration module
+LOCKUP_PERIOD_MODULE_ADDRESS=0x...         # Lockup period configuration module
+SQRT_PRICE_IMPACT_LIMIT_MODULE_ADDRESS=0x... # Price impact limit module
 ```
 
 ## Implementation Details
@@ -148,15 +152,27 @@ let contract = IBeacon::new(address, &*state.provider);
 - File-based approach preferred over embedded serde structs
 - Manual ABI modifications documented (e.g., createPerp function added to PerpHook.json)
 
-## Perp Deployment Configuration
+## Perp Deployment - Modular Architecture
 
-The perp deployment endpoints use hardcoded defaults from `DeployPerp.s.sol`:
-- Trading fee: 0.5% (50 basis points)
-- Leverage range: 0-10x (min/max)
-- Liquidation leverage: 10x
-- Starting price: sqrt(50) * 2^96
-- Tick spacing: 30
-- Funding interval: 1 day (86400 seconds)
+The perpcity-contracts system uses a **modular plugin architecture** where perp configuration is handled by on-chain modules:
+
+### Configuration Modules
+- **Fees Module**: Defines trading fees, insurance fees, LP fees, and liquidation fees
+- **Margin Ratios Module**: Specifies margin requirements and leverage limits for maker/taker positions
+- **Lockup Period Module**: Sets lockup periods for maker positions (e.g., 7 days)
+- **Price Impact Limit Module**: Defines price impact boundaries for trades
+
+### Deployment Process
+1. Perps are created via `PerpManager.createPerp()` with references to configuration modules
+2. Module addresses must be registered with PerpManager before use
+3. Different perps can use different module configurations for flexibility
+4. Configuration is queryable on-chain from the module contracts
+
+### Implementation Notes
+- Module addresses are loaded from environment variables on startup
+- Default starting price can be configured via `PERP_DEFAULT_STARTING_SQRT_PRICE_X96` (optional)
+- Deposit liquidity operations use reasonable defaults for tick range and liquidity scaling
+- Contracts enforce validation rules defined in their respective modules
 
 ## Error Handling Standards
 - All API endpoints return standardized `ApiResponse<T>` format
