@@ -601,6 +601,9 @@ async fn deposit_liquidity_for_perp(
     state: &AppState,
     perp_id: FixedBytes<32>,
     margin_amount_usdc: u128,
+    tick_spacing: i32,
+    tick_lower: i32,
+    tick_upper: i32,
 ) -> Result<DepositLiquidityForPerpResponse, String> {
     tracing::info!(
         "Depositing liquidity for perp {} with margin {}",
@@ -611,15 +614,29 @@ async fn deposit_liquidity_for_perp(
     // Create contract instance using the sol! generated interface
     let contract = IPerpManager::new(state.perp_manager_address, &*state.provider);
 
-    // Use reasonable defaults for liquidity parameters
-    // These values provide a wide tick range suitable for most market conditions
-    let tick_spacing = 30i32;
-    let tick_lower = 24390i32; // Price ~11.5 (19x range centered on 50)
-    let tick_upper = 53850i32; // Price ~218 (19x range centered on 50)
+    // Validate tick alignment with tick_spacing
+    if tick_lower % tick_spacing != 0 {
+        return Err(format!(
+            "tick_lower ({tick_lower}) must be divisible by tick_spacing ({tick_spacing})"
+        ));
+    }
+    if tick_upper % tick_spacing != 0 {
+        return Err(format!(
+            "tick_upper ({tick_upper}) must be divisible by tick_spacing ({tick_spacing})"
+        ));
+    }
+    if tick_lower >= tick_upper {
+        return Err(format!(
+            "tick_lower ({tick_lower}) must be less than tick_upper ({tick_upper})"
+        ));
+    }
 
-    // Round to nearest tick spacing (ensure ticks are aligned)
-    let tick_lower = (tick_lower / tick_spacing) * tick_spacing;
-    let tick_upper = (tick_upper / tick_spacing) * tick_spacing;
+    tracing::info!(
+        "Tick parameters validated: spacing={}, lower={}, upper={}",
+        tick_spacing,
+        tick_lower,
+        tick_upper
+    );
 
     // Use conservative liquidity scaling factor
     // This converts USDC margin (6 decimals) to 18-decimal liquidity amount
@@ -1307,46 +1324,27 @@ pub async fn deposit_liquidity_for_perp_endpoint(
         }
     };
 
-    // Basic margin amount validation with reasonable limits
-    // Min: 10 USDC (based on empirical testing with Uniswap V4 and liquidity requirements)
-    // Max: 1000 USDC (reasonable per-position limit)
-    let min_margin = 10_000_000u128; // 10 USDC in 6 decimals
-    let max_margin = 1_000_000_000u128; // 1000 USDC in 6 decimals
-
-    if margin_amount < min_margin {
-        let error_msg = format!(
-            "Margin amount {} USDC is below minimum of {} USDC. Minimum based on Uniswap V4 liquidity requirements.",
-            margin_amount as f64 / 1_000_000.0,
-            min_margin as f64 / 1_000_000.0
-        );
-        tracing::error!("{}", error_msg);
-        sentry::capture_message(&error_msg, sentry::Level::Error);
-        return Err(Status::BadRequest);
-    }
-
-    if margin_amount > max_margin {
-        let error_msg = format!(
-            "Margin amount {} USDC exceeds maximum limit of {} USDC",
-            margin_amount as f64 / 1_000_000.0,
-            max_margin as f64 / 1_000_000.0
-        );
-        tracing::error!("{}", error_msg);
-        sentry::capture_message(&error_msg, sentry::Level::Error);
-        return Err(Status::BadRequest);
-    }
-
-    // Contract will validate leverage and other constraints based on its module configuration
+    // All margin validations are performed by on-chain modules
     tracing::info!(
-        "Margin amount validated: {} USDC (range: {}-{} USDC)",
-        margin_amount as f64 / 1_000_000.0,
-        min_margin as f64 / 1_000_000.0,
-        max_margin as f64 / 1_000_000.0
+        "Margin amount: {} USDC (validation delegated to on-chain modules)",
+        margin_amount as f64 / 1_000_000.0
     );
 
-    // Additional contract-level validations will be performed on-chain
-    tracing::info!("Contract will validate leverage and constraints based on module configuration");
+    // Extract tick parameters from request or use defaults
+    let tick_spacing = request.tick_spacing.unwrap_or(30);
+    let tick_lower = request.tick_lower.unwrap_or(24390);
+    let tick_upper = request.tick_upper.unwrap_or(53850);
 
-    match deposit_liquidity_for_perp(state, perp_id, margin_amount).await {
+    match deposit_liquidity_for_perp(
+        state,
+        perp_id,
+        margin_amount,
+        tick_spacing,
+        tick_lower,
+        tick_upper,
+    )
+    .await
+    {
         Ok(response) => {
             let message = "Liquidity deposited successfully";
             tracing::info!("{}", message);
@@ -1570,7 +1568,7 @@ async fn batch_deposit_liquidity_with_multicall3(
         };
 
         // Parse the margin amount (USDC in 6 decimals)
-        let margin_amount = match deposit_request.margin_amount_usdc.parse::<u128>() {
+        let _margin_amount = match deposit_request.margin_amount_usdc.parse::<u128>() {
             Ok(amount) => amount,
             Err(e) => {
                 let error_msg = format!(
@@ -1582,29 +1580,7 @@ async fn batch_deposit_liquidity_with_multicall3(
             }
         };
 
-        // Basic margin amount validation with reasonable limits
-        let min_margin = 10_000_000u128; // 10 USDC in 6 decimals
-        let max_margin = 1_000_000_000u128; // 1000 USDC in 6 decimals
-
-        if margin_amount < min_margin {
-            let error_msg = format!(
-                "Margin amount {} USDC is below minimum of {} USDC for deposit {index}",
-                margin_amount as f64 / 1_000_000.0,
-                min_margin as f64 / 1_000_000.0
-            );
-            results.push((deposit_request.perp_id.clone(), Err(error_msg)));
-            continue;
-        }
-
-        if margin_amount > max_margin {
-            let error_msg = format!(
-                "Margin amount {} USDC exceeds maximum limit of {} USDC for deposit {index}",
-                margin_amount as f64 / 1_000_000.0,
-                max_margin as f64 / 1_000_000.0
-            );
-            results.push((deposit_request.perp_id.clone(), Err(error_msg)));
-            continue;
-        }
+        // All margin validations are performed by on-chain modules
 
         // Validation passed - track this deposit for multicall processing
         valid_perp_ids.push(deposit_request.perp_id.clone());

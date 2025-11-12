@@ -69,11 +69,10 @@ pub struct DepositLiquidityForPerpRequest {
     pub perp_id: String, // PoolId as hex string
     /// USDC margin amount in 6 decimals (e.g., "50000000" for 50 USDC)
     ///
-    /// **IMPORTANT**: Due to Uniswap V4 liquidity requirements and wide tick range [-23030, 23030],
-    /// minimum recommended amount is 10 USDC (10,000,000). Smaller amounts will likely fail
-    /// with execution revert due to insufficient liquidity.
+    /// Margin constraints are enforced by on-chain modules. The margin ratios module
+    /// defines minimum and maximum allowed margins based on market configuration.
     ///
-    /// Current scaling: margin × 500,000 = final liquidity amount
+    /// Current liquidity scaling: margin × 500,000 = final liquidity amount
     pub margin_amount_usdc: String,
     /// Optional holder address (defaults to wallet address if not provided)
     pub holder: Option<String>,
@@ -83,6 +82,15 @@ pub struct DepositLiquidityForPerpRequest {
     /// Maximum amount of token1 to deposit (slippage protection)
     /// Optional - defaults to a reasonable max if not provided
     pub max_amt1_in: Option<String>,
+    /// Tick spacing for the liquidity position
+    /// Optional - defaults to 30 if not provided
+    pub tick_spacing: Option<i32>,
+    /// Lower tick bound for the liquidity position
+    /// Optional - defaults to 24390 if not provided
+    pub tick_lower: Option<i32>,
+    /// Upper tick bound for the liquidity position
+    /// Optional - defaults to 53850 if not provided
+    pub tick_upper: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

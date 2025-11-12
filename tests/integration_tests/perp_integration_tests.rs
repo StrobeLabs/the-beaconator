@@ -31,6 +31,9 @@ async fn test_deposit_liquidity_invalid_perp_id() {
         holder: None,
         max_amt0_in: None,
         max_amt1_in: None,
+        tick_spacing: None,
+        tick_lower: None,
+        tick_upper: None,
     });
 
     let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
@@ -53,6 +56,9 @@ async fn test_deposit_liquidity_invalid_margin_amount() {
         holder: None,
         max_amt0_in: None,
         max_amt1_in: None,
+        tick_spacing: None,
+        tick_lower: None,
+        tick_upper: None,
     });
 
     let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
@@ -74,12 +80,15 @@ async fn test_deposit_liquidity_zero_margin_amount() {
         holder: None,
         max_amt0_in: None,
         max_amt1_in: None,
+        tick_spacing: None,
+        tick_lower: None,
+        tick_upper: None,
     });
 
     let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
     assert!(result.is_err());
-    // Should fail with BadRequest due to minimum margin validation
-    assert_eq!(result.unwrap_err(), Status::BadRequest);
+    // Should fail with network error attempting to call contract
+    assert_eq!(result.unwrap_err(), Status::InternalServerError);
 }
 
 #[tokio::test]
@@ -146,6 +155,9 @@ async fn test_batch_deposit_liquidity_mixed_validity() {
                 holder: None,
                 max_amt0_in: None,
                 max_amt1_in: None,
+                tick_spacing: None,
+                tick_lower: None,
+                tick_upper: None,
             },
             DepositLiquidityForPerpRequest {
                 perp_id: "invalid_perp_id".to_string(), // This should fail
@@ -153,6 +165,9 @@ async fn test_batch_deposit_liquidity_mixed_validity() {
                 holder: None,
                 max_amt0_in: None,
                 max_amt1_in: None,
+                tick_spacing: None,
+                tick_lower: None,
+                tick_upper: None,
             },
         ],
     });
