@@ -45,5 +45,3 @@ tarpaulin-report.html
 # Generated API clients (generate locally, do not commit)
 clients/
 node_modules/
-package.json
-package-lock.json
