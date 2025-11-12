@@ -1,7 +1,6 @@
 /// Example program to generate OpenAPI specification without starting the server
 ///
 /// Usage: cargo run --example generate_openapi > openapi.json
-
 use rocket_okapi::{openapi_get_routes_spec, settings::OpenApiSettings};
 
 // Import all route modules
@@ -35,5 +34,5 @@ fn main() {
         .expect("Failed to serialize OpenAPI spec");
 
     // Print to stdout
-    println!("{}", json);
+    println!("{json}");
 }
