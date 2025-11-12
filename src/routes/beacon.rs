@@ -1,6 +1,7 @@
 use alloy::primitives::{Address, B256};
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
+use rocket_okapi::openapi;
 use std::str::FromStr;
 use tracing;
 
@@ -20,6 +21,7 @@ use crate::services::beacon::{
 /// Creates a new beacon via the beacon factory.
 ///
 /// Creates a beacon using the beacon factory contract for the authenticated wallet address.
+#[openapi(tag = "Beacon")]
 #[post("/create_beacon", data = "<_request>")]
 pub async fn create_beacon(
     _request: Json<CreateBeaconRequest>,
@@ -65,6 +67,7 @@ pub async fn create_beacon(
 /// Registers an existing beacon with the registry.
 ///
 /// Registers a previously created beacon with the PerpCity registry contract.
+#[openapi(tag = "Beacon")]
 #[post("/register_beacon", data = "<request>")]
 pub async fn register_beacon(
     request: Json<RegisterBeaconRequest>,
@@ -163,6 +166,7 @@ pub async fn register_beacon(
 ///
 /// Creates a new beacon via the beacon factory and registers it with the PerpCity registry.
 /// Returns the address of the created beacon on success.
+#[openapi(tag = "Beacon")]
 #[post("/create_perpcity_beacon")]
 pub async fn create_perpcity_beacon(
     _token: ApiToken,
@@ -285,6 +289,7 @@ pub async fn create_perpcity_beacon(
 ///
 /// Creates the specified number of beacons (1-100) via the beacon factory and registers
 /// them with the PerpCity registry. Returns details about successful and failed creations.
+#[openapi(tag = "Beacon")]
 #[post("/batch_create_perpcity_beacon", data = "<request>")]
 pub async fn batch_create_perpcity_beacon(
     request: Json<BatchCreatePerpcityBeaconRequest>,
@@ -341,6 +346,7 @@ pub async fn batch_create_perpcity_beacon(
 ///
 /// Validates the provided proof and public signals, then updates the beacon's data.
 /// Returns the transaction hash on success.
+#[openapi(tag = "Beacon")]
 #[post("/update_beacon", data = "<request>")]
 pub async fn update_beacon(
     request: Json<UpdateBeaconRequest>,
@@ -384,6 +390,7 @@ pub async fn update_beacon(
 ///
 /// Processes a batch of beacon updates, each with their own proof and public signals.
 /// Returns detailed results for each update attempt.
+#[openapi(tag = "Beacon")]
 #[post("/batch_update_beacon", data = "<request>")]
 pub async fn batch_update_beacon(
     request: Json<BatchUpdateBeaconRequest>,
@@ -433,6 +440,7 @@ pub async fn batch_update_beacon(
 ///
 /// Creates a new verifiable beacon using the DichotomousBeaconFactory with the specified
 /// verifier contract address, initial data value, and TWAP cardinality.
+#[openapi(tag = "Beacon")]
 #[post("/create_verifiable_beacon", data = "<request>")]
 pub async fn create_verifiable_beacon(
     request: Json<CreateVerifiableBeaconRequest>,

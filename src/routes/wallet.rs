@@ -3,6 +3,7 @@ use alloy::providers::Provider;
 use alloy::rpc::types::TransactionRequest;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
+use rocket_okapi::openapi;
 use std::str::FromStr;
 use tracing;
 
@@ -14,6 +15,7 @@ use crate::models::{ApiResponse, AppState, FundGuestWalletRequest};
 ///
 /// Transfers the specified amounts of USDC and ETH from the beaconator wallet
 /// to the guest wallet address. Validates transfer limits and available balances.
+#[openapi(tag = "Wallet")]
 #[post("/fund_guest_wallet", format = "json", data = "<request>")]
 pub async fn fund_guest_wallet(
     state: &State<AppState>,
