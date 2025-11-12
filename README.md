@@ -136,6 +136,18 @@ BEACONATOR_ACCESS_TOKEN=your_api_token_here
 ENV=testnet
 ```
 
+## API Documentation
+
+**Interactive Documentation:** Visit `/rapidoc/` when the server is running for complete API documentation with try-it-out functionality.
+
+**Auto-Generated Clients:** Python and TypeScript clients are available in `clients/` directory:
+- Python: See `clients/python/README.md`
+- TypeScript: See `clients/typescript/README.md`
+
+**OpenAPI Spec:** Available at `/openapi.json`
+
+**Full Documentation:** See the [Beaconator section](../strobe-docs) for comprehensive documentation.
+
 ## API Endpoints
 
 All endpoints require Bearer token authentication (except `GET /`).

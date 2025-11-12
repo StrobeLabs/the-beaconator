@@ -74,6 +74,48 @@ Key patterns:
 - Contract instantiation uses `&*state.provider` to dereference Arc
 - AppState stores wallet address separately for easy access
 
+## API Documentation & Clients
+
+### OpenAPI Integration
+
+The API is fully documented with OpenAPI 3.0 using `rocket_okapi`:
+- **Interactive docs**: Available at `/rapidoc/` when server is running
+- **OpenAPI spec**: Served at `/openapi.json`
+- **Generation**: `cargo run --example generate_openapi > openapi.json`
+
+All endpoints are annotated with `#[openapi(tag = "...")]` macros for automatic documentation generation.
+
+### Generated Clients
+
+Auto-generated API clients are available in `clients/`:
+
+**Python Client** (`clients/python/`):
+- Full async/sync support with type hints
+- 55 generated files with models and API modules
+- Install: `pip install -e clients/python`
+- Usage: See `clients/python/README.md`
+
+**TypeScript Client** (`clients/typescript/`):
+- Complete type safety with 1033 lines of TypeScript definitions
+- Compatible with `openapi-fetch`
+- Usage: See `clients/typescript/README.md`
+
+### Regenerating Clients
+
+After API changes:
+```bash
+# Regenerate OpenAPI spec
+cargo run --example generate_openapi > openapi.json
+
+# Generate TypeScript client
+npm run generate:ts
+
+# Generate Python client
+openapi-python-client generate --path openapi.json --output-path clients/python --meta none
+```
+
+See `clients/README.md` for complete documentation.
+
 ## Environment Configuration
 
 Copy `env.example` to `.env` and configure:
