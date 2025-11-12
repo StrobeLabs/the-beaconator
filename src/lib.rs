@@ -4,6 +4,7 @@ use alloy::{
     providers::Provider,
 };
 use rocket::{Build, Rocket};
+use rocket_okapi::{openapi_get_routes_spec, settings::OpenApiSettings};
 use std::env;
 use std::str::FromStr;
 
@@ -47,6 +48,17 @@ fn load_abi(name: &str) -> JsonAbi {
         .unwrap_or_else(|_| panic!("Failed to read ABI file: {abi_path}"));
     serde_json::from_str(&abi_content)
         .unwrap_or_else(|_| panic!("Failed to parse ABI file: {abi_path}"))
+}
+
+/// Serves the OpenAPI JSON specification at /openapi.json
+#[rocket::get("/openapi.json")]
+fn serve_openapi_spec(
+    openapi_json: &rocket::State<String>,
+) -> (rocket::http::Status, (rocket::http::ContentType, String)) {
+    (
+        rocket::http::Status::Ok,
+        (rocket::http::ContentType::JSON, openapi_json.to_string()),
+    )
 }
 
 /// Creates and configures the Rocket application.
@@ -267,7 +279,14 @@ pub async fn create_rocket() -> Rocket<Build> {
         multicall3_address,
     };
 
-    let mut base_routes = rocket::routes![
+    // Configure OpenAPI settings
+    let openapi_settings = OpenApiSettings::new();
+
+    // Generate routes and OpenAPI specification
+    // Note: All routes are included, including verifiable beacon route
+    // The verifiable beacon route will return an error at runtime if factory address is not configured
+    let (routes, openapi_spec) = openapi_get_routes_spec![
+        openapi_settings:
         routes::info::index,
         routes::info::all_beacons,
         routes::beacon::create_beacon,
@@ -281,18 +300,21 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::beacon::update_beacon,
         routes::beacon::batch_update_beacon,
         routes::wallet::fund_guest_wallet,
+        routes::beacon::create_verifiable_beacon,
     ];
 
-    // Only register verifiable beacon route if factory address is configured
-    if dichotomous_beacon_factory_address.is_some() {
-        base_routes.extend(rocket::routes![routes::beacon::create_verifiable_beacon]);
-    }
+    // Serve the OpenAPI spec at /openapi.json
+    let openapi_json =
+        serde_json::to_string(&openapi_spec).expect("Failed to serialize OpenAPI spec");
 
+    // Create rocket instance with OpenAPI support
     rocket::build()
         .manage(app_state)
         .attach(fairings::RequestLogger)
         .attach(fairings::PanicCatcher)
-        .mount("/", base_routes)
+        .mount("/", routes)
+        .mount("/", rocket::routes![serve_openapi_spec])
+        .manage(openapi_json)
         .register("/", catchers![catch_all_errors, catch_panic])
 }
 

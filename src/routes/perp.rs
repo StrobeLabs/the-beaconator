@@ -2,6 +2,7 @@ use alloy::primitives::{Address, FixedBytes, Signed, U160, U256};
 use alloy::providers::Provider;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
+use rocket_okapi::openapi;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -1067,6 +1068,7 @@ async fn deposit_liquidity_for_perp(
 ///
 /// Creates a new perpetual pool using the PerpManager contract for the specified beacon address.
 /// Returns the perp ID, PerpManager address, and transaction hash on success.
+#[openapi(tag = "Perpetual")]
 #[post("/deploy_perp_for_beacon", data = "<request>")]
 pub async fn deploy_perp_for_beacon_endpoint(
     request: Json<DeployPerpForBeaconRequest>,
@@ -1283,6 +1285,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
 ///
 /// Approves USDC spending and deposits the specified margin amount as liquidity
 /// for the given perp ID. Returns the maker position ID and transaction hashes.
+#[openapi(tag = "Perpetual")]
 #[post("/deposit_liquidity_for_perp", data = "<request>")]
 pub async fn deposit_liquidity_for_perp_endpoint(
     request: Json<DepositLiquidityForPerpRequest>,
@@ -1443,6 +1446,7 @@ pub async fn deposit_liquidity_for_perp_endpoint(
 ///
 /// Processes multiple liquidity deposits, each with their own perp ID and margin amount.
 /// Returns detailed results for each deposit attempt.
+#[openapi(tag = "Perpetual")]
 #[post("/batch_deposit_liquidity_for_perps", data = "<request>")]
 pub async fn batch_deposit_liquidity_for_perps(
     request: Json<BatchDepositLiquidityForPerpsRequest>,
@@ -1602,6 +1606,7 @@ async fn batch_deposit_liquidity_with_multicall3(
 ///
 /// Creates perpetual pools for each specified beacon address using the PerpManager contract.
 /// Returns detailed results including perp IDs for successful deployments.
+#[openapi(tag = "Perpetual")]
 #[post("/batch_deploy_perps_for_beacons", data = "<request>")]
 pub async fn batch_deploy_perps_for_beacons(
     request: Json<BatchDeployPerpsForBeaconsRequest>,

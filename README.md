@@ -136,6 +136,44 @@ BEACONATOR_ACCESS_TOKEN=your_api_token_here
 ENV=testnet
 ```
 
+## API Documentation
+
+**OpenAPI Spec:** Available at `/openapi.json` when the server is running.
+
+**Generate API Clients:**
+
+The Beaconator provides an OpenAPI 3.0 specification that can be used to generate type-safe API clients in any language.
+
+Generate the spec by running the server and accessing `/openapi.json`:
+```bash
+# Start the server
+make dev
+
+# In another terminal, download the spec
+curl http://localhost:8000/openapi.json > openapi.json
+```
+
+Generate TypeScript client:
+```bash
+npm install -D openapi-typescript
+npx openapi-typescript openapi.json -o api.ts
+```
+
+Generate Python client:
+```bash
+pipx install openapi-python-client
+openapi-python-client generate --path openapi.json --output-path client/python
+```
+
+**Interactive Documentation:**
+
+You can view interactive API documentation using any OpenAPI UI viewer:
+- [RapiDoc](https://rapidocweb.com/): `npx serve` then open with RapiDoc
+- [Swagger UI](https://swagger.io/tools/swagger-ui/): Upload `openapi.json`
+- [Redoc](https://redocly.com/): `npx @redocly/cli preview-docs openapi.json`
+
+**Full Documentation:** See the [Beaconator section](../strobe-docs) for comprehensive documentation.
+
 ## API Endpoints
 
 All endpoints require Bearer token authentication (except `GET /`).

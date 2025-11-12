@@ -74,6 +74,41 @@ Key patterns:
 - Contract instantiation uses `&*state.provider` to dereference Arc
 - AppState stores wallet address separately for easy access
 
+## API Documentation
+
+### OpenAPI Integration
+
+The API is fully documented with OpenAPI 3.0 using `rocket_okapi`:
+- **OpenAPI spec**: Served at `/openapi.json` when server is running
+- **Spec generation**: Start the server and download from `/openapi.json`
+
+All endpoints are annotated with `#[openapi(tag = "...")]` macros for automatic documentation generation.
+
+### Generating API Clients
+
+The OpenAPI spec can be used to generate type-safe clients in any language:
+
+**TypeScript:**
+```bash
+npm install -D openapi-typescript
+npx openapi-typescript openapi.json -o api.ts
+```
+
+**Python:**
+```bash
+pipx install openapi-python-client
+openapi-python-client generate --path openapi.json --output-path client/python
+```
+
+**Other languages:** Use any OpenAPI 3.0 code generator (e.g., openapi-generator, Swagger Codegen).
+
+### Viewing API Documentation
+
+Use any OpenAPI viewer to explore the API interactively:
+- RapiDoc: `npx serve` then open with RapiDoc
+- Swagger UI: Upload `openapi.json`
+- Redoc: `npx @redocly/cli preview-docs openapi.json`
+
 ## Environment Configuration
 
 Copy `env.example` to `.env` and configure:
