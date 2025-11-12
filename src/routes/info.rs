@@ -1,5 +1,6 @@
 use rocket::get;
 use rocket::serde::json::Json;
+use rocket_okapi::openapi;
 use tracing;
 
 use crate::guards::ApiToken;
@@ -8,7 +9,8 @@ use crate::models::{ApiEndpoints, ApiResponse};
 /// Returns API summary and available endpoints.
 ///
 /// Provides an overview of The Beaconator API including total endpoints,
-/// working endpoints, and not yet implemented endpoints.
+/// working endpoints, and not yet implemented endpoints. This endpoint does not require authentication.
+#[openapi(tag = "Information")]
 #[get("/")]
 pub fn index() -> Json<ApiResponse<crate::models::ApiSummary>> {
     tracing::info!("Received request: GET /");
@@ -29,6 +31,8 @@ pub fn index() -> Json<ApiResponse<crate::models::ApiSummary>> {
 /// Lists all registered beacons.
 ///
 /// This endpoint is not yet implemented and returns a placeholder response.
+/// Requires Bearer token authentication.
+#[openapi(tag = "Information")]
 #[get("/all_beacons")]
 pub fn all_beacons(_token: ApiToken) -> Json<ApiResponse<Vec<String>>> {
     tracing::info!("Received request: GET /all_beacons");

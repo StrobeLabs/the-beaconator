@@ -1,5 +1,10 @@
 use crate::models::AppState;
 use rocket::{Request, State, http::Status, request::FromRequest, request::Outcome};
+use rocket_okapi::{
+    r#gen::OpenApiGenerator,
+    okapi::openapi3::{Object, SecurityRequirement, SecurityScheme, SecuritySchemeData},
+    request::{OpenApiFromRequest, RequestHeaderInput},
+};
 use sentry;
 use tracing;
 
@@ -65,5 +70,37 @@ impl<'r> FromRequest<'r> for ApiToken {
                 ))
             }
         }
+    }
+}
+
+impl<'r> OpenApiFromRequest<'r> for ApiToken {
+    fn from_request_input(
+        _gen: &mut OpenApiGenerator,
+        _name: String,
+        _required: bool,
+    ) -> rocket_okapi::Result<RequestHeaderInput> {
+        // Define Bearer token authentication scheme
+        let security_scheme = SecurityScheme {
+            description: Some(
+                "Bearer token authentication. Include your API token in the Authorization header \
+                 as: `Authorization: Bearer YOUR_TOKEN`"
+                    .to_string(),
+            ),
+            data: SecuritySchemeData::Http {
+                scheme: "bearer".to_string(),
+                bearer_format: Some("API token".to_string()),
+            },
+            extensions: Object::default(),
+        };
+
+        // Create security requirement referencing this scheme
+        let mut security_req = SecurityRequirement::new();
+        security_req.insert("bearerAuth".to_string(), Vec::new());
+
+        Ok(RequestHeaderInput::Security(
+            "bearerAuth".to_string(),
+            security_scheme,
+            security_req,
+        ))
     }
 }

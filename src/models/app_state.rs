@@ -1,11 +1,12 @@
 use alloy::{json_abi::JsonAbi, primitives::Address};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::AlloyProvider;
 
 /// API endpoint information for documentation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EndpointInfo {
     pub method: String,
     pub path: String,
@@ -14,7 +15,7 @@ pub struct EndpointInfo {
     pub status: EndpointStatus,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum EndpointStatus {
     Working,
     NotImplemented,
@@ -148,7 +149,7 @@ impl ApiEndpoints {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ApiSummary {
     pub total_endpoints: usize,
     pub working_endpoints: usize,
