@@ -1,3 +1,7 @@
-pub mod operations;
+pub mod batch;
+pub mod core;
+pub mod validation;
 
-// pub use operations::*; // Commented out during PerpManager refactor
+pub use batch::*;
+pub use core::*;
+pub use validation::*;

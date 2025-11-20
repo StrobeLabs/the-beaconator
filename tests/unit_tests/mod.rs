@@ -9,6 +9,7 @@ pub mod info_tests;
 pub mod register_beacon_route_tests;
 pub mod services_beacon_core_tests;
 pub mod services_beacon_verifiable_tests;
+pub mod services_perp_validation_tests;
 pub mod services_transaction_events_simple_tests;
 pub mod services_transaction_execution_comprehensive_tests;
 pub mod services_transaction_multicall_comprehensive_tests;

@@ -17,7 +17,6 @@ use the_beaconator::routes::perp::{
 };
 
 #[tokio::test]
-#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_deposit_liquidity_invalid_perp_id() {
     let token = ApiToken("test_token".to_string());
@@ -42,7 +41,6 @@ async fn test_deposit_liquidity_invalid_perp_id() {
 }
 
 #[tokio::test]
-#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_deposit_liquidity_invalid_margin_amount() {
     let token = ApiToken("test_token".to_string());
@@ -67,7 +65,6 @@ async fn test_deposit_liquidity_invalid_margin_amount() {
 }
 
 #[tokio::test]
-#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_deposit_liquidity_zero_margin_amount() {
     let token = ApiToken("test_token".to_string());
@@ -92,7 +89,6 @@ async fn test_deposit_liquidity_zero_margin_amount() {
 }
 
 #[tokio::test]
-#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_deploy_perp_invalid_beacon_address() {
     let token = ApiToken("test_token".to_string());
@@ -115,7 +111,6 @@ async fn test_deploy_perp_invalid_beacon_address() {
 }
 
 #[tokio::test]
-#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_deploy_perp_short_beacon_address() {
     let token = ApiToken("test_token".to_string());
@@ -138,7 +133,6 @@ async fn test_deploy_perp_short_beacon_address() {
 }
 
 #[tokio::test]
-#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_batch_deposit_liquidity_mixed_validity() {
     let token = ApiToken("test_token".to_string());
@@ -188,7 +182,6 @@ async fn test_batch_deposit_liquidity_mixed_validity() {
 }
 
 #[tokio::test]
-#[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_batch_deposit_liquidity_invalid_count() {
     let token = ApiToken("test_token".to_string());
