@@ -397,6 +397,7 @@ pub async fn deposit_liquidity_for_perp_endpoint(
 ///
 /// NOTE: This endpoint is not yet implemented. Batch operations using Multicall3
 /// will be implemented in a future update for gas efficiency.
+#[openapi(tag = "Perpetual")]
 #[post("/batch_deposit_liquidity_for_perps", data = "<request>")]
 pub async fn batch_deposit_liquidity_for_perps(
     #[allow(unused_variables)] request: Json<BatchDepositLiquidityForPerpsRequest>,
@@ -411,6 +412,7 @@ pub async fn batch_deposit_liquidity_for_perps(
 ///
 /// NOTE: This endpoint is not yet implemented. Batch operations using Multicall3
 /// will be implemented in a future update for gas efficiency.
+#[openapi(tag = "Perpetual")]
 #[post("/batch_deploy_perps_for_beacons", data = "<request>")]
 pub async fn batch_deploy_perps_for_beacons(
     #[allow(unused_variables)] request: Json<BatchDeployPerpsForBeaconsRequest>,
