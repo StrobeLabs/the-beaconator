@@ -294,9 +294,9 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::beacon::create_perpcity_beacon,
         routes::beacon::batch_create_perpcity_beacon,
         routes::perp::deploy_perp_for_beacon_endpoint,
-        routes::perp::batch_deploy_perps_for_beacons,
+        // routes::perp::batch_deploy_perps_for_beacons, // Not implemented - returns 501 NotImplemented
         routes::perp::deposit_liquidity_for_perp_endpoint,
-        routes::perp::batch_deposit_liquidity_for_perps,
+        // routes::perp::batch_deposit_liquidity_for_perps, // Not implemented - returns 501 NotImplemented
         routes::beacon::update_beacon,
         routes::beacon::batch_update_beacon,
         routes::wallet::fund_guest_wallet,

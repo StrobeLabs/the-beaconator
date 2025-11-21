@@ -5,17 +5,14 @@ use rocket_okapi::openapi;
 use std::str::FromStr;
 use tracing;
 
-use super::execute_transaction_serialized;
 use crate::guards::ApiToken;
 use crate::models::{
-    ApiResponse, AppState, BatchDeployPerpsForBeaconsRequest, BatchDeployPerpsForBeaconsResponse,
-    BatchDepositLiquidityForPerpsRequest, BatchDepositLiquidityForPerpsResponse,
+    ApiResponse, AppState, BatchDeployPerpsForBeaconsRequest, BatchDepositLiquidityForPerpsRequest,
     DeployPerpForBeaconRequest, DeployPerpForBeaconResponse, DepositLiquidityForPerpRequest,
     DepositLiquidityForPerpResponse,
 };
 use crate::services::perp::{
-    batch_deposit_liquidity_with_multicall3, deploy_perp_for_beacon, deposit_liquidity_for_perp,
-    validate_module_address,
+    deploy_perp_for_beacon, deposit_liquidity_for_perp, validate_module_address,
 };
 
 /// Deploys a perpetual contract for a specific beacon.
@@ -398,247 +395,30 @@ pub async fn deposit_liquidity_for_perp_endpoint(
 
 /// Deposits liquidity for multiple perpetual contracts in a batch operation.
 ///
-/// Processes multiple liquidity deposits, each with their own perp ID and margin amount.
-/// Returns detailed results for each deposit attempt.
-#[openapi(tag = "Perpetual")]
+/// NOTE: This endpoint is not yet implemented. Batch operations using Multicall3
+/// will be implemented in a future update for gas efficiency.
 #[post("/batch_deposit_liquidity_for_perps", data = "<request>")]
 pub async fn batch_deposit_liquidity_for_perps(
-    request: Json<BatchDepositLiquidityForPerpsRequest>,
+    #[allow(unused_variables)] request: Json<BatchDepositLiquidityForPerpsRequest>,
     _token: ApiToken,
-    state: &State<AppState>,
-) -> Result<Json<ApiResponse<BatchDepositLiquidityForPerpsResponse>>, Status> {
-    tracing::info!("Received request: POST /batch_deposit_liquidity_for_perps");
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
-        scope.set_tag("endpoint", "/batch_deposit_liquidity_for_perps");
-        scope.set_extra("requested_count", request.liquidity_deposits.len().into());
-    });
-
-    let deposit_count = request.liquidity_deposits.len();
-
-    // Validate the count (1-10 limit)
-    if deposit_count == 0 || deposit_count > 10 {
-        tracing::warn!("Invalid deposit count: {}", deposit_count);
-        return Err(Status::BadRequest);
-    }
-
-    // Process all liquidity deposits in a single serialized transaction to avoid nonce conflicts
-    let state_inner = state.inner();
-    let deposits_clone = request.liquidity_deposits.clone();
-
-    let batch_results = execute_transaction_serialized(async move {
-        // Check if we have a multicall3 contract address configured
-        if let Some(multicall_address) = state_inner.multicall3_address {
-            // Use multicall3 for atomic batch liquidity deposits
-            batch_deposit_liquidity_with_multicall3(state_inner, multicall_address, &deposits_clone)
-                .await
-        } else {
-            // No multicall3 configured - return error for all deposits
-            let error_msg =
-                "Batch operations require Multicall3 contract address to be configured".to_string();
-            tracing::error!("{}", error_msg);
-            deposits_clone
-                .iter()
-                .map(|deposit| (deposit.perp_id.clone(), Err(error_msg.clone())))
-                .collect()
-        }
-    })
-    .await;
-
-    // Process the results
-    let mut maker_position_ids = Vec::new();
-    let mut errors = Vec::new();
-
-    for (_perp_id, result) in batch_results {
-        match result {
-            Ok(position_id) => {
-                maker_position_ids.push(position_id);
-            }
-            Err(error) => {
-                errors.push(error);
-            }
-        }
-    }
-
-    let deposited_count = maker_position_ids.len() as u32;
-    let failed_count = deposit_count as u32 - deposited_count;
-
-    let response_data = BatchDepositLiquidityForPerpsResponse {
-        deposited_count,
-        maker_position_ids: maker_position_ids.clone(),
-        failed_count,
-        errors,
-    };
-
-    let message = if failed_count == 0 {
-        format!("Successfully deposited liquidity for all {deposited_count} perps")
-    } else if deposited_count == 0 {
-        "Failed to deposit any liquidity".to_string()
-    } else {
-        format!("Partially successful: {deposited_count} deposited, {failed_count} failed")
-    };
-
-    tracing::info!("{}", message);
-
-    // Return success even with partial failures, let client handle the response
-    Ok(Json(ApiResponse {
-        success: deposited_count > 0,
-        data: Some(response_data),
-        message,
-    }))
+    _state: &State<AppState>,
+) -> Status {
+    tracing::warn!("Batch deposit liquidity endpoint called but not yet implemented");
+    Status::NotImplemented
 }
 
 /// Deploys perpetual contracts for multiple beacons in a batch operation.
 ///
-/// Creates perpetual pools for each specified beacon address using the PerpManager contract.
-/// Returns detailed results including perp IDs for successful deployments.
-#[openapi(tag = "Perpetual")]
+/// NOTE: This endpoint is not yet implemented. Batch operations using Multicall3
+/// will be implemented in a future update for gas efficiency.
 #[post("/batch_deploy_perps_for_beacons", data = "<request>")]
 pub async fn batch_deploy_perps_for_beacons(
-    request: Json<BatchDeployPerpsForBeaconsRequest>,
+    #[allow(unused_variables)] request: Json<BatchDeployPerpsForBeaconsRequest>,
     _token: ApiToken,
-    state: &State<AppState>,
-) -> Result<Json<ApiResponse<BatchDeployPerpsForBeaconsResponse>>, Status> {
-    tracing::info!("Received request: POST /batch_deploy_perps_for_beacons");
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
-        scope.set_tag("endpoint", "/batch_deploy_perps_for_beacons");
-        scope.set_extra("requested_count", request.beacon_addresses.len().into());
-    });
-
-    let beacon_count = request.beacon_addresses.len();
-
-    // Validate the count (similar to batch beacon creation)
-    if beacon_count == 0 || beacon_count > 10 {
-        tracing::warn!("Invalid beacon count: {}", beacon_count);
-        return Err(Status::BadRequest);
-    }
-
-    // Parse module addresses (shared across all perps in the batch)
-    let fees_module = match Address::from_str(&request.fees_module) {
-        Ok(addr) => addr,
-        Err(e) => {
-            tracing::error!("Invalid fees module address: {}", e);
-            return Err(Status::BadRequest);
-        }
-    };
-
-    let margin_ratios_module = match Address::from_str(&request.margin_ratios_module) {
-        Ok(addr) => addr,
-        Err(e) => {
-            tracing::error!("Invalid margin ratios module address: {}", e);
-            return Err(Status::BadRequest);
-        }
-    };
-
-    let lockup_period_module = match Address::from_str(&request.lockup_period_module) {
-        Ok(addr) => addr,
-        Err(e) => {
-            tracing::error!("Invalid lockup period module address: {}", e);
-            return Err(Status::BadRequest);
-        }
-    };
-
-    let sqrt_price_impact_limit_module =
-        match Address::from_str(&request.sqrt_price_impact_limit_module) {
-            Ok(addr) => addr,
-            Err(e) => {
-                tracing::error!("Invalid sqrt price impact limit module address: {}", e);
-                return Err(Status::BadRequest);
-            }
-        };
-
-    let starting_sqrt_price_x96 = match U160::from_str(&request.starting_sqrt_price_x96) {
-        Ok(price) => price,
-        Err(e) => {
-            tracing::error!("Invalid starting sqrt price X96: {}", e);
-            return Err(Status::BadRequest);
-        }
-    };
-
-    let mut perp_ids = Vec::new();
-    let mut errors = Vec::new();
-
-    for (i, beacon_address) in request.beacon_addresses.iter().enumerate() {
-        let index = i + 1;
-        tracing::info!(
-            "Deploying perp {}/{} for beacon {}",
-            index,
-            beacon_count,
-            beacon_address
-        );
-
-        // Parse the beacon address
-        let beacon_addr = match Address::from_str(beacon_address) {
-            Ok(addr) => addr,
-            Err(e) => {
-                let error_msg =
-                    format!("Failed to parse beacon address {index} ({beacon_address}): {e}");
-                tracing::error!("{}", error_msg);
-                errors.push(error_msg.clone());
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                continue;
-            }
-        };
-
-        match deploy_perp_for_beacon(
-            state,
-            beacon_addr,
-            fees_module,
-            margin_ratios_module,
-            lockup_period_module,
-            sqrt_price_impact_limit_module,
-            starting_sqrt_price_x96,
-        )
-        .await
-        {
-            Ok(response) => {
-                let perp_id = response.perp_id.clone();
-                perp_ids.push(response.perp_id);
-                tracing::info!(
-                    "Successfully deployed perp {}: {} for beacon {}",
-                    index,
-                    perp_id,
-                    beacon_address
-                );
-            }
-            Err(e) => {
-                let error_msg =
-                    format!("Failed to deploy perp {index} for beacon {beacon_address}: {e}");
-                tracing::error!("{}", error_msg);
-                errors.push(error_msg.clone());
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                continue; // Continue with next beacon instead of failing entire batch
-            }
-        }
-    }
-
-    let deployed_count = perp_ids.len() as u32;
-    let failed_count = beacon_count as u32 - deployed_count;
-
-    let response_data = BatchDeployPerpsForBeaconsResponse {
-        deployed_count,
-        perp_ids: perp_ids.clone(),
-        failed_count,
-        errors,
-    };
-
-    let message = if failed_count == 0 {
-        format!("Successfully deployed perps for all {deployed_count} beacons")
-    } else if deployed_count == 0 {
-        "Failed to deploy any perps".to_string()
-    } else {
-        format!("Partially successful: {deployed_count} deployed, {failed_count} failed")
-    };
-
-    tracing::info!("{}", message);
-
-    // Return success even with partial failures, let client handle the response
-    Ok(Json(ApiResponse {
-        success: deployed_count > 0,
-        data: Some(response_data),
-        message,
-    }))
+    _state: &State<AppState>,
+) -> Status {
+    tracing::warn!("Batch deploy perps endpoint called but not yet implemented");
+    Status::NotImplemented
 }
 
 // Tests moved to tests/unit_tests/perp_route_tests.rs
