@@ -1,3 +1,7 @@
-pub mod operations;
+pub mod batch;
+pub mod core;
+pub mod validation;
 
-// pub use operations::*; // Commented out during PerpManager refactor
+// batch::* not exported - contains only TODO comments, no actual functions
+pub use core::*;
+pub use validation::*;

@@ -79,6 +79,13 @@ impl ApiEndpoints {
             },
             EndpointInfo {
                 method: "POST".to_string(),
+                path: "/batch_deploy_perps_for_beacons".to_string(),
+                description: "Batch deploy perpetuals for multiple beacons".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::NotImplemented,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
                 path: "/deposit_liquidity_for_perp".to_string(),
                 description: "Deposit liquidity for a specific perpetual (min: 10 USDC due to wide tick range)".to_string(),
                 requires_auth: true,
@@ -89,7 +96,7 @@ impl ApiEndpoints {
                 path: "/batch_deposit_liquidity_for_perps".to_string(),
                 description: "Batch deposit liquidity for multiple perpetuals".to_string(),
                 requires_auth: true,
-                status: EndpointStatus::Working,
+                status: EndpointStatus::NotImplemented,
             },
             EndpointInfo {
                 method: "POST".to_string(),
