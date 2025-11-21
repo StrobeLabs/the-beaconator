@@ -4,7 +4,13 @@ use tracing;
 
 use crate::models::{AppState, DepositLiquidityForPerpRequest};
 
-/// Helper function to execute batch liquidity deposits using multicall3 - single transaction with multiple calls
+/// STUB: Batch liquidity deposits using multicall3
+///
+/// This function is not yet implemented. It currently returns an error for all deposits.
+/// Individual liquidity deposits via `core::deposit_liquidity_for_perp` still work.
+///
+/// TODO: Implement multicall3 batch execution following the pattern in
+/// `services/beacon/batch.rs::batch_create_beacons_with_multicall3`
 pub async fn batch_deposit_liquidity_with_multicall3(
     _state: &AppState,
     _multicall_address: Address,
@@ -60,14 +66,48 @@ pub async fn batch_deposit_liquidity_with_multicall3(
         valid_perp_ids.push(deposit_request.perp_id.clone());
     }
 
-    // If we have valid deposits, execute multicall; otherwise just return the collected errors
+    // If we have valid deposits, return error - multicall3 implementation needed
     if !valid_perp_ids.is_empty() {
-        // For now, simulate multicall failure since we don't have real contracts in tests
-        let error_msg = "Failed to send USDC approval transaction: error sending request for url (http://localhost:8545/)";
+        let error_msg =
+            "Batch liquidity deposits via Multicall3 not yet implemented in service layer";
+        tracing::error!("{}", error_msg);
+        tracing::error!(
+            "This functionality needs to be migrated from the original routes implementation"
+        );
         for perp_id in valid_perp_ids {
             results.push((perp_id, Err(error_msg.to_string())));
         }
     }
 
     results
+}
+
+/// STUB: Batch perp deployment using multicall3
+///
+/// This function is not yet implemented. It currently returns an error for all deployments.
+/// Individual perp deployments via `core::deploy_perp_for_beacon` still work.
+///
+/// TODO: Implement multicall3 batch execution following the pattern in
+/// `services/beacon/batch.rs::batch_create_beacons_with_multicall3`
+pub async fn batch_deploy_perps_with_multicall3(
+    _state: &AppState,
+    _multicall_address: Address,
+    beacon_addresses: &[String],
+) -> Vec<(String, Result<String, String>)> {
+    tracing::info!(
+        "Batch perp deployment via Multicall3 requested for {} beacons",
+        beacon_addresses.len()
+    );
+
+    let error_msg = "Batch perp deployment via Multicall3 not yet implemented in service layer";
+    tracing::error!("{}", error_msg);
+    tracing::error!(
+        "Use individual deploy_perp_for_beacon calls or implement multicall3 batch logic"
+    );
+
+    // Return error for all deployments
+    beacon_addresses
+        .iter()
+        .map(|beacon_addr| (beacon_addr.clone(), Err(error_msg.to_string())))
+        .collect()
 }
