@@ -65,15 +65,15 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Verified beaconator is the designated signer");
 
-    // 3. Generate nonce from timestamp
+    // 3. Generate nonce from high-resolution timestamp (nanoseconds) to avoid collisions
     let nonce = U256::from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| format!("Failed to get system time: {e}"))?
-            .as_secs(),
+            .as_nanos(),
     );
 
-    tracing::info!("Using nonce (timestamp): {}", nonce);
+    tracing::info!("Using nonce (timestamp_nanos): {}", nonce);
 
     // 4. Get EIP-712 digest from verifier
     let digest_raw = verifier

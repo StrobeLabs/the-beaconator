@@ -97,6 +97,9 @@ sol! {
         function domainSeparator() external view returns (bytes32);
         function SIGNER() external view returns (address);
         function MEASUREMENT_TYPEHASH() external view returns (bytes32);
+        function verify(bytes calldata proof, bytes calldata inputs) external returns (uint256);
+        function verifier() external view returns (address);
+        function usedProofs(bytes32 proofHash) external view returns (bool);
     }
 
     #[sol(rpc)]
