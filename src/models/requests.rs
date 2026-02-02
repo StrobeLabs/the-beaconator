@@ -149,3 +149,15 @@ pub struct FundGuestWalletRequest {
     /// ETH amount in wei (e.g., "1000000000000000" for 0.001 ETH)
     pub eth_amount: String,
 }
+
+/// Update a beacon using ECDSA signature from the beaconator wallet
+///
+/// This endpoint signs the measurement with the beaconator wallet and submits
+/// it to a beacon that uses an ECDSAVerifierAdapter for verification.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct UpdateBeaconWithEcdsaRequest {
+    /// Ethereum address of the beacon contract (with or without 0x prefix)
+    pub beacon_address: String,
+    /// The measurement value to update the beacon with (uint256 as decimal string)
+    pub measurement: String,
+}

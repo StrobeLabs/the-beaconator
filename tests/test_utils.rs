@@ -376,10 +376,17 @@ pub async fn create_test_app_state() -> AppState {
     let beacon_registry_abi = load_test_abi("BeaconRegistry");
     let perp_manager_abi = load_test_abi("PerpManager");
 
+    // Create signer for ECDSA operations (using Anvil's first deterministic test key)
+    let test_signer = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+        .parse::<PrivateKeySigner>()
+        .expect("Failed to parse test private key")
+        .with_chain_id(Some(31337));
+
     AppState {
         provider: deployment.provider,
         alternate_provider: None,
         wallet_address: deployment.deployer,
+        signer: test_signer,
         beacon_abi,
         beacon_factory_abi,
         beacon_registry_abi,
@@ -387,6 +394,8 @@ pub async fn create_test_app_state() -> AppState {
         multicall3_abi: load_test_abi("Multicall3"),
         dichotomous_beacon_factory_abi: JsonAbi::new(), // Mock ABI for tests
         step_beacon_abi: JsonAbi::new(),                // Mock ABI for tests
+        ecdsa_beacon_abi: JsonAbi::new(),               // Mock ABI for tests
+        ecdsa_verifier_adapter_abi: JsonAbi::new(),     // Mock ABI for tests
         beacon_factory_address: deployment.beacon_factory,
         perpcity_registry_address: deployment.beacon_registry,
         perp_manager_address: deployment.perp_hook,
@@ -433,10 +442,17 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
     let beacon_registry_abi = load_test_abi("BeaconRegistry");
     let perp_manager_abi = load_test_abi("PerpManager");
 
+    // Create signer for ECDSA operations (using Anvil's first deterministic test key)
+    let test_signer = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+        .parse::<PrivateKeySigner>()
+        .expect("Failed to parse test private key")
+        .with_chain_id(Some(31337));
+
     let app_state = AppState {
         provider: deployment.provider,
         alternate_provider: None,
         wallet_address: deployment.deployer,
+        signer: test_signer,
         beacon_abi,
         beacon_factory_abi,
         beacon_registry_abi,
@@ -444,6 +460,8 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
         multicall3_abi: load_test_abi("Multicall3"),
         dichotomous_beacon_factory_abi: JsonAbi::new(), // Mock ABI for tests
         step_beacon_abi: JsonAbi::new(),                // Mock ABI for tests
+        ecdsa_beacon_abi: JsonAbi::new(),               // Mock ABI for tests
+        ecdsa_verifier_adapter_abi: JsonAbi::new(),     // Mock ABI for tests
         beacon_factory_address: deployment.beacon_factory,
         perpcity_registry_address: deployment.beacon_registry,
         perp_manager_address: deployment.perp_hook,
@@ -482,7 +500,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
     let anvil = AnvilManager::get_or_create().await;
 
     let signer = anvil.get_signer(account_index);
-    let wallet = EthereumWallet::from(signer);
+    let wallet = EthereumWallet::from(signer.clone());
     let provider = Arc::new(
         ProviderBuilder::new()
             .wallet(wallet)
@@ -497,6 +515,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
         provider,
         alternate_provider: None,
         wallet_address: anvil.accounts[account_index],
+        signer,
         beacon_abi: load_test_abi("Beacon"),
         beacon_factory_abi: load_test_abi("BeaconFactory"),
         beacon_registry_abi: load_test_abi("BeaconRegistry"),
@@ -504,6 +523,8 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
         multicall3_abi: load_test_abi("Multicall3"),
         dichotomous_beacon_factory_abi: JsonAbi::new(), // Mock ABI for tests
         step_beacon_abi: JsonAbi::new(),                // Mock ABI for tests
+        ecdsa_beacon_abi: JsonAbi::new(),               // Mock ABI for tests
+        ecdsa_verifier_adapter_abi: JsonAbi::new(),     // Mock ABI for tests
         beacon_factory_address: deployment.beacon_factory,
         perpcity_registry_address: deployment.beacon_registry,
         perp_manager_address: deployment.perp_hook,
@@ -588,7 +609,7 @@ pub async fn mock_contract_deployment(name: &str) -> ContractDeploymentResult {
 pub fn create_simple_test_app_state() -> AppState {
     // Create mock provider with wallet for testing - this won't work for real network calls
     let signer = alloy::signers::local::PrivateKeySigner::random();
-    let wallet = alloy::network::EthereumWallet::from(signer);
+    let wallet = alloy::network::EthereumWallet::from(signer.clone());
     // Use modern Alloy provider builder pattern for tests
     let provider = alloy::providers::ProviderBuilder::new()
         .wallet(wallet)
@@ -598,6 +619,7 @@ pub fn create_simple_test_app_state() -> AppState {
         provider: Arc::new(provider),
         alternate_provider: None,
         wallet_address: Address::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+        signer,
         beacon_abi: JsonAbi::new(),
         beacon_factory_abi: JsonAbi::new(),
         beacon_registry_abi: JsonAbi::new(),
@@ -605,6 +627,8 @@ pub fn create_simple_test_app_state() -> AppState {
         multicall3_abi: JsonAbi::new(),
         dichotomous_beacon_factory_abi: JsonAbi::new(),
         step_beacon_abi: JsonAbi::new(),
+        ecdsa_beacon_abi: JsonAbi::new(),
+        ecdsa_verifier_adapter_abi: JsonAbi::new(),
         beacon_factory_address: Address::from_str("0x1234567890123456789012345678901234567890")
             .unwrap(),
         perpcity_registry_address: Address::from_str("0x2345678901234567890123456789012345678901")
@@ -641,10 +665,14 @@ pub fn create_simple_test_app_state() -> AppState {
 pub fn create_test_app_state_with_provider(
     provider: Arc<the_beaconator::AlloyProvider>,
 ) -> AppState {
+    // Create a random signer for ECDSA operations in tests
+    let signer = PrivateKeySigner::random();
+
     AppState {
         provider,
         alternate_provider: None,
         wallet_address: Address::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+        signer,
         beacon_abi: JsonAbi::new(),
         beacon_factory_abi: JsonAbi::new(),
         beacon_registry_abi: JsonAbi::new(),
@@ -652,6 +680,8 @@ pub fn create_test_app_state_with_provider(
         multicall3_abi: JsonAbi::new(),
         dichotomous_beacon_factory_abi: JsonAbi::new(),
         step_beacon_abi: JsonAbi::new(),
+        ecdsa_beacon_abi: JsonAbi::new(),
+        ecdsa_verifier_adapter_abi: JsonAbi::new(),
         beacon_factory_address: Address::from_str("0x1234567890123456789012345678901234567890")
             .unwrap(),
         perpcity_registry_address: Address::from_str("0x2345678901234567890123456789012345678901")

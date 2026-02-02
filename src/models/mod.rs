@@ -8,7 +8,7 @@ pub use requests::{
     BatchDepositLiquidityForPerpsRequest, BatchUpdateBeaconRequest, BeaconUpdateData,
     CreateBeaconRequest, CreateVerifiableBeaconRequest, DeployPerpForBeaconRequest,
     DepositLiquidityForPerpRequest, FundGuestWalletRequest, RegisterBeaconRequest,
-    UpdateBeaconRequest,
+    UpdateBeaconRequest, UpdateBeaconWithEcdsaRequest,
 };
 pub use responses::{
     ApiResponse, BatchCreatePerpcityBeaconResponse, BatchDeployPerpsForBeaconsResponse,

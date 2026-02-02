@@ -2,6 +2,7 @@ use alloy::{
     json_abi::JsonAbi,
     primitives::{Address, utils::format_ether},
     providers::Provider,
+    signers::{Signer, local::PrivateKeySigner},
 };
 use rocket::{Build, Rocket};
 use rocket_okapi::{openapi_get_routes_spec, settings::OpenApiSettings};
@@ -84,6 +85,8 @@ pub async fn create_rocket() -> Rocket<Build> {
     let multicall3_abi = load_abi("Multicall3");
     let dichotomous_beacon_factory_abi = load_abi("DichotomousBeaconFactory");
     let step_beacon_abi = load_abi("StepBeacon");
+    let ecdsa_beacon_abi = load_abi("EcdsaBeacon");
+    let ecdsa_verifier_adapter_abi = load_abi("ECDSAVerifierAdapter");
 
     // Load contract addresses
     let beacon_factory_address = Address::from_str(
@@ -223,9 +226,15 @@ pub async fn create_rocket() -> Rocket<Build> {
     let provider = rpc_providers.primary;
     let alternate_provider = rpc_providers.alternate;
 
-    // Get wallet address
+    // Get wallet address and create signer for ECDSA signing
     let wallet_address = services::rpc::RpcConfig::get_wallet_address(&private_key)
         .expect("Failed to get wallet address");
+
+    // Parse the private key into a signer for ECDSA operations
+    let signer = private_key
+        .parse::<PrivateKeySigner>()
+        .expect("Failed to parse private key into signer")
+        .with_chain_id(Some(chain_id));
 
     // Log wallet configuration for debugging
     tracing::info!("Wallet configured:");
@@ -256,6 +265,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         provider,
         alternate_provider,
         wallet_address,
+        signer,
         beacon_abi,
         beacon_factory_abi,
         beacon_registry_abi,
@@ -263,6 +273,8 @@ pub async fn create_rocket() -> Rocket<Build> {
         multicall3_abi,
         dichotomous_beacon_factory_abi,
         step_beacon_abi,
+        ecdsa_beacon_abi,
+        ecdsa_verifier_adapter_abi,
         beacon_factory_address,
         perpcity_registry_address,
         perp_manager_address,
@@ -301,6 +313,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::beacon::batch_update_beacon,
         routes::wallet::fund_guest_wallet,
         routes::beacon::create_verifiable_beacon,
+        routes::beacon::update_beacon_with_ecdsa_adapter,
     ];
 
     // Serve the OpenAPI spec at /openapi.json

@@ -10,12 +10,14 @@ use crate::models::{
     ApiResponse, AppState, BatchCreatePerpcityBeaconRequest, BatchCreatePerpcityBeaconResponse,
     BatchUpdateBeaconRequest, BatchUpdateBeaconResponse, CreateBeaconRequest,
     CreateVerifiableBeaconRequest, RegisterBeaconRequest, UpdateBeaconRequest,
+    UpdateBeaconWithEcdsaRequest,
 };
 use crate::services::beacon::verifiable::create_verifiable_beacon as service_create_verifiable_beacon;
 use crate::services::beacon::{
     batch_create_perpcity_beacon as service_batch_create_perpcity_beacon,
     batch_update_beacon as service_batch_update_beacon, create_beacon_via_factory,
     register_beacon_with_registry, update_beacon as service_update_beacon,
+    update_beacon_with_ecdsa as service_update_beacon_with_ecdsa,
 };
 
 /// Creates a new beacon via the beacon factory.
@@ -476,6 +478,53 @@ pub async fn create_verifiable_beacon(
             tracing::error!("Failed to create verifiable beacon: {}", e);
             sentry::capture_message(
                 &format!("Failed to create verifiable beacon: {e}"),
+                sentry::Level::Error,
+            );
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
+/// Updates a beacon using ECDSA signature from the beaconator wallet.
+///
+/// This endpoint is for beacons that use an ECDSAVerifierAdapter for verification.
+/// The beaconator wallet signs the measurement value and submits it to the beacon.
+/// The beacon's verifier must have the beaconator wallet configured as the designated signer.
+#[openapi(tag = "Beacon")]
+#[post("/update_beacon_with_ecdsa_adapter", data = "<request>")]
+pub async fn update_beacon_with_ecdsa_adapter(
+    request: Json<UpdateBeaconWithEcdsaRequest>,
+    _token: ApiToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<String>>, Status> {
+    tracing::info!("Received request: POST /update_beacon_with_ecdsa_adapter");
+    let _guard = sentry::Hub::current().push_scope();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("endpoint", "/update_beacon_with_ecdsa_adapter");
+        scope.set_extra("beacon_address", request.beacon_address.clone().into());
+        scope.set_extra("measurement", request.measurement.clone().into());
+    });
+
+    match service_update_beacon_with_ecdsa(state.inner(), request.into_inner()).await {
+        Ok(tx_hash) => {
+            tracing::info!(
+                "Successfully updated beacon with ECDSA signature. TX: {:?}",
+                tx_hash
+            );
+            sentry::capture_message(
+                &format!("Beacon updated with ECDSA signature. TX: {tx_hash:?}"),
+                sentry::Level::Info,
+            );
+            Ok(Json(ApiResponse {
+                success: true,
+                data: Some(format!("Transaction hash: {tx_hash:?}")),
+                message: "Beacon updated successfully with ECDSA signature".to_string(),
+            }))
+        }
+        Err(e) => {
+            tracing::error!("Failed to update beacon with ECDSA signature: {}", e);
+            sentry::capture_message(
+                &format!("Failed to update beacon with ECDSA signature: {e}"),
                 sentry::Level::Error,
             );
             Err(Status::InternalServerError)

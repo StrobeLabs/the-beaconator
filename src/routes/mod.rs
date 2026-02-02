@@ -84,6 +84,22 @@ sol! {
     }
 
     #[sol(rpc)]
+    interface IEcdsaBeacon {
+        function updateIndex(bytes calldata proof, bytes calldata inputs) external;
+        function verifierAdapter() external view returns (address);
+        function index() external view returns (uint256);
+        event IndexUpdated(uint256 index);
+    }
+
+    #[sol(rpc)]
+    interface IEcdsaVerifierAdapter {
+        function digest(uint256 measurement, uint256 nonce) external view returns (bytes32);
+        function domainSeparator() external view returns (bytes32);
+        function SIGNER() external view returns (address);
+        function MEASUREMENT_TYPEHASH() external view returns (bytes32);
+    }
+
+    #[sol(rpc)]
     interface IPerpManager {
         // Module interfaces for modular configuration
         type IFees is address;
