@@ -1,4 +1,4 @@
-use alloy::{json_abi::JsonAbi, primitives::Address};
+use alloy::{json_abi::JsonAbi, primitives::Address, signers::local::PrivateKeySigner};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -127,6 +127,14 @@ impl ApiEndpoints {
                 requires_auth: true,
                 status: EndpointStatus::Working,
             },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/update_beacon_with_ecdsa_adapter".to_string(),
+                description: "Update a beacon using ECDSA signature from the beaconator wallet"
+                    .to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
         ]
     }
 
@@ -170,6 +178,7 @@ pub struct AppState {
     pub provider: Arc<AlloyProvider>,
     pub alternate_provider: Option<Arc<AlloyProvider>>,
     pub wallet_address: Address,
+    pub signer: PrivateKeySigner,
     pub beacon_abi: JsonAbi,
     pub beacon_factory_abi: JsonAbi,
     pub beacon_registry_abi: JsonAbi,
@@ -177,6 +186,8 @@ pub struct AppState {
     pub multicall3_abi: JsonAbi,
     pub dichotomous_beacon_factory_abi: JsonAbi,
     pub step_beacon_abi: JsonAbi,
+    pub ecdsa_beacon_abi: JsonAbi,
+    pub ecdsa_verifier_adapter_abi: JsonAbi,
     pub beacon_factory_address: Address,
     pub perpcity_registry_address: Address,
     pub perp_manager_address: Address,
