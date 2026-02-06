@@ -7,7 +7,7 @@ use tokio::time::timeout;
 use tracing;
 
 use crate::models::{AppState, UpdateBeaconWithEcdsaRequest};
-use crate::routes::{IEcdsaBeacon, IEcdsaVerifierAdapter, execute_transaction_serialized};
+use crate::routes::{IEcdsaBeacon, IEcdsaVerifierAdapter};
 use crate::services::wallet::WalletHandle;
 
 /// Updates a beacon using ECDSA signature from the appropriate wallet.
@@ -170,15 +170,12 @@ pub async fn update_beacon_with_ecdsa(
     tracing::debug!("Inputs bytes length: {}", inputs_bytes.len());
 
     // 9. Call beacon.updateIndex(signature, inputs)
-    let pending_tx = execute_transaction_serialized(async {
-        tracing::info!("Sending updateIndex transaction to beacon");
-        beacon
-            .updateIndex(sig_bytes.clone(), inputs_bytes.clone())
-            .send()
-            .await
-            .map_err(|e| format!("Failed to send updateIndex transaction: {e}"))
-    })
-    .await?;
+    tracing::info!("Sending updateIndex transaction to beacon");
+    let pending_tx = beacon
+        .updateIndex(sig_bytes.clone(), inputs_bytes.clone())
+        .send()
+        .await
+        .map_err(|e| format!("Failed to send updateIndex transaction: {e}"))?;
 
     tracing::info!("Transaction sent, waiting for receipt...");
 

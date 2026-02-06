@@ -168,8 +168,9 @@ async fn test_batch_deposit_liquidity_mixed_validity() {
 
     let result = batch_deposit_liquidity_for_perps(request, token, state).await;
 
-    // Endpoint not implemented - should return NotImplemented
-    assert_eq!(result, Status::NotImplemented);
+    // Endpoint not implemented - should return Err(NotImplemented)
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err(), Status::NotImplemented);
 }
 
 #[tokio::test]
@@ -185,8 +186,9 @@ async fn test_batch_deposit_liquidity_invalid_count() {
     });
 
     let result = batch_deposit_liquidity_for_perps(request, token, state).await;
-    // Endpoint not implemented - should return NotImplemented regardless of input
-    assert_eq!(result, Status::NotImplemented);
+    // Endpoint not implemented - should return Err(NotImplemented) regardless of input
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err(), Status::NotImplemented);
 }
 
 #[test]

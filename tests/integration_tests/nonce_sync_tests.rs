@@ -7,9 +7,7 @@ mod nonce_synchronization_tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
     use the_beaconator::models::AppState;
-    use the_beaconator::routes::{
-        execute_transaction_serialized, get_fresh_nonce_from_alternate, is_nonce_error,
-    };
+    use the_beaconator::routes::{get_fresh_nonce_from_alternate, is_nonce_error};
     use tokio::task::JoinSet;
 
     /// Test comprehensive nonce synchronization scenarios
@@ -168,72 +166,6 @@ mod nonce_synchronization_tests {
         }
     }
 
-    /// Test transaction serialization under nonce conflict scenarios
-    #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
-    async fn test_serialized_transactions_prevent_nonce_conflicts() {
-        let mut join_set = JoinSet::new();
-        let start_time = Instant::now();
-
-        // Simulate 10 concurrent transactions that would normally cause nonce conflicts
-        for i in 0..10 {
-            join_set.spawn(async move {
-                let operation_start = Instant::now();
-                let result = execute_transaction_serialized(async move {
-                    // Simulate transaction processing time
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-
-                    // Simulate different transaction outcomes
-                    match i % 3 {
-                        0 => Ok(format!("Transaction {i} succeeded")),
-                        1 => Err(format!("Transaction {i} failed: insufficient funds")),
-                        _ => Err(format!("Transaction {i} failed: execution reverted")),
-                    }
-                })
-                .await;
-
-                (i, result, operation_start.elapsed())
-            });
-        }
-
-        let mut results = Vec::new();
-        while let Some(result) = join_set.join_next().await {
-            results.push(result.unwrap());
-        }
-
-        let total_time = start_time.elapsed();
-
-        // Verify serialization occurred (total time should be ~500ms for 10 * 50ms operations)
-        assert!(
-            total_time >= Duration::from_millis(400),
-            "Total execution time too short: {total_time:?}. Expected ~500ms for serialized execution"
-        );
-
-        assert_eq!(results.len(), 10);
-
-        // Verify each operation took at least the expected time
-        for (i, _result, duration) in &results {
-            assert!(
-                *duration >= Duration::from_millis(40),
-                "Transaction {i} completed too quickly: {duration:?}"
-            );
-        }
-
-        // Verify we got the expected mix of successes and failures
-        let successes = results
-            .iter()
-            .filter(|(_, result, _)| result.is_ok())
-            .count();
-        let failures = results
-            .iter()
-            .filter(|(_, result, _)| result.is_err())
-            .count();
-
-        assert_eq!(successes + failures, 10);
-        assert!(successes > 0, "Should have some successful transactions");
-        assert!(failures > 0, "Should have some failed transactions");
-    }
-
     /// Test nonce synchronization with simulated RPC failures
     #[tokio::test]
     #[ignore] // Temporarily disabled - hangs due to real network calls
@@ -322,47 +254,5 @@ mod nonce_synchronization_tests {
 
         app_state.alternate_provider = Some(alternate_provider);
         (app_state, anvil)
-    }
-
-    /// Benchmark test for transaction serialization performance
-    #[tokio::test]
-    #[ignore] // Temporarily disabled - hangs due to real network calls
-    async fn test_transaction_serialization_performance() {
-        let start_time = Instant::now();
-        let mut join_set = JoinSet::new();
-
-        // Test with many concurrent operations to ensure performance is acceptable
-        for i in 0..50 {
-            join_set.spawn(async move {
-                execute_transaction_serialized(async move {
-                    // Very short operation to test overhead
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                    i
-                })
-                .await
-            });
-        }
-
-        let mut results = Vec::new();
-        while let Some(result) = join_set.join_next().await {
-            results.push(result.unwrap());
-        }
-
-        let total_time = start_time.elapsed();
-
-        assert_eq!(results.len(), 50);
-
-        // With isolated Anvil instances and parallel execution, timing is less predictable
-        // Allow more generous bounds to account for instance creation/cleanup overhead
-        assert!(
-            total_time <= Duration::from_millis(2000),
-            "Execution time too high: {total_time:?} (expected under 2s with isolated instances)"
-        );
-
-        // Ensure operations actually took some time (not completed instantly)
-        assert!(
-            total_time >= Duration::from_millis(100),
-            "Execution completed too quickly: {total_time:?} (operations should take some time)"
-        );
     }
 }

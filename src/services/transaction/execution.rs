@@ -1,40 +1,15 @@
-use alloy::primitives::Address;
+//! Transaction execution utilities
+//!
+//! This module provides helper functions for transaction execution:
+//! - `get_fresh_nonce_from_alternate`: Fetch nonce from alternate RPC for sync
+//! - `is_nonce_error`: Detect nonce-related errors in error messages
+//!
+//! Note: Transaction serialization is now handled by Redis-based distributed
+//! locks in the wallet module. See `WalletLock` for details.
+
 use alloy::providers::Provider;
-use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
-use tokio::sync::Mutex;
-use tracing;
 
 use crate::models::AppState;
-
-/// Global transaction mutex to serialize ALL blockchain transactions
-/// This prevents nonce conflicts by ensuring only one transaction is submitted at a time
-static TRANSACTION_MUTEX: OnceLock<Arc<Mutex<()>>> = OnceLock::new();
-
-/// Per-wallet transaction mutexes for local serialization
-/// This provides an additional layer of safety beyond distributed locks
-#[allow(dead_code)]
-static WALLET_MUTEXES: OnceLock<Mutex<HashMap<Address, Arc<Mutex<()>>>>> = OnceLock::new();
-
-/// Get the global transaction mutex
-pub fn get_transaction_mutex() -> &'static Arc<Mutex<()>> {
-    TRANSACTION_MUTEX.get_or_init(|| Arc::new(Mutex::new(())))
-}
-
-#[allow(dead_code)]
-fn get_wallet_mutexes() -> &'static Mutex<HashMap<Address, Arc<Mutex<()>>>> {
-    WALLET_MUTEXES.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// Get or create a mutex for a specific wallet
-#[allow(dead_code)]
-async fn get_wallet_mutex(wallet_address: Address) -> Arc<Mutex<()>> {
-    let mut mutexes = get_wallet_mutexes().lock().await;
-    mutexes
-        .entry(wallet_address)
-        .or_insert_with(|| Arc::new(Mutex::new(())))
-        .clone()
-}
 
 /// Get fresh nonce from alternate RPC provider
 ///
@@ -67,73 +42,6 @@ pub async fn get_fresh_nonce_from_alternate(state: &AppState) -> Result<u64, Str
     } else {
         Err("No alternate provider available".to_string())
     }
-}
-
-/// Serialized transaction execution wrapper
-///
-/// All blockchain transactions should use this to prevent nonce conflicts.
-/// Alloy's wallet provider handles nonce management automatically, but we need
-/// to ensure only one transaction is submitted at a time to avoid race conditions.
-///
-/// # Arguments
-/// * `operation` - The async operation to execute (typically a transaction send)
-///
-/// # Returns
-/// The result of the operation
-///
-/// # Example
-/// ```ignore
-/// let receipt = execute_transaction_serialized(async {
-///     contract.someFunction().send().await
-/// }).await?;
-/// ```
-pub async fn execute_transaction_serialized<F, T>(operation: F) -> T
-where
-    F: std::future::Future<Output = T>,
-{
-    let mutex = get_transaction_mutex();
-    let _lock = mutex.lock().await;
-    tracing::debug!("Acquired transaction lock - executing blockchain operation serially");
-    let result = operation.await;
-    tracing::debug!("Released transaction lock - blockchain operation completed");
-    result
-}
-
-/// Execute a transaction with per-wallet serialization
-///
-/// Use this when you have acquired a wallet from WalletManager.
-/// The distributed lock from WalletManager prevents cross-instance conflicts,
-/// while this local mutex prevents concurrent operations within the same instance.
-///
-/// # Arguments
-/// * `wallet_address` - The address of the wallet to serialize transactions for
-/// * `operation` - The async operation to execute (typically a transaction send)
-///
-/// # Returns
-/// The result of the operation
-///
-/// # Example
-/// ```ignore
-/// let receipt = execute_transaction_for_wallet(wallet_address, async {
-///     contract.someFunction().send().await
-/// }).await?;
-/// ```
-pub async fn execute_transaction_for_wallet<F, T>(wallet_address: Address, operation: F) -> T
-where
-    F: std::future::Future<Output = T>,
-{
-    let mutex = get_wallet_mutex(wallet_address).await;
-    let _lock = mutex.lock().await;
-    tracing::debug!(
-        "Acquired local transaction lock for wallet {} - executing operation",
-        wallet_address
-    );
-    let result = operation.await;
-    tracing::debug!(
-        "Released local transaction lock for wallet {} - operation completed",
-        wallet_address
-    );
-    result
 }
 
 /// Detect nonce-related errors from error messages

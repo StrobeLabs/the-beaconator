@@ -8,7 +8,6 @@ use tracing;
 
 use crate::models::AppState;
 use crate::routes::IMulticall3;
-use crate::services::transaction::execution::execute_transaction_serialized;
 
 /// Execute multiple contract calls in a single transaction using Multicall3
 ///
@@ -37,20 +36,17 @@ pub async fn execute_multicall(
     // Create multicall contract instance
     let multicall_contract = IMulticall3::new(multicall_address, &*state.provider);
 
-    // Execute the multicall transaction (serialized to prevent nonce conflicts)
-    let pending_tx = execute_transaction_serialized(async {
-        multicall_contract
-            .aggregate3(calls.clone())
-            .send()
-            .await
-            .map_err(|e| {
-                let error_msg = format!("Failed to send multicall transaction: {e}");
-                tracing::error!("{}", error_msg);
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                error_msg
-            })
-    })
-    .await?;
+    // Execute the multicall transaction
+    let pending_tx = multicall_contract
+        .aggregate3(calls.clone())
+        .send()
+        .await
+        .map_err(|e| {
+            let error_msg = format!("Failed to send multicall transaction: {e}");
+            tracing::error!("{}", error_msg);
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            error_msg
+        })?;
 
     tracing::info!("Multicall transaction sent, awaiting confirmation...");
 

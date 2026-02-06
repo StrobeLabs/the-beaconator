@@ -403,9 +403,9 @@ pub async fn batch_deposit_liquidity_for_perps(
     #[allow(unused_variables)] request: Json<BatchDepositLiquidityForPerpsRequest>,
     _token: ApiToken,
     _state: &State<AppState>,
-) -> Status {
+) -> Result<Json<ApiResponse<()>>, Status> {
     tracing::warn!("Batch deposit liquidity endpoint called but not yet implemented");
-    Status::NotImplemented
+    Err(Status::NotImplemented)
 }
 
 /// Deploys perpetual contracts for multiple beacons in a batch operation.
@@ -418,9 +418,9 @@ pub async fn batch_deploy_perps_for_beacons(
     #[allow(unused_variables)] request: Json<BatchDeployPerpsForBeaconsRequest>,
     _token: ApiToken,
     _state: &State<AppState>,
-) -> Status {
+) -> Result<Json<ApiResponse<()>>, Status> {
     tracing::warn!("Batch deploy perps endpoint called but not yet implemented");
-    Status::NotImplemented
+    Err(Status::NotImplemented)
 }
 
 // Tests moved to tests/unit_tests/perp_route_tests.rs

@@ -5,11 +5,9 @@ use tokio::time::timeout;
 use tracing;
 
 use crate::models::{AppState, CreateVerifiableBeaconRequest};
-use crate::routes::{
-    IDichotomousBeaconFactory, execute_transaction_serialized, get_fresh_nonce_from_alternate,
-    is_nonce_error,
-};
+use crate::routes::IDichotomousBeaconFactory;
 use crate::services::transaction::events::parse_beacon_created_event;
+use crate::services::transaction::execution::{get_fresh_nonce_from_alternate, is_nonce_error};
 
 /// Creates a verifiable beacon using the DichotomousBeaconFactory.
 ///
@@ -47,53 +45,52 @@ pub async fn create_verifiable_beacon(
     let contract = IDichotomousBeaconFactory::new(factory_address, &*state.provider);
 
     // Send beacon creation transaction
-    let pending_tx = execute_transaction_serialized(async {
-        tracing::info!("Creating verifiable beacon with primary RPC");
-        let result = contract
-            .createBeacon(
-                verifier_address,
-                U256::from(request.initial_data),
-                request.initial_cardinality,
-            )
-            .send()
-            .await;
+    tracing::info!("Creating verifiable beacon with primary RPC");
+    let pending_tx = match contract
+        .createBeacon(
+            verifier_address,
+            U256::from(request.initial_data),
+            request.initial_cardinality,
+        )
+        .send()
+        .await
+    {
+        Ok(pending) => Ok(pending),
+        Err(e) => {
+            let error_msg = format!("Failed to send createBeacon transaction: {e}");
+            tracing::error!("{}", error_msg);
 
-        match result {
-            Ok(pending) => Ok(pending),
-            Err(e) => {
-                let error_msg = format!("Failed to send createBeacon transaction: {e}");
-                tracing::error!("{}", error_msg);
-
-                // Check if nonce error and sync if needed
-                if is_nonce_error(&error_msg) {
-                    tracing::warn!(
-                        "Nonce error detected, attempting to sync nonce from alternate RPC"
-                    );
-                    if let Ok(fresh_nonce) = get_fresh_nonce_from_alternate(state).await {
-                        tracing::info!("Retrying with fresh nonce: {}", fresh_nonce);
-                        return contract
-                            .createBeacon(
-                                verifier_address,
-                                U256::from(request.initial_data),
-                                request.initial_cardinality,
-                            )
-                            .nonce(fresh_nonce)
-                            .send()
-                            .await
-                            .map_err(|retry_err| {
-                                let msg = format!(
-                                    "Failed to resend createBeacon transaction after nonce sync: {retry_err}"
-                                );
-                                tracing::error!("{}", msg);
-                                msg
-                            });
-                    }
+            // Check if nonce error and sync if needed
+            if is_nonce_error(&error_msg) {
+                tracing::warn!(
+                    "Nonce error detected, attempting to sync nonce from alternate RPC"
+                );
+                if let Ok(fresh_nonce) = get_fresh_nonce_from_alternate(state).await {
+                    tracing::info!("Retrying with fresh nonce: {}", fresh_nonce);
+                    contract
+                        .createBeacon(
+                            verifier_address,
+                            U256::from(request.initial_data),
+                            request.initial_cardinality,
+                        )
+                        .nonce(fresh_nonce)
+                        .send()
+                        .await
+                        .map_err(|retry_err| {
+                            let msg = format!(
+                                "Failed to resend createBeacon transaction after nonce sync: {retry_err}"
+                            );
+                            tracing::error!("{}", msg);
+                            msg
+                        })
+                } else {
+                    Err(error_msg)
                 }
+            } else {
                 Err(error_msg)
             }
         }
-    })
-    .await
+    }
     .map_err(|e| {
         tracing::error!("Transaction execution failed: {}", e);
         sentry::capture_message(

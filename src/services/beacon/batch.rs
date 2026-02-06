@@ -7,7 +7,6 @@ use crate::models::{
 };
 use crate::routes::{IBeacon, IBeaconFactory, IBeaconRegistry, IMulticall3};
 use crate::services::transaction::events::parse_beacon_created_events_from_multicall;
-use crate::services::transaction::execution::execute_transaction_serialized;
 
 /// Execute batch creation of Perpcity beacons with multicall3
 ///
@@ -33,22 +32,17 @@ pub async fn batch_create_perpcity_beacon(
         return Err(format!("Invalid beacon count: {count}"));
     }
 
-    // Process all beacon creations in a single serialized transaction using multicall for efficiency
-    let batch_results = execute_transaction_serialized(async {
-        // Check if we have a multicall3 contract address configured
-        if let Some(multicall_address) = state.multicall3_address {
-            // Use multicall3 for atomic batch beacon creation
-            batch_create_beacons_with_multicall3(state, multicall_address, count, owner_address)
-                .await
-        } else {
-            // No multicall3 configured - return error for all beacon creations
-            let error_msg =
-                "Batch operations require Multicall3 contract address to be configured".to_string();
-            tracing::error!("{}", error_msg);
-            (1..=count).map(|i| (i, Err(error_msg.clone()))).collect()
-        }
-    })
-    .await;
+    // Process all beacon creations using multicall for efficiency
+    let batch_results = if let Some(multicall_address) = state.multicall3_address {
+        // Use multicall3 for atomic batch beacon creation
+        batch_create_beacons_with_multicall3(state, multicall_address, count, owner_address).await
+    } else {
+        // No multicall3 configured - return error for all beacon creations
+        let error_msg =
+            "Batch operations require Multicall3 contract address to be configured".to_string();
+        tracing::error!("{}", error_msg);
+        (1..=count).map(|i| (i, Err(error_msg.clone()))).collect()
+    };
 
     // Process the results
     let mut beacon_addresses = Vec::new();
@@ -103,23 +97,19 @@ pub async fn batch_update_beacon(
     }
 
     // Process all updates using multicall for efficient batching
-    let batch_results = execute_transaction_serialized(async {
-        // Check if we have a multicall3 contract address configured
-        if let Some(multicall_address) = state.multicall3_address {
-            // Use multicall3 for efficient batch execution - single transaction with multiple calls
-            batch_update_with_multicall3(state, multicall_address, updates).await
-        } else {
-            // No multicall3 configured - return error for all updates
-            let error_msg =
-                "Batch operations require Multicall3 contract address to be configured".to_string();
-            tracing::error!("{}", error_msg);
-            updates
-                .iter()
-                .map(|update| (update.beacon_address.clone(), Err(error_msg.clone())))
-                .collect()
-        }
-    })
-    .await;
+    let batch_results = if let Some(multicall_address) = state.multicall3_address {
+        // Use multicall3 for efficient batch execution - single transaction with multiple calls
+        batch_update_with_multicall3(state, multicall_address, updates).await
+    } else {
+        // No multicall3 configured - return error for all updates
+        let error_msg =
+            "Batch operations require Multicall3 contract address to be configured".to_string();
+        tracing::error!("{}", error_msg);
+        updates
+            .iter()
+            .map(|update| (update.beacon_address.clone(), Err(error_msg.clone())))
+            .collect()
+    };
 
     // Process the results
     let mut results = Vec::new();

@@ -282,18 +282,31 @@ mod tests {
 
     #[test]
     fn test_v_normalization() {
-        // Test that v values are normalized correctly
-        let v_27: u8 = 27;
-        let v_28: u8 = 28;
-        let v_0: u8 = 0;
-        let v_1: u8 = 1;
+        // Test that v values are normalized correctly to recovery id (0 or 1)
+        // The implementation only accepts 0, 1, 27, or 28 as valid v values
 
-        // Values >= 27 should be converted
-        assert_eq!(if v_27 >= 27 { v_27 - 27 } else { v_27 }, 0);
-        assert_eq!(if v_28 >= 27 { v_28 - 27 } else { v_28 }, 1);
+        // Helper function that mirrors the implementation logic
+        fn normalize_v(v: u8) -> Result<u8, &'static str> {
+            match v {
+                0 | 1 => Ok(v),
+                27 => Ok(0),
+                28 => Ok(1),
+                _ => Err("Invalid v value"),
+            }
+        }
 
-        // Values < 27 should stay the same
-        assert_eq!(if v_0 >= 27 { v_0 - 27 } else { v_0 }, 0);
-        assert_eq!(if v_1 >= 27 { v_1 - 27 } else { v_1 }, 1);
+        // Valid v values: 0 and 1 should remain unchanged
+        assert_eq!(normalize_v(0), Ok(0));
+        assert_eq!(normalize_v(1), Ok(1));
+
+        // Valid v values: 27 and 28 should be normalized to 0 and 1
+        assert_eq!(normalize_v(27), Ok(0));
+        assert_eq!(normalize_v(28), Ok(1));
+
+        // Invalid v values should return an error
+        assert!(normalize_v(2).is_err());
+        assert!(normalize_v(26).is_err());
+        assert!(normalize_v(29).is_err());
+        assert!(normalize_v(255).is_err());
     }
 }

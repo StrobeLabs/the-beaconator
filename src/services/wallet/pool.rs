@@ -86,23 +86,23 @@ impl WalletPool {
     }
 
     /// Add a wallet to the pool
+    ///
+    /// Uses an atomic Redis pipeline to ensure both operations succeed or fail together.
     pub async fn add_wallet(&self, info: WalletInfo) -> Result<(), String> {
         let mut conn = self.get_conn().await?;
 
-        // Add to pool set
-        let _: () = conn
-            .sadd(RedisKeys::wallet_pool(), info.address.to_string())
-            .await
-            .map_err(|e| format!("Failed to add wallet to pool: {e}"))?;
-
-        // Store wallet info as JSON
+        // Serialize wallet info
         let info_json = serde_json::to_string(&info)
             .map_err(|e| format!("Failed to serialize wallet info: {e}"))?;
 
-        let _: () = conn
+        // Use atomic pipeline to add wallet to pool set and store wallet info
+        let _: () = redis::pipe()
+            .atomic()
+            .sadd(RedisKeys::wallet_pool(), info.address.to_string())
             .set(RedisKeys::wallet_info(&info.address), info_json)
+            .query_async(&mut conn)
             .await
-            .map_err(|e| format!("Failed to store wallet info: {e}"))?;
+            .map_err(|e| format!("Failed to add wallet to pool: {e}"))?;
 
         tracing::info!("Added wallet {} to pool", info.address);
 
@@ -154,44 +154,42 @@ impl WalletPool {
     /// Remove a wallet from the pool
     ///
     /// This also cleans up all beacon→wallet reverse mappings for beacons
-    /// that were designated to this wallet.
+    /// that were designated to this wallet. Uses an atomic Redis pipeline
+    /// to ensure all operations succeed or fail together.
     pub async fn remove_wallet(&self, address: &Address) -> Result<(), String> {
         let mut conn = self.get_conn().await?;
 
-        // First, get all beacons designated to this wallet and remove reverse mappings
+        // First, get all beacons designated to this wallet
         let beacon_strs: Vec<String> = conn
             .smembers(RedisKeys::wallet_beacons(address))
             .await
             .map_err(|e| format!("Failed to get beacons for wallet: {e}"))?;
 
-        for beacon_str in beacon_strs {
-            if let Ok(beacon_addr) = Address::from_str(&beacon_str) {
-                let _: () = conn
-                    .del(RedisKeys::beacon_wallet(&beacon_addr))
-                    .await
-                    .map_err(|e| {
-                        format!("Failed to remove beacon->wallet mapping for {beacon_addr}: {e}")
-                    })?;
+        // Build atomic pipeline for all deletions
+        let mut pipe = redis::pipe();
+        pipe.atomic();
+
+        // Add beacon->wallet reverse mapping deletions to pipeline
+        for beacon_str in &beacon_strs {
+            if let Ok(beacon_addr) = Address::from_str(beacon_str) {
+                pipe.del(RedisKeys::beacon_wallet(&beacon_addr));
             }
         }
 
-        // Remove from pool set
-        let _: () = conn
-            .srem(RedisKeys::wallet_pool(), address.to_string())
+        // Add wallet pool removal
+        pipe.srem(RedisKeys::wallet_pool(), address.to_string());
+
+        // Add wallet info deletion
+        pipe.del(RedisKeys::wallet_info(address));
+
+        // Add wallet beacons set deletion
+        pipe.del(RedisKeys::wallet_beacons(address));
+
+        // Execute all deletions atomically
+        let _: () = pipe
+            .query_async(&mut conn)
             .await
             .map_err(|e| format!("Failed to remove wallet from pool: {e}"))?;
-
-        // Remove wallet info
-        let _: () = conn
-            .del(RedisKeys::wallet_info(address))
-            .await
-            .map_err(|e| format!("Failed to remove wallet info: {e}"))?;
-
-        // Remove the wallet's beacon set
-        let _: () = conn
-            .del(RedisKeys::wallet_beacons(address))
-            .await
-            .map_err(|e| format!("Failed to remove wallet beacon mappings: {e}"))?;
 
         tracing::info!("Removed wallet {} from pool", address);
 
@@ -229,6 +227,9 @@ impl WalletPool {
     }
 
     /// Add a beacon to a wallet's designated beacons list
+    ///
+    /// Uses an atomic Redis pipeline for the key operations, then updates
+    /// the wallet info separately to maintain the denormalized data.
     pub async fn add_designated_beacon(
         &self,
         wallet_address: &Address,
@@ -236,29 +237,44 @@ impl WalletPool {
     ) -> Result<(), String> {
         let mut conn = self.get_conn().await?;
 
-        // Add to wallet's beacon set
-        let _: () = conn
+        // Use atomic pipeline for the two Redis key operations
+        let _: () = redis::pipe()
+            .atomic()
             .sadd(
                 RedisKeys::wallet_beacons(wallet_address),
                 beacon_address.to_string(),
             )
-            .await
-            .map_err(|e| format!("Failed to add beacon to wallet: {e}"))?;
-
-        // Add reverse mapping: beacon -> wallet
-        let _: () = conn
             .set(
                 RedisKeys::beacon_wallet(beacon_address),
                 wallet_address.to_string(),
             )
+            .query_async(&mut conn)
             .await
-            .map_err(|e| format!("Failed to set beacon wallet mapping: {e}"))?;
+            .map_err(|e| format!("Failed to add beacon mapping: {e}"))?;
 
-        // Update wallet info to include this beacon
-        let mut info = self.get_wallet_info(wallet_address).await?;
-        if !info.designated_beacons.contains(beacon_address) {
-            info.designated_beacons.push(*beacon_address);
-            self.update_wallet_info(&info).await?;
+        // Update wallet info to include this beacon (denormalized data for convenience)
+        // This is done separately from the atomic Redis operations
+        match self.get_wallet_info(wallet_address).await {
+            Ok(mut info) => {
+                if !info.designated_beacons.contains(beacon_address) {
+                    info.designated_beacons.push(*beacon_address);
+                    if let Err(e) = self.update_wallet_info(&info).await {
+                        // Log but don't fail - the authoritative mappings are in Redis keys
+                        tracing::warn!(
+                            "Failed to update wallet info for {}: {} (Redis mappings are intact)",
+                            wallet_address,
+                            e
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Could not get wallet info for {} to update designated beacons: {}",
+                    wallet_address,
+                    e
+                );
+            }
         }
 
         tracing::info!(
@@ -315,6 +331,9 @@ impl WalletPool {
     }
 
     /// Remove a beacon from a wallet's designated beacons list
+    ///
+    /// Uses an atomic Redis pipeline for the key operations, then updates
+    /// the wallet info separately to maintain the denormalized data.
     pub async fn remove_designated_beacon(
         &self,
         wallet_address: &Address,
@@ -322,25 +341,40 @@ impl WalletPool {
     ) -> Result<(), String> {
         let mut conn = self.get_conn().await?;
 
-        // Remove from wallet's beacon set
-        let _: () = conn
+        // Use atomic pipeline for the two Redis key operations
+        let _: () = redis::pipe()
+            .atomic()
             .srem(
                 RedisKeys::wallet_beacons(wallet_address),
                 beacon_address.to_string(),
             )
-            .await
-            .map_err(|e| format!("Failed to remove beacon from wallet: {e}"))?;
-
-        // Remove reverse mapping
-        let _: () = conn
             .del(RedisKeys::beacon_wallet(beacon_address))
+            .query_async(&mut conn)
             .await
-            .map_err(|e| format!("Failed to remove beacon wallet mapping: {e}"))?;
+            .map_err(|e| format!("Failed to remove beacon mapping: {e}"))?;
 
-        // Update wallet info
-        let mut info = self.get_wallet_info(wallet_address).await?;
-        info.designated_beacons.retain(|b| b != beacon_address);
-        self.update_wallet_info(&info).await?;
+        // Update wallet info to remove this beacon (denormalized data for convenience)
+        // This is done separately from the atomic Redis operations
+        match self.get_wallet_info(wallet_address).await {
+            Ok(mut info) => {
+                info.designated_beacons.retain(|b| b != beacon_address);
+                if let Err(e) = self.update_wallet_info(&info).await {
+                    // Log but don't fail - the authoritative mappings are in Redis keys
+                    tracing::warn!(
+                        "Failed to update wallet info for {}: {} (Redis mappings are intact)",
+                        wallet_address,
+                        e
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Could not get wallet info for {} to update designated beacons: {}",
+                    wallet_address,
+                    e
+                );
+            }
+        }
 
         tracing::info!(
             "Removed beacon {} from wallet {} designated beacons",

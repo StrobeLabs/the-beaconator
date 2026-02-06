@@ -1,74 +1,16 @@
-use alloy::primitives::{Address, U256};
+//! Integration tests for transaction execution utilities
+//!
+//! Note: Transaction serialization is now handled by Redis-based distributed locks
+//! in the wallet module (WalletLock). The global transaction serializer has been removed.
+//! These tests cover nonce helper functions that are still relevant.
+
+use alloy::primitives::U256;
 use alloy::providers::Provider;
 use serial_test::serial;
-use std::sync::Arc;
-use std::time::Duration;
 
-use the_beaconator::services::beacon::core::create_beacon_via_factory;
 use the_beaconator::services::transaction::execution::{
-    execute_transaction_serialized, get_fresh_nonce_from_alternate, get_transaction_mutex,
-    is_nonce_error,
+    get_fresh_nonce_from_alternate, is_nonce_error,
 };
-
-/// Test serialized transaction execution with real network calls
-#[tokio::test]
-#[serial]
-#[ignore] // Temporarily disabled - hangs due to real network calls
-async fn test_execute_transaction_serialized_with_network() {
-    let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
-
-    // Execute a real transaction within serialized execution
-    let result = execute_transaction_serialized(async {
-        // Check wallet balance (simple network call)
-        app_state
-            .provider
-            .get_balance(app_state.wallet_address)
-            .await
-    })
-    .await;
-
-    assert!(
-        result.is_ok(),
-        "Serialized balance check should succeed: {result:?}"
-    );
-
-    if let Ok(balance) = result {
-        println!("Wallet balance in serialized execution: {balance} wei");
-        assert!(
-            balance > U256::ZERO,
-            "Wallet should have some ETH for tests"
-        );
-    }
-}
-
-/// Test multiple serialized network operations
-#[tokio::test]
-#[serial]
-#[ignore] // Temporarily disabled - hangs due to real network calls
-async fn test_multiple_serialized_network_operations() {
-    let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
-
-    let start_time = std::time::Instant::now();
-
-    // Start multiple serialized network operations with single threaded approach
-    for i in 0..3 {
-        let result = execute_transaction_serialized(async {
-            // Each operation does a network call
-            let balance = app_state
-                .provider
-                .get_balance(app_state.wallet_address)
-                .await?;
-            tokio::time::sleep(Duration::from_millis(10)).await; // Small delay
-            Ok::<U256, Box<dyn std::error::Error + Send + Sync>>(balance)
-        })
-        .await;
-
-        println!("Serialized operation {i} result: {result:?}");
-    }
-
-    let elapsed = start_time.elapsed();
-    println!("Serialized network operations completed in {elapsed:?}");
-}
 
 /// Test fresh nonce retrieval from alternate provider
 #[tokio::test]
@@ -107,77 +49,6 @@ async fn test_get_fresh_nonce_from_alternate_integration() {
                 !e.contains("No alternate provider available"),
                 "Should not be no provider error"
             );
-        }
-    }
-}
-
-/// Test transaction mutex singleton behavior
-#[tokio::test]
-#[serial]
-#[ignore] // Temporarily disabled - hangs due to real network calls
-async fn test_transaction_mutex_singleton_integration() {
-    // Get multiple references to the mutex
-    let mutex1 = get_transaction_mutex();
-    let mutex2 = get_transaction_mutex();
-    let mutex3 = get_transaction_mutex();
-
-    // Should all be the same instance
-    assert!(Arc::ptr_eq(mutex1, mutex2), "Mutex should be singleton");
-    assert!(Arc::ptr_eq(mutex2, mutex3), "Mutex should be singleton");
-
-    // Test concurrent access to the singleton
-    let notify = Arc::new(tokio::sync::Notify::new());
-    let notify_clone = notify.clone();
-    let mutex_clone = mutex1.clone();
-    let handle = tokio::spawn(async move {
-        let _lock = mutex_clone.lock().await;
-        notify_clone.notify_one(); // Signal that lock is acquired
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        42
-    });
-
-    // Wait for spawned task to acquire lock before starting timer
-    notify.notified().await;
-
-    // This should wait for the above lock
-    let start = std::time::Instant::now();
-    let _lock = mutex1.lock().await;
-    let elapsed = start.elapsed();
-
-    let result = handle.await.unwrap();
-    assert_eq!(result, 42);
-    assert!(elapsed >= Duration::from_millis(5), "Should wait for lock");
-}
-
-/// Test serialized execution with actual beacon creation
-#[tokio::test]
-#[serial]
-#[ignore] // Temporarily disabled - hangs due to real network calls
-async fn test_serialized_beacon_creation() {
-    let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
-
-    let owner_address = app_state.wallet_address;
-    let factory_address = app_state.beacon_factory_address;
-
-    // Create beacon within serialized execution
-    let result = execute_transaction_serialized(async {
-        create_beacon_via_factory(&app_state, owner_address, factory_address).await
-    })
-    .await;
-
-    match result {
-        Ok(beacon_address) => {
-            println!("Serialized beacon creation succeeded: {beacon_address}");
-            assert_ne!(
-                beacon_address,
-                Address::ZERO,
-                "Beacon address should not be zero"
-            );
-        }
-        Err(e) => {
-            println!("Serialized beacon creation failed: {e}");
-            // Should not be a serialization error
-            assert!(!e.contains("mutex"), "Should not be mutex error");
         }
     }
 }
@@ -227,109 +98,6 @@ async fn test_nonce_error_detection_comprehensive() {
     }
 }
 
-/// Test concurrent serialized operations with simple async operations
-#[tokio::test]
-#[serial]
-async fn test_concurrent_serialized_network_operations() {
-    // No app_state needed - test serialization behavior with simple operations
-    let operation_count = 5;
-
-    let start_time = std::time::Instant::now();
-
-    // Test serialized execution with simple operations (no network calls)
-    for i in 0..operation_count {
-        let result = execute_transaction_serialized(async {
-            // Simple operation that doesn't require network
-            tokio::time::sleep(Duration::from_millis(1)).await;
-            Ok::<String, Box<dyn std::error::Error + Send + Sync>>(format!("operation_{i}"))
-        })
-        .await;
-
-        println!("Concurrent operation {i} result: {result:?}");
-        assert!(result.is_ok());
-    }
-
-    let elapsed = start_time.elapsed();
-    println!("Serialized operations completed in {elapsed:?}");
-
-    // Should complete quickly since no real network calls
-    assert!(
-        elapsed < Duration::from_secs(1),
-        "Operations should complete quickly"
-    );
-}
-
-/// Test serialized execution error handling
-#[tokio::test]
-#[serial]
-#[ignore] // Temporarily disabled - hangs due to real network calls
-async fn test_serialized_execution_error_handling() {
-    let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
-
-    // Test error propagation through serialized execution
-    let error_result =
-        execute_transaction_serialized(async { Err::<(), &str>("test error") }).await;
-
-    assert!(error_result.is_err(), "Should propagate error");
-    assert_eq!(error_result.unwrap_err(), "test error");
-
-    // Test successful result propagation
-    let success_result = execute_transaction_serialized(async { Ok::<i32, &str>(42) }).await;
-
-    assert!(success_result.is_ok(), "Should propagate success");
-    assert_eq!(success_result.unwrap(), 42);
-
-    // Test with network operation that might fail
-    let network_result = execute_transaction_serialized(async {
-        // Try to get balance of an invalid address (should still work with Anvil)
-        app_state.provider.get_balance(Address::ZERO).await
-    })
-    .await;
-
-    match network_result {
-        Ok(balance) => println!("Zero address balance: {balance}"),
-        Err(e) => println!("Zero address balance failed: {e}"),
-    }
-}
-
-/// Test transaction execution timeout scenarios
-#[tokio::test]
-#[serial]
-#[ignore] // Temporarily disabled - hangs due to real network calls
-async fn test_transaction_execution_timeouts() {
-    let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
-
-    // Test quick operation within timeout
-    let quick_result = tokio::time::timeout(
-        Duration::from_secs(5),
-        execute_transaction_serialized(async {
-            app_state
-                .provider
-                .get_balance(app_state.wallet_address)
-                .await
-        }),
-    )
-    .await;
-
-    assert!(
-        quick_result.is_ok(),
-        "Quick operation should complete within timeout"
-    );
-
-    // Test operation with internal timeout
-    let timeout_result = execute_transaction_serialized(async {
-        tokio::time::timeout(Duration::from_millis(100), async {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            42
-        })
-        .await
-    })
-    .await;
-
-    assert!(timeout_result.is_ok(), "Internal timeout should succeed");
-    assert_eq!(timeout_result.unwrap(), 42);
-}
-
 /// Test nonce synchronization with real network calls
 #[tokio::test]
 #[serial]
@@ -371,5 +139,29 @@ async fn test_nonce_synchronization_integration() {
         Err(e) => {
             println!("Failed to get current nonce: {e}");
         }
+    }
+}
+
+/// Test basic network connectivity with Anvil
+#[tokio::test]
+#[serial]
+#[ignore] // Temporarily disabled - hangs due to real network calls
+async fn test_anvil_network_connectivity() {
+    let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
+
+    // Check wallet balance
+    let result = app_state
+        .provider
+        .get_balance(app_state.wallet_address)
+        .await;
+
+    assert!(result.is_ok(), "Balance check should succeed: {result:?}");
+
+    if let Ok(balance) = result {
+        println!("Wallet balance: {balance} wei");
+        assert!(
+            balance > U256::ZERO,
+            "Wallet should have some ETH for tests"
+        );
     }
 }

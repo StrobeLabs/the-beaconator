@@ -7,9 +7,7 @@ use tracing;
 use super::super::transaction::events::{
     parse_maker_position_opened_event, parse_perp_created_event,
 };
-use super::super::transaction::execution::{
-    execute_transaction_serialized, get_fresh_nonce_from_alternate, is_nonce_error,
-};
+use super::super::transaction::execution::{get_fresh_nonce_from_alternate, is_nonce_error};
 use super::validation::try_decode_revert_reason;
 use crate::models::{AppState, DeployPerpForBeaconResponse, DepositLiquidityForPerpResponse};
 use crate::routes::{IERC20, IPerpManager};
@@ -172,101 +170,89 @@ pub async fn deploy_perp_for_beacon(
     tracing::info!("CreatePerpParams struct prepared successfully");
     tracing::info!("Initiating createPerp transaction...");
 
-    // Send the transaction and wait for confirmation (serialized)
+    // Send the transaction and wait for confirmation
     tracing::info!("Sending createPerp transaction to PerpManager contract...");
-    let pending_tx = execute_transaction_serialized(async {
-        contract
-            .createPerp(create_perp_params)
-            .send()
-            .await
-            .map_err(|e| {
-                let error_type = match e.to_string().as_str() {
-                    s if s.contains("execution reverted") => "Contract Execution Reverted",
-                    s if s.contains("insufficient funds") => "Insufficient Funds",
-                    s if s.contains("gas") => "Gas Related Error",
-                    s if s.contains("nonce") => "Nonce Error",
-                    s if s.contains("connection") || s.contains("timeout") => {
-                        "Network Connection Error"
-                    }
-                    s if s.contains("unauthorized") || s.contains("forbidden") => {
-                        "Authorization Error"
-                    }
-                    _ => "Unknown Transaction Error",
-                };
-
-                let error_msg = format!("{error_type}: {e}");
-                tracing::error!("{}", error_msg);
-                tracing::error!("Transaction send error details: {:?}", e);
-
-                // Try to decode revert reason if it's an execution revert
-                if let Some(revert_reason) = try_decode_revert_reason(&e) {
-                    tracing::error!("{}", revert_reason);
+    let pending_tx = contract
+        .createPerp(create_perp_params)
+        .send()
+        .await
+        .map_err(|e| {
+            let error_type = match e.to_string().as_str() {
+                s if s.contains("execution reverted") => "Contract Execution Reverted",
+                s if s.contains("insufficient funds") => "Insufficient Funds",
+                s if s.contains("gas") => "Gas Related Error",
+                s if s.contains("nonce") => "Nonce Error",
+                s if s.contains("connection") || s.contains("timeout") => {
+                    "Network Connection Error"
                 }
+                s if s.contains("unauthorized") || s.contains("forbidden") => "Authorization Error",
+                _ => "Unknown Transaction Error",
+            };
 
-                tracing::error!("Contract call details:");
-                tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
-                tracing::error!("  - Beacon address: {}", beacon_address);
-                tracing::error!("  - Provider type: Alloy HTTP provider");
+            let error_msg = format!("{error_type}: {e}");
+            tracing::error!("{}", error_msg);
+            tracing::error!("Transaction send error details: {:?}", e);
 
-                // Add specific troubleshooting hints based on error type
-                match error_type {
-                    "Contract Execution Reverted" => {
-                        tracing::error!("Troubleshooting hints:");
-                        tracing::error!("  - Check if PerpManager contract is properly deployed");
-                        tracing::error!("  - Verify beacon address exists and is valid");
-                        tracing::error!("  - Ensure all module addresses are correct and deployed");
-                        tracing::error!(
-                            "  - Check if external contracts (PoolManager, modules) are available"
-                        );
-                        tracing::error!(
-                            "  - Verify beacon is not already registered with PerpManager"
-                        );
-                        tracing::error!("  - Check if beacon implements the expected interface");
-                        tracing::error!("  - Verify PerpManager contract has required permissions");
-                        tracing::error!("  - Verify module contracts are properly configured");
+            // Try to decode revert reason if it's an execution revert
+            if let Some(revert_reason) = try_decode_revert_reason(&e) {
+                tracing::error!("{}", revert_reason);
+            }
 
-                        // Additional debugging for execution reverted
-                        tracing::error!("Execution revert analysis:");
-                        tracing::error!(
-                            "  - Beacon address: {} (has code deployed)",
-                            beacon_address
-                        );
-                        tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
-                        tracing::error!("  - Fees module: {}", fees_module);
-                        tracing::error!("  - Margin ratios module: {}", margin_ratios_module);
-                        tracing::error!("  - Lockup period module: {}", lockup_period_module);
-                        tracing::error!(
-                            "  - Sqrt price impact limit module: {}",
-                            sqrt_price_impact_limit_module
-                        );
-                        tracing::error!("  - Starting sqrt price X96: {}", starting_sqrt_price_x96);
-                    }
-                    "Insufficient Funds" => {
-                        tracing::error!("Troubleshooting hints:");
-                        tracing::error!("  - Check wallet ETH balance for gas fees");
-                        tracing::error!(
-                            "  - Verify USDC balance if contract requires token transfers"
-                        );
-                    }
-                    "Gas Related Error" => {
-                        tracing::error!("Troubleshooting hints:");
-                        tracing::error!("  - Try increasing gas limit");
-                        tracing::error!("  - Check current network gas prices");
-                    }
-                    "Network Connection Error" => {
-                        tracing::error!("Troubleshooting hints:");
-                        tracing::error!("  - Check RPC endpoint connectivity");
-                        tracing::error!("  - Verify network is accessible");
-                        tracing::error!("  - Try again as this might be temporary");
-                    }
-                    _ => {}
+            tracing::error!("Contract call details:");
+            tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
+            tracing::error!("  - Beacon address: {}", beacon_address);
+            tracing::error!("  - Provider type: Alloy HTTP provider");
+
+            // Add specific troubleshooting hints based on error type
+            match error_type {
+                "Contract Execution Reverted" => {
+                    tracing::error!("Troubleshooting hints:");
+                    tracing::error!("  - Check if PerpManager contract is properly deployed");
+                    tracing::error!("  - Verify beacon address exists and is valid");
+                    tracing::error!("  - Ensure all module addresses are correct and deployed");
+                    tracing::error!(
+                        "  - Check if external contracts (PoolManager, modules) are available"
+                    );
+                    tracing::error!("  - Verify beacon is not already registered with PerpManager");
+                    tracing::error!("  - Check if beacon implements the expected interface");
+                    tracing::error!("  - Verify PerpManager contract has required permissions");
+                    tracing::error!("  - Verify module contracts are properly configured");
+
+                    // Additional debugging for execution reverted
+                    tracing::error!("Execution revert analysis:");
+                    tracing::error!("  - Beacon address: {} (has code deployed)", beacon_address);
+                    tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
+                    tracing::error!("  - Fees module: {}", fees_module);
+                    tracing::error!("  - Margin ratios module: {}", margin_ratios_module);
+                    tracing::error!("  - Lockup period module: {}", lockup_period_module);
+                    tracing::error!(
+                        "  - Sqrt price impact limit module: {}",
+                        sqrt_price_impact_limit_module
+                    );
+                    tracing::error!("  - Starting sqrt price X96: {}", starting_sqrt_price_x96);
                 }
+                "Insufficient Funds" => {
+                    tracing::error!("Troubleshooting hints:");
+                    tracing::error!("  - Check wallet ETH balance for gas fees");
+                    tracing::error!("  - Verify USDC balance if contract requires token transfers");
+                }
+                "Gas Related Error" => {
+                    tracing::error!("Troubleshooting hints:");
+                    tracing::error!("  - Try increasing gas limit");
+                    tracing::error!("  - Check current network gas prices");
+                }
+                "Network Connection Error" => {
+                    tracing::error!("Troubleshooting hints:");
+                    tracing::error!("  - Check RPC endpoint connectivity");
+                    tracing::error!("  - Verify network is accessible");
+                    tracing::error!("  - Try again as this might be temporary");
+                }
+                _ => {}
+            }
 
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                error_msg
-            })
-    })
-    .await?;
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            error_msg
+        })?;
 
     tracing::info!("Transaction sent successfully, waiting for confirmation...");
     let pending_tx_hash = *pending_tx.tx_hash();
@@ -428,66 +414,61 @@ pub async fn deposit_liquidity_for_perp(
         state.perp_manager_address
     );
 
-    // USDC approval with RPC fallback (serialized)
+    // USDC approval with RPC fallback
     let usdc_contract = IERC20::new(state.usdc_address, &*state.provider);
-    let pending_approval = execute_transaction_serialized(async {
-        // Try primary RPC first
-        tracing::info!("Approving USDC spending with primary RPC");
-        let result = usdc_contract
-            .approve(state.perp_manager_address, U256::from(margin_amount_usdc))
-            .send()
-            .await;
+    // Try primary RPC first
+    tracing::info!("Approving USDC spending with primary RPC");
+    let pending_approval = match usdc_contract
+        .approve(state.perp_manager_address, U256::from(margin_amount_usdc))
+        .send()
+        .await
+    {
+        Ok(pending) => Ok(pending),
+        Err(e) => {
+            let error_msg = format!("Failed to approve USDC spending: {e}");
+            tracing::error!("{}", error_msg);
+            tracing::error!("Make sure the wallet has sufficient USDC balance");
 
-        match result {
-            Ok(pending) => Ok(pending),
-            Err(e) => {
-                let error_msg = format!("Failed to approve USDC spending: {e}");
-                tracing::error!("{}", error_msg);
-                tracing::error!("Make sure the wallet has sufficient USDC balance");
+            // Check if nonce error and sync if needed
+            if is_nonce_error(&error_msg) {
+                tracing::warn!("Nonce error detected, waiting before fallback");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
 
-                // Check if nonce error and sync if needed
-                if is_nonce_error(&error_msg) {
-                    tracing::warn!(
-                        "Nonce error detected, waiting before fallback"
-                    );
-                    tokio::time::sleep(Duration::from_secs(2)).await;
+            // Try alternate RPC if available
+            if let Some(alternate_provider) = &state.alternate_provider {
+                tracing::info!("Trying USDC approval with alternate RPC");
+
+                // Get fresh nonce from alternate RPC to avoid nonce conflicts
+                if let Err(nonce_error) = get_fresh_nonce_from_alternate(state).await {
+                    tracing::warn!("Could not sync nonce with alternate RPC: {}", nonce_error);
                 }
 
-                // Try alternate RPC if available
-                if let Some(alternate_provider) = &state.alternate_provider {
-                    tracing::info!("Trying USDC approval with alternate RPC");
+                let alt_usdc_contract = IERC20::new(state.usdc_address, &**alternate_provider);
 
-                    // Get fresh nonce from alternate RPC to avoid nonce conflicts
-                    if let Err(nonce_error) = get_fresh_nonce_from_alternate(state).await {
-                        tracing::warn!("Could not sync nonce with alternate RPC: {}", nonce_error);
+                match alt_usdc_contract
+                    .approve(state.perp_manager_address, U256::from(margin_amount_usdc))
+                    .send()
+                    .await
+                {
+                    Ok(pending) => {
+                        tracing::info!("USDC approval succeeded with alternate RPC");
+                        Ok(pending)
                     }
-
-                    let alt_usdc_contract = IERC20::new(state.usdc_address, &**alternate_provider);
-
-                    match alt_usdc_contract
-                        .approve(state.perp_manager_address, U256::from(margin_amount_usdc))
-                        .send()
-                        .await
-                    {
-                        Ok(pending) => {
-                            tracing::info!("USDC approval succeeded with alternate RPC");
-                            Ok(pending)
-                        }
-                        Err(alt_e) => {
-                            let combined_error = format!(
-                                "USDC approval failed on both RPCs. Primary: {e}. Alternate: {alt_e}"
-                            );
-                            tracing::error!("{}", combined_error);
-                            Err(combined_error)
-                        }
+                    Err(alt_e) => {
+                        let combined_error = format!(
+                            "USDC approval failed on both RPCs. Primary: {e}. Alternate: {alt_e}"
+                        );
+                        tracing::error!("{}", combined_error);
+                        Err(combined_error)
                     }
-                } else {
-                    tracing::error!("No alternate RPC configured, cannot fallback");
-                    Err(error_msg)
                 }
+            } else {
+                tracing::error!("No alternate RPC configured, cannot fallback");
+                Err(error_msg)
             }
         }
-    }).await?;
+    }?;
 
     tracing::info!("USDC approval transaction sent, waiting for confirmation...");
     let approval_tx_hash = *pending_approval.tx_hash();
@@ -618,128 +599,121 @@ pub async fn deposit_liquidity_for_perp(
         }
     };
 
-    // Send the openMakerPosition transaction with RPC fallback (serialized)
-    let pending_tx = execute_transaction_serialized(async {
-        // Try primary RPC first
-        tracing::info!("Opening maker position with primary RPC");
-        let result = contract
-            .openMakerPos(perp_id, open_maker_params.clone())
-            .send()
-            .await;
+    // Send the openMakerPosition transaction with RPC fallback
+    // Try primary RPC first
+    tracing::info!("Opening maker position with primary RPC");
+    let pending_tx = match contract
+        .openMakerPos(perp_id, open_maker_params.clone())
+        .send()
+        .await
+    {
+        Ok(pending) => Ok(pending),
+        Err(e) => {
+            let error_type = match e.to_string().as_str() {
+                s if s.contains("execution reverted") => "Liquidity Deposit Reverted",
+                s if s.contains("insufficient funds") => "Insufficient Funds for Liquidity",
+                s if s.contains("perp not found") || s.contains("invalid perp") => {
+                    "Invalid Perp ID"
+                }
+                s if s.contains("margin") => "Margin Related Error",
+                s if s.contains("liquidity") => "Liquidity Related Error",
+                _ => "Liquidity Transaction Error",
+            };
 
-        match result {
-            Ok(pending) => Ok(pending),
-            Err(e) => {
-                let error_type = match e.to_string().as_str() {
-                    s if s.contains("execution reverted") => "Liquidity Deposit Reverted",
-                    s if s.contains("insufficient funds") => "Insufficient Funds for Liquidity",
-                    s if s.contains("perp not found") || s.contains("invalid perp") => {
-                        "Invalid Perp ID"
-                    }
-                    s if s.contains("margin") => "Margin Related Error",
-                    s if s.contains("liquidity") => "Liquidity Related Error",
-                    _ => "Liquidity Transaction Error",
-                };
+            let mut error_msg = format!("{error_type}: {e}");
 
-                let mut error_msg = format!("{error_type}: {e}");
+            // Try to decode contract error for better user feedback
+            if let Some(decoded_error) = try_decode_revert_reason(&e) {
+                error_msg = format!("{error_type}: {decoded_error}");
+                tracing::error!("{}", error_msg);
+                tracing::error!("Decoded contract error: {}", decoded_error);
+            } else {
+                tracing::error!("{}", error_msg);
+            }
 
-                // Try to decode contract error for better user feedback
-                if let Some(decoded_error) = try_decode_revert_reason(&e) {
-                    error_msg = format!("{error_type}: {decoded_error}");
-                    tracing::error!("{}", error_msg);
-                    tracing::error!("Decoded contract error: {}", decoded_error);
-                } else {
-                    tracing::error!("{}", error_msg);
+            // Check if nonce error and sync if needed
+            if is_nonce_error(&error_msg) {
+                tracing::warn!("Nonce error detected, waiting before fallback");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+
+            // Try alternate RPC if available
+            if let Some(alternate_provider) = &state.alternate_provider {
+                tracing::info!("Trying openMakerPosition with alternate RPC");
+
+                // Get fresh nonce from alternate RPC to avoid nonce conflicts
+                if let Err(nonce_error) = get_fresh_nonce_from_alternate(state).await {
+                    tracing::warn!("Could not sync nonce with alternate RPC: {}", nonce_error);
                 }
 
-                // Check if nonce error and sync if needed
-                if is_nonce_error(&error_msg) {
-                    tracing::warn!(
-                        "Nonce error detected, waiting before fallback"
-                    );
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                }
+                let alt_contract =
+                    IPerpManager::new(state.perp_manager_address, &**alternate_provider);
 
-                // Try alternate RPC if available
-                if let Some(alternate_provider) = &state.alternate_provider {
-                    tracing::info!("Trying openMakerPosition with alternate RPC");
-
-                    // Get fresh nonce from alternate RPC to avoid nonce conflicts
-                    if let Err(nonce_error) = get_fresh_nonce_from_alternate(state).await {
-                        tracing::warn!("Could not sync nonce with alternate RPC: {}", nonce_error);
+                match alt_contract
+                    .openMakerPos(perp_id, open_maker_params.clone())
+                    .send()
+                    .await
+                {
+                    Ok(pending) => {
+                        tracing::info!("OpenMakerPosition succeeded with alternate RPC");
+                        Ok(pending)
                     }
+                    Err(alt_e) => {
+                        let combined_error = format!(
+                            "OpenMakerPosition failed on both RPCs. Primary: {error_msg}. Alternate: {alt_e}"
+                        );
+                        tracing::error!("{}", combined_error);
 
-                    let alt_contract =
-                        IPerpManager::new(state.perp_manager_address, &**alternate_provider);
-
-                    match alt_contract
-                        .openMakerPos(perp_id, open_maker_params.clone())
-                        .send()
-                        .await
-                    {
-                        Ok(pending) => {
-                            tracing::info!("OpenMakerPosition succeeded with alternate RPC");
-                            Ok(pending)
-                        }
-                        Err(alt_e) => {
-                            let combined_error = format!(
-                                "OpenMakerPosition failed on both RPCs. Primary: {error_msg}. Alternate: {alt_e}"
-                            );
-                            tracing::error!("{}", combined_error);
-
-                            // Add specific troubleshooting hints
-                            match error_type {
-                                "Liquidity Deposit Reverted" => {
-                                    tracing::error!("Troubleshooting hints:");
-                                    tracing::error!("  - Check if perp ID exists and is active");
-                                    tracing::error!(
-                                        "  - Verify margin amount is within allowed limits"
-                                    );
-                                    tracing::error!("  - Ensure tick range is valid for the perp");
-                                    tracing::error!(
-                                        "  - Review leverage bounds (current config may have high scaling factor)"
-                                    );
-                                }
-                                "Invalid Perp ID" => {
-                                    tracing::error!("Troubleshooting hints:");
-                                    tracing::error!(
-                                        "  - Verify perp ID format (32-byte hex string)"
-                                    );
-                                    tracing::error!("  - Check if perp was successfully deployed");
-                                }
-                                _ => {}
+                        // Add specific troubleshooting hints
+                        match error_type {
+                            "Liquidity Deposit Reverted" => {
+                                tracing::error!("Troubleshooting hints:");
+                                tracing::error!("  - Check if perp ID exists and is active");
+                                tracing::error!(
+                                    "  - Verify margin amount is within allowed limits"
+                                );
+                                tracing::error!("  - Ensure tick range is valid for the perp");
+                                tracing::error!(
+                                    "  - Review leverage bounds (current config may have high scaling factor)"
+                                );
                             }
-
-                            Err(combined_error)
+                            "Invalid Perp ID" => {
+                                tracing::error!("Troubleshooting hints:");
+                                tracing::error!("  - Verify perp ID format (32-byte hex string)");
+                                tracing::error!("  - Check if perp was successfully deployed");
+                            }
+                            _ => {}
                         }
+
+                        Err(combined_error)
                     }
-                } else {
-                    tracing::error!("No alternate RPC configured, cannot fallback");
-
-                    // Add specific troubleshooting hints
-                    match error_type {
-                        "Liquidity Deposit Reverted" => {
-                            tracing::error!("Troubleshooting hints:");
-                            tracing::error!("  - Check if perp ID exists and is active");
-                            tracing::error!("  - Verify margin amount is within allowed limits");
-                            tracing::error!("  - Ensure tick range is valid for the perp");
-                            tracing::error!(
-                                "  - Review leverage bounds (current config may have high scaling factor)"
-                            );
-                        }
-                        "Invalid Perp ID" => {
-                            tracing::error!("Troubleshooting hints:");
-                            tracing::error!("  - Verify perp ID format (32-byte hex string)");
-                            tracing::error!("  - Check if perp was successfully deployed");
-                        }
-                        _ => {}
-                    }
-
-                    Err(error_msg)
                 }
+            } else {
+                tracing::error!("No alternate RPC configured, cannot fallback");
+
+                // Add specific troubleshooting hints
+                match error_type {
+                    "Liquidity Deposit Reverted" => {
+                        tracing::error!("Troubleshooting hints:");
+                        tracing::error!("  - Check if perp ID exists and is active");
+                        tracing::error!("  - Verify margin amount is within allowed limits");
+                        tracing::error!("  - Ensure tick range is valid for the perp");
+                        tracing::error!(
+                            "  - Review leverage bounds (current config may have high scaling factor)"
+                        );
+                    }
+                    "Invalid Perp ID" => {
+                        tracing::error!("Troubleshooting hints:");
+                        tracing::error!("  - Verify perp ID format (32-byte hex string)");
+                        tracing::error!("  - Check if perp was successfully deployed");
+                    }
+                    _ => {}
+                }
+
+                Err(error_msg)
             }
         }
-    }).await?;
+    }?;
 
     tracing::info!("Liquidity deposit transaction sent, waiting for confirmation...");
     let deposit_tx_hash = *pending_tx.tx_hash();
