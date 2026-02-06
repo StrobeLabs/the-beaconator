@@ -8,17 +8,20 @@ use tracing;
 
 use crate::models::{AppState, UpdateBeaconWithEcdsaRequest};
 use crate::routes::{IEcdsaBeacon, IEcdsaVerifierAdapter, execute_transaction_serialized};
+use crate::services::wallet::WalletHandle;
 
-/// Updates a beacon using ECDSA signature from the beaconator wallet.
+/// Updates a beacon using ECDSA signature from the appropriate wallet.
 ///
 /// This function:
 /// 1. Gets the verifier adapter address from the beacon
-/// 2. Generates a nonce from the current timestamp
-/// 3. Gets the EIP-712 digest from the verifier
-/// 4. Signs the digest with the beaconator wallet
-/// 5. Packs the signature as r || s || v (65 bytes)
-/// 6. ABI-encodes the inputs as (measurement, nonce)
-/// 7. Calls beacon.updateIndex(signature, inputs)
+/// 2. Gets the designated signer from the verifier adapter
+/// 3. Acquires the appropriate wallet (via WalletManager if available, or fallback to single wallet)
+/// 4. Generates a nonce from the current timestamp
+/// 5. Gets the EIP-712 digest from the verifier
+/// 6. Signs the digest with the acquired wallet
+/// 7. Packs the signature as r || s || v (65 bytes)
+/// 8. ABI-encodes the inputs as (measurement, nonce)
+/// 9. Calls beacon.updateIndex(signature, inputs)
 pub async fn update_beacon_with_ecdsa(
     state: &AppState,
     request: UpdateBeaconWithEcdsaRequest,
@@ -47,7 +50,7 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Beacon verifier adapter: {}", verifier_address);
 
-    // Verify the designated signer matches the beaconator wallet
+    // Get the designated signer from the verifier adapter
     let verifier = IEcdsaVerifierAdapter::new(verifier_address, &*state.provider);
     let designated_signer_raw = verifier
         .SIGNER()
@@ -56,16 +59,66 @@ pub async fn update_beacon_with_ecdsa(
         .map_err(|e| format!("Failed to get designated signer: {e}"))?;
     let designated_signer = Address::from(designated_signer_raw.0);
 
-    if designated_signer != state.wallet_address {
-        return Err(format!(
-            "Beaconator wallet {} is not the designated signer {} for this verifier adapter",
-            state.wallet_address, designated_signer
-        ));
-    }
+    tracing::info!("Designated signer for this beacon: {}", designated_signer);
 
-    tracing::info!("Verified beaconator is the designated signer");
+    // 3. Acquire the appropriate wallet for signing
+    // If WalletManager is available, try to use it. Otherwise, fall back to the single wallet.
+    let wallet_handle: Option<WalletHandle> = if let Some(ref wallet_manager) = state.wallet_manager
+    {
+        match wallet_manager.acquire_for_beacon(&beacon_address).await {
+            Ok(handle) => {
+                // Verify the acquired wallet matches the designated signer
+                if handle.address() != designated_signer {
+                    return Err(format!(
+                        "Acquired wallet {} does not match designated signer {} for beacon {}",
+                        handle.address(),
+                        designated_signer,
+                        beacon_address
+                    ));
+                }
+                tracing::info!(
+                    "Acquired wallet {} via WalletManager for beacon {}",
+                    handle.address(),
+                    beacon_address
+                );
+                Some(handle)
+            }
+            Err(e) => {
+                // Log the error but fall back to single wallet mode
+                tracing::warn!(
+                    "WalletManager failed to acquire wallet for beacon {}: {}. Falling back to single wallet.",
+                    beacon_address,
+                    e
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
 
-    // 3. Generate nonce from high-resolution timestamp (nanoseconds) to avoid collisions
+    // If we couldn't get a wallet from WalletManager, use the single wallet
+    let using_wallet_address = if let Some(ref handle) = wallet_handle {
+        handle.address()
+    } else {
+        // Verify the single wallet is the designated signer
+        if designated_signer != state.wallet_address {
+            return Err(format!(
+                "Beaconator wallet {} is not the designated signer {} for this verifier adapter. \
+                 Consider adding the designated wallet to the wallet pool.",
+                state.wallet_address, designated_signer
+            ));
+        }
+        state.wallet_address
+    };
+
+    tracing::info!(
+        "Using wallet {} for signing (designated signer: {})",
+        using_wallet_address,
+        designated_signer
+    );
+
+    // 4. Generate nonce from high-resolution timestamp (nanoseconds) to avoid collisions
     let nonce = U256::from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -75,7 +128,7 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Using nonce (timestamp_nanos): {}", nonce);
 
-    // 4. Get EIP-712 digest from verifier
+    // 5. Get EIP-712 digest from verifier
     let digest_raw = verifier
         .digest(measurement, nonce)
         .call()
@@ -85,28 +138,38 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Got EIP-712 digest: {:?}", digest);
 
-    // 5. Sign the digest with beaconator wallet
-    let signature = state
-        .signer
-        .sign_hash(&digest)
-        .await
-        .map_err(|e| format!("Failed to sign digest: {e}"))?;
+    // 6. Sign the digest with the appropriate wallet
+    let signature = if let Some(ref handle) = wallet_handle {
+        // Use WalletManager's Turnkey signer
+        handle
+            .signer
+            .sign_hash(&digest)
+            .await
+            .map_err(|e| format!("Failed to sign digest with Turnkey wallet: {e}"))?
+    } else {
+        // Use the single wallet signer (fallback)
+        state
+            .signer
+            .sign_hash(&digest)
+            .await
+            .map_err(|e| format!("Failed to sign digest: {e}"))?
+    };
 
     tracing::info!("Signed digest successfully");
 
-    // 6. Pack signature as r || s || v (65 bytes)
+    // 7. Pack signature as r || s || v (65 bytes)
     // Alloy signature.as_bytes() returns [r (32 bytes) | s (32 bytes) | v (1 byte)]
     let sig_bytes = Bytes::from(signature.as_bytes().to_vec());
 
     tracing::debug!("Signature bytes length: {}", sig_bytes.len());
 
-    // 7. ABI-encode inputs as (measurement, nonce)
+    // 8. ABI-encode inputs as (measurement, nonce)
     let inputs = (measurement, nonce).abi_encode();
     let inputs_bytes = Bytes::from(inputs);
 
     tracing::debug!("Inputs bytes length: {}", inputs_bytes.len());
 
-    // 8. Call beacon.updateIndex(signature, inputs)
+    // 9. Call beacon.updateIndex(signature, inputs)
     let pending_tx = execute_transaction_serialized(async {
         tracing::info!("Sending updateIndex transaction to beacon");
         beacon
@@ -123,7 +186,7 @@ pub async fn update_beacon_with_ecdsa(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Transaction hash: {:?}", tx_hash);
 
-    // 9. Wait for confirmation with timeout
+    // 10. Wait for confirmation with timeout
     let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
         Ok(Ok(receipt)) => {
             tracing::info!("Transaction confirmed via get_receipt()");
@@ -141,7 +204,7 @@ pub async fn update_beacon_with_ecdsa(
         }
     };
 
-    // 10. Validate transaction status
+    // 11. Validate transaction status
     if !receipt.status() {
         let error_msg = format!("UpdateIndex transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
@@ -150,7 +213,7 @@ pub async fn update_beacon_with_ecdsa(
         return Err(error_msg);
     }
 
-    // 11. Validate IndexUpdated event was emitted
+    // 12. Validate IndexUpdated event was emitted
     let index_updated_found = receipt.inner.logs().iter().any(|log| {
         // IndexUpdated event signature: keccak256("IndexUpdated(uint256)")
         log.address() == beacon_address

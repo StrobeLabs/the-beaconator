@@ -422,6 +422,7 @@ pub async fn create_test_app_state() -> AppState {
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
+        wallet_manager: None, // Multi-wallet not used in tests
     }
 }
 
@@ -488,6 +489,7 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
+        wallet_manager: None, // Multi-wallet not used in tests
     };
 
     (app_state, anvil)
@@ -551,6 +553,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
+        wallet_manager: None, // Multi-wallet not used in tests
     }
 }
 
@@ -658,6 +661,7 @@ pub fn create_simple_test_app_state() -> AppState {
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
+        wallet_manager: None, // Multi-wallet not used in tests
     }
 }
 
@@ -711,6 +715,7 @@ pub fn create_test_app_state_with_provider(
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
+        wallet_manager: None, // Multi-wallet not used in tests
     }
 }
 

@@ -165,5 +165,6 @@ sol! {
 
 // Re-export transaction utilities from services module
 pub use crate::services::transaction::execution::{
-    execute_transaction_serialized, get_fresh_nonce_from_alternate, is_nonce_error,
+    execute_transaction_for_wallet, execute_transaction_serialized, get_fresh_nonce_from_alternate,
+    is_nonce_error,
 };

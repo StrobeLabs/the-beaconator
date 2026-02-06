@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::AlloyProvider;
+use crate::services::wallet::WalletManager;
 
 /// API endpoint information for documentation
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -202,4 +203,5 @@ pub struct AppState {
     pub sqrt_price_impact_limit_module_address: Address,
     pub default_starting_sqrt_price_x96: Option<u128>,
     pub multicall3_address: Option<Address>, // Optional multicall3 contract for batch operations
+    pub wallet_manager: Option<Arc<WalletManager>>, // Optional multi-wallet manager for distributed operations
 }

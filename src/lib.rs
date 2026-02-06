@@ -16,6 +16,8 @@ pub mod routes;
 pub mod services;
 
 use crate::models::AppState;
+use crate::models::wallet::WalletManagerConfig;
+use crate::services::wallet::WalletManager;
 use rocket::{Request, catch, catchers};
 
 // Let Rust infer the complex provider type
@@ -261,6 +263,36 @@ pub async fn create_rocket() -> Rocket<Build> {
         }
     }
 
+    // Initialize WalletManager if multi-wallet mode is enabled
+    // When MULTI_WALLET_ENABLED=true, configuration errors are fatal to prevent silent misconfiguration
+    let wallet_manager = if env::var("MULTI_WALLET_ENABLED")
+        .map(|v| v.to_lowercase() == "true")
+        .unwrap_or(false)
+    {
+        let mut config = WalletManagerConfig::from_env().unwrap_or_else(|e| {
+            panic!(
+                "MULTI_WALLET_ENABLED=true but WalletManager configuration is invalid: {e}. \
+                 Required env vars: REDIS_URL, TURNKEY_ORGANIZATION_ID, TURNKEY_API_PUBLIC_KEY, TURNKEY_API_PRIVATE_KEY"
+            )
+        });
+
+        // Set chain_id from the already-determined chain_id
+        config.chain_id = Some(chain_id);
+
+        let manager = WalletManager::new(config).await.unwrap_or_else(|e| {
+            panic!(
+                "MULTI_WALLET_ENABLED=true but WalletManager failed to initialize: {e}. \
+                 Check Redis connectivity and Turnkey credentials."
+            )
+        });
+
+        tracing::info!("Multi-wallet mode enabled with WalletManager");
+        Some(std::sync::Arc::new(manager))
+    } else {
+        tracing::info!("Multi-wallet mode disabled (MULTI_WALLET_ENABLED not set or false)");
+        None
+    };
+
     let app_state = AppState {
         provider,
         alternate_provider,
@@ -289,6 +321,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         sqrt_price_impact_limit_module_address,
         default_starting_sqrt_price_x96,
         multicall3_address,
+        wallet_manager,
     };
 
     // Configure OpenAPI settings

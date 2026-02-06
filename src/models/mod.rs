@@ -1,6 +1,7 @@
 pub mod app_state;
 pub mod requests;
 pub mod responses;
+pub mod wallet;
 
 pub use app_state::{ApiEndpoints, ApiSummary, AppState, EndpointInfo, EndpointStatus};
 pub use requests::{
@@ -15,3 +16,4 @@ pub use responses::{
     BatchDepositLiquidityForPerpsResponse, BatchUpdateBeaconResponse, BeaconUpdateResult,
     DeployPerpForBeaconResponse, DepositLiquidityForPerpResponse,
 };
+pub use wallet::{RedisKeys, WalletInfo, WalletManagerConfig, WalletStatus};
