@@ -19,6 +19,7 @@ use the_beaconator::services::beacon::core::{
 };
 
 #[tokio::test]
+#[ignore = "requires WalletManager with Redis"]
 async fn test_batch_update_beacon_with_multicall3() {
     let token = ApiToken("test_token".to_string());
     let mut app_state = crate::test_utils::create_simple_test_app_state();
@@ -58,6 +59,7 @@ async fn test_batch_update_beacon_with_multicall3() {
 }
 
 #[tokio::test]
+#[ignore = "requires WalletManager with Redis"]
 async fn test_batch_update_beacon_without_multicall3() {
     let token = ApiToken("test_token".to_string());
     let app_state = crate::test_utils::create_simple_test_app_state(); // No multicall3_address set
@@ -101,6 +103,7 @@ async fn test_batch_update_beacon_without_multicall3() {
 }
 
 #[tokio::test]
+#[ignore = "requires WalletManager with Redis"]
 async fn test_batch_create_beacons_with_multicall3() {
     let token = ApiToken("test_token".to_string());
     let mut app_state = crate::test_utils::create_simple_test_app_state();
@@ -157,6 +160,7 @@ fn test_multicall3_atomic_behavior() {
 }
 
 #[tokio::test]
+#[ignore = "requires WalletManager with Redis"]
 async fn test_create_beacon_functionality() {
     use rocket::State;
 
@@ -216,13 +220,13 @@ fn test_batch_create_response_serialization() {
 
 // Additional beacon helper function tests
 #[tokio::test]
+#[ignore = "requires WalletManager with Redis"]
 async fn test_create_beacon_via_factory_helper() {
     let app_state = crate::test_utils::create_simple_test_app_state();
-    let owner_address = Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
     let factory_address = app_state.beacon_factory_address;
 
     // This will fail without a real network, but tests the function signature
-    let result = create_beacon_via_factory(&app_state, owner_address, factory_address).await;
+    let result = create_beacon_via_factory(&app_state, factory_address).await;
     assert!(result.is_err()); // Expected to fail without real network
 }
 

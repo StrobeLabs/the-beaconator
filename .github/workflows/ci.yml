@@ -79,8 +79,7 @@ jobs:
             foundry-${{ runner.os }}-
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: nightly
+
       - name: Run integration tests
         run: |
           ./scripts/anvil-cleanup.sh
@@ -112,7 +111,11 @@ jobs:
       - name: Run wallet tests (Redis-dependent)
         env:
           REDIS_URL: redis://127.0.0.1:6379
-        run: cargo test --lib wallet -- --ignored --nocapture
+        run: |
+          # Run wallet module tests from library
+          cargo test --lib wallet -- --ignored --nocapture
+          # Run unit tests that require WalletManager with Redis
+          cargo test unit_tests -- --ignored --nocapture
 
   # Docker build - depends on all test jobs passing
   docker:

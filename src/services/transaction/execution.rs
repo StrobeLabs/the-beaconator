@@ -1,48 +1,10 @@
 //! Transaction execution utilities
 //!
 //! This module provides helper functions for transaction execution:
-//! - `get_fresh_nonce_from_alternate`: Fetch nonce from alternate RPC for sync
 //! - `is_nonce_error`: Detect nonce-related errors in error messages
 //!
 //! Note: Transaction serialization is now handled by Redis-based distributed
 //! locks in the wallet module. See `WalletLock` for details.
-
-use alloy::providers::Provider;
-
-use crate::models::AppState;
-
-/// Get fresh nonce from alternate RPC provider
-///
-/// This is useful for syncing nonce state when there are nonce conflicts
-/// between primary and alternate RPC providers.
-///
-/// # Arguments
-/// * `state` - Application state containing the alternate provider
-///
-/// # Returns
-/// * `Ok(u64)` - Fresh nonce from alternate RPC
-/// * `Err(String)` - Error message if alternate provider not available or fetch failed
-pub async fn get_fresh_nonce_from_alternate(state: &AppState) -> Result<u64, String> {
-    if let Some(alternate_provider) = &state.alternate_provider {
-        tracing::info!("Getting fresh nonce from alternate RPC...");
-        match alternate_provider
-            .get_transaction_count(state.wallet_address)
-            .await
-        {
-            Ok(nonce) => {
-                tracing::info!("Fresh nonce from alternate RPC: {}", nonce);
-                Ok(nonce)
-            }
-            Err(e) => {
-                let error_msg = format!("Failed to get nonce from alternate RPC: {e}");
-                tracing::error!("{}", error_msg);
-                Err(error_msg)
-            }
-        }
-    } else {
-        Err("No alternate provider available".to_string())
-    }
-}
 
 /// Detect nonce-related errors from error messages
 ///

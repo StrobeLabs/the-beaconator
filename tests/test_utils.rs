@@ -29,7 +29,7 @@ async fn test_example() {
     // - Deterministic contract addresses
 
     // Test blockchain connection
-    let block_number = TestUtils::get_block_number(&app_state.provider).await;
+    let block_number = TestUtils::get_block_number(&app_state.read_provider).await;
     assert!(block_number.is_ok());
 }
 ```
@@ -45,7 +45,7 @@ async fn test_with_different_account() {
     let app_state = create_test_app_state_with_account(1).await;
 
     // This account has different address but same balance
-    assert_ne!(app_state.wallet_address, Address::ZERO);
+    assert_ne!(app_state.funding_wallet_address, Address::ZERO);
 }
 ```
 
@@ -59,11 +59,11 @@ async fn test_blockchain_operations() {
     let app_state = create_test_app_state().await;
 
     // Check balance
-    let balance = TestUtils::get_balance(&app_state.provider, app_state.wallet_address).await?;
+    let balance = TestUtils::get_balance(&app_state.read_provider, app_state.funding_wallet_address).await?;
     assert!(balance > U256::ZERO);
 
     // Get block number
-    let block_number = TestUtils::get_block_number(&app_state.provider).await?;
+    let block_number = TestUtils::get_block_number(&app_state.read_provider).await?;
 
     // Time manipulation (for contract testing)
     TestUtils::fast_forward_time(&app_state.provider, 3600).await?; // 1 hour
@@ -135,8 +135,17 @@ use alloy::{
 };
 use std::str::FromStr;
 use std::sync::Arc;
+use the_beaconator::ReadOnlyProvider;
 use the_beaconator::models::AppState;
+use the_beaconator::services::wallet::WalletManager;
 use tokio::sync::OnceCell;
+
+/// Build a read-only provider (without wallet) for test purposes
+fn build_test_read_only_provider(rpc_url: &str) -> Arc<ReadOnlyProvider> {
+    Arc::new(
+        ProviderBuilder::new().connect_http(rpc_url.parse().expect("Invalid RPC URL for test")),
+    )
+}
 
 /// Anvil configuration and utilities
 pub struct AnvilConfig {
@@ -382,10 +391,16 @@ pub async fn create_test_app_state() -> AppState {
         .expect("Failed to parse test private key")
         .with_chain_id(Some(31337));
 
+    // Build read-only provider separately
+    let read_provider = build_test_read_only_provider(&anvil.rpc_url);
+
     AppState {
-        provider: deployment.provider,
-        alternate_provider: None,
-        wallet_address: deployment.deployer,
+        read_provider,
+        alternate_read_provider: None,
+        funding_provider: deployment.provider,
+        funding_wallet_address: deployment.deployer,
+        rpc_url: anvil.rpc_url.clone(),
+        chain_id: 31337,
         signer: test_signer,
         beacon_abi,
         beacon_factory_abi,
@@ -422,7 +437,7 @@ pub async fn create_test_app_state() -> AppState {
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
-        wallet_manager: None, // Multi-wallet not used in tests
+        wallet_manager: Arc::new(WalletManager::test_stub()),
     }
 }
 
@@ -449,10 +464,16 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
         .expect("Failed to parse test private key")
         .with_chain_id(Some(31337));
 
+    // Build read-only provider separately
+    let read_provider = build_test_read_only_provider(anvil.rpc_url());
+
     let app_state = AppState {
-        provider: deployment.provider,
-        alternate_provider: None,
-        wallet_address: deployment.deployer,
+        read_provider,
+        alternate_read_provider: None,
+        funding_provider: deployment.provider,
+        funding_wallet_address: deployment.deployer,
+        rpc_url: anvil.rpc_url().to_string(),
+        chain_id: 31337,
         signer: test_signer,
         beacon_abi,
         beacon_factory_abi,
@@ -489,7 +510,7 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
-        wallet_manager: None, // Multi-wallet not used in tests
+        wallet_manager: Arc::new(WalletManager::test_stub()),
     };
 
     (app_state, anvil)
@@ -513,10 +534,16 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
         .await
         .expect("Failed to deploy test contracts");
 
+    // Build read-only provider separately
+    let read_provider = build_test_read_only_provider(&anvil.rpc_url);
+
     AppState {
-        provider,
-        alternate_provider: None,
-        wallet_address: anvil.accounts[account_index],
+        read_provider,
+        alternate_read_provider: None,
+        funding_provider: provider,
+        funding_wallet_address: anvil.accounts[account_index],
+        rpc_url: anvil.rpc_url.clone(),
+        chain_id: 31337,
         signer,
         beacon_abi: load_test_abi("Beacon"),
         beacon_factory_abi: load_test_abi("BeaconFactory"),
@@ -553,7 +580,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
-        wallet_manager: None, // Multi-wallet not used in tests
+        wallet_manager: Arc::new(WalletManager::test_stub()),
     }
 }
 
@@ -563,7 +590,7 @@ pub struct TestUtils;
 impl TestUtils {
     /// Get the current block number
     pub async fn get_block_number(
-        provider: &the_beaconator::AlloyProvider,
+        provider: &ReadOnlyProvider,
     ) -> Result<u64, Box<dyn std::error::Error>> {
         let block_number = provider.get_block_number().await?;
         Ok(block_number)
@@ -571,7 +598,7 @@ impl TestUtils {
 
     /// Get account balance
     pub async fn get_balance(
-        provider: &the_beaconator::AlloyProvider,
+        provider: &ReadOnlyProvider,
         address: Address,
     ) -> Result<U256, Box<dyn std::error::Error>> {
         let balance = provider.get_balance(address).await?;
@@ -614,14 +641,23 @@ pub fn create_simple_test_app_state() -> AppState {
     let signer = alloy::signers::local::PrivateKeySigner::random();
     let wallet = alloy::network::EthereumWallet::from(signer.clone());
     // Use modern Alloy provider builder pattern for tests
-    let provider = alloy::providers::ProviderBuilder::new()
-        .wallet(wallet)
-        .connect_http("http://localhost:8545".parse().unwrap());
+    let provider = Arc::new(
+        alloy::providers::ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_http("http://localhost:8545".parse().unwrap()),
+    );
+
+    // Build read-only provider separately
+    let read_provider = build_test_read_only_provider("http://localhost:8545");
 
     AppState {
-        provider: Arc::new(provider),
-        alternate_provider: None,
-        wallet_address: Address::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+        read_provider,
+        alternate_read_provider: None,
+        funding_provider: provider,
+        funding_wallet_address: Address::from_str("0x1111111111111111111111111111111111111111")
+            .unwrap(),
+        rpc_url: "http://localhost:8545".to_string(),
+        chain_id: 31337,
         signer,
         beacon_abi: JsonAbi::new(),
         beacon_factory_abi: JsonAbi::new(),
@@ -661,7 +697,7 @@ pub fn create_simple_test_app_state() -> AppState {
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
-        wallet_manager: None, // Multi-wallet not used in tests
+        wallet_manager: Arc::new(WalletManager::test_stub()),
     }
 }
 
@@ -672,10 +708,17 @@ pub fn create_test_app_state_with_provider(
     // Create a random signer for ECDSA operations in tests
     let signer = PrivateKeySigner::random();
 
+    // Build read-only provider separately (uses hardcoded localhost since custom provider URL unknown)
+    let read_provider = build_test_read_only_provider("http://localhost:8545");
+
     AppState {
-        provider,
-        alternate_provider: None,
-        wallet_address: Address::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+        read_provider,
+        alternate_read_provider: None,
+        funding_provider: provider,
+        funding_wallet_address: Address::from_str("0x1111111111111111111111111111111111111111")
+            .unwrap(),
+        rpc_url: "http://localhost:8545".to_string(),
+        chain_id: 31337,
         signer,
         beacon_abi: JsonAbi::new(),
         beacon_factory_abi: JsonAbi::new(),
@@ -715,7 +758,7 @@ pub fn create_test_app_state_with_provider(
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
-        wallet_manager: None, // Multi-wallet not used in tests
+        wallet_manager: Arc::new(WalletManager::test_stub()),
     }
 }
 
@@ -760,7 +803,7 @@ mod tests {
     async fn test_app_state_creation() {
         #[allow(deprecated)]
         let app_state = create_test_app_state().await;
-        assert_ne!(app_state.wallet_address, Address::ZERO);
+        assert_ne!(app_state.funding_wallet_address, Address::ZERO);
         assert_ne!(app_state.beacon_factory_address, Address::ZERO);
         assert_ne!(app_state.perp_manager_address, Address::ZERO);
     }
@@ -784,11 +827,13 @@ mod tests {
         let app_state = create_test_app_state().await;
 
         // Test block number
-        let block_number = TestUtils::get_block_number(&app_state.provider).await;
+        let block_number = TestUtils::get_block_number(&app_state.read_provider).await;
         assert!(block_number.is_ok());
 
         // Test balance
-        let balance = TestUtils::get_balance(&app_state.provider, app_state.wallet_address).await;
+        let balance =
+            TestUtils::get_balance(&app_state.read_provider, app_state.funding_wallet_address)
+                .await;
         assert!(balance.is_ok());
         let balance = balance.unwrap();
         assert!(balance > U256::ZERO);

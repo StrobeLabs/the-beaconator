@@ -7,7 +7,7 @@ use tracing;
 use super::super::transaction::events::{
     parse_maker_position_opened_event, parse_perp_created_event,
 };
-use super::super::transaction::execution::{get_fresh_nonce_from_alternate, is_nonce_error};
+use super::super::transaction::execution::is_nonce_error;
 use super::validation::try_decode_revert_reason;
 use crate::models::{AppState, DeployPerpForBeaconResponse, DepositLiquidityForPerpResponse};
 use crate::routes::{IERC20, IPerpManager};
@@ -27,10 +27,25 @@ pub async fn deploy_perp_for_beacon(
 ) -> Result<DeployPerpForBeaconResponse, String> {
     tracing::info!("Starting perp deployment for beacon: {}", beacon_address);
 
+    // Acquire a wallet from the pool
+    let wallet_handle = state
+        .wallet_manager
+        .acquire_any_wallet()
+        .await
+        .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
+
+    let wallet_address = wallet_handle.address();
+    tracing::info!("Acquired wallet {} for perp deployment", wallet_address);
+
+    // Build provider with the acquired wallet
+    let provider = wallet_handle
+        .build_provider(&state.rpc_url)
+        .map_err(|e| format!("Failed to build provider: {e}"))?;
+
     // Log environment details
     tracing::info!("Environment details:");
     tracing::info!("  - PerpManager address: {}", state.perp_manager_address);
-    tracing::info!("  - Wallet address: {}", state.wallet_address);
+    tracing::info!("  - Wallet address: {}", wallet_address);
     tracing::info!("  - USDC address: {}", state.usdc_address);
     tracing::info!("Modular configuration:");
     tracing::info!("  - Fees module: {}", fees_module);
@@ -42,8 +57,8 @@ pub async fn deploy_perp_for_beacon(
     );
     tracing::info!("  - Starting sqrt price X96: {}", starting_sqrt_price_x96);
 
-    // Check wallet balance first
-    match state.provider.get_balance(state.wallet_address).await {
+    // Check wallet balance first using read provider
+    match state.read_provider.get_balance(wallet_address).await {
         Ok(balance) => {
             let balance_f64 = balance.to::<u128>() as f64 / 1e18;
             tracing::info!("Wallet balance: {:.6} ETH", balance_f64);
@@ -53,12 +68,12 @@ pub async fn deploy_perp_for_beacon(
         }
     }
 
-    // Create contract instance using the sol! generated interface
-    let contract = IPerpManager::new(state.perp_manager_address, &*state.provider);
+    // Create contract instance using the wallet's provider for transactions
+    let contract = IPerpManager::new(state.perp_manager_address, &provider);
 
-    // Validate beacon exists and has code deployed
+    // Validate beacon exists and has code deployed using read provider
     tracing::info!("Validating beacon address exists...");
-    match state.provider.get_code_at(beacon_address).await {
+    match state.read_provider.get_code_at(beacon_address).await {
         Ok(code) => {
             if code.is_empty() {
                 let error_msg = format!(
@@ -94,7 +109,7 @@ pub async fn deploy_perp_for_beacon(
 
     // Try to get the beacon address from the beacon contract (if it implements the standard interface)
     let beacon_call_result = state
-        .provider
+        .read_provider
         .call(
             alloy::rpc::types::TransactionRequest::default()
                 .to(beacon_address)
@@ -117,7 +132,7 @@ pub async fn deploy_perp_for_beacon(
     // Try to call getData() function to verify it's a beacon contract
     tracing::info!("Validating beacon contract has getData() function...");
     let get_data_call_result = state
-        .provider
+        .read_provider
         .call(
             alloy::rpc::types::TransactionRequest::default()
                 .to(beacon_address)
@@ -268,10 +283,10 @@ pub async fn deploy_perp_for_beacon(
             tracing::warn!("get_receipt() failed for perp deployment: {}", e);
             tracing::info!("Falling back to on-chain perp deployment check...");
 
-            // Try to get the receipt directly from the provider with timeout
+            // Try to get the receipt directly from the read provider with timeout
             match timeout(
                 Duration::from_secs(30),
-                state.provider.get_transaction_receipt(pending_tx_hash),
+                state.read_provider.get_transaction_receipt(pending_tx_hash),
             )
             .await
             {
@@ -351,8 +366,23 @@ pub async fn deposit_liquidity_for_perp(
         margin_amount_usdc
     );
 
-    // Create contract instance using the sol! generated interface
-    let contract = IPerpManager::new(state.perp_manager_address, &*state.provider);
+    // Acquire a wallet from the pool
+    let wallet_handle = state
+        .wallet_manager
+        .acquire_any_wallet()
+        .await
+        .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
+
+    let wallet_address = wallet_handle.address();
+    tracing::info!("Acquired wallet {} for liquidity deposit", wallet_address);
+
+    // Build provider with the acquired wallet
+    let provider = wallet_handle
+        .build_provider(&state.rpc_url)
+        .map_err(|e| format!("Failed to build provider: {e}"))?;
+
+    // Create contract instance using the wallet's provider
+    let contract = IPerpManager::new(state.perp_manager_address, &provider);
 
     // Validate tick alignment with tick_spacing
     if tick_lower % tick_spacing != 0 {
@@ -388,7 +418,7 @@ pub async fn deposit_liquidity_for_perp(
     let max_amt1_in = u128::MAX;
 
     let open_maker_params = IPerpManager::OpenMakerPositionParams {
-        holder: state.wallet_address,
+        holder: wallet_address,
         margin: U256::from(margin_amount_usdc),
         liquidity,
         tickLower: Signed::<24, 1>::try_from(tick_lower)
@@ -414,10 +444,9 @@ pub async fn deposit_liquidity_for_perp(
         state.perp_manager_address
     );
 
-    // USDC approval with RPC fallback
-    let usdc_contract = IERC20::new(state.usdc_address, &*state.provider);
-    // Try primary RPC first
-    tracing::info!("Approving USDC spending with primary RPC");
+    // USDC approval using acquired wallet
+    let usdc_contract = IERC20::new(state.usdc_address, &provider);
+    tracing::info!("Approving USDC spending with wallet {}", wallet_address);
     let pending_approval = match usdc_contract
         .approve(state.perp_manager_address, U256::from(margin_amount_usdc))
         .send()
@@ -429,44 +458,13 @@ pub async fn deposit_liquidity_for_perp(
             tracing::error!("{}", error_msg);
             tracing::error!("Make sure the wallet has sufficient USDC balance");
 
-            // Check if nonce error and sync if needed
+            // Check if nonce error
             if is_nonce_error(&error_msg) {
-                tracing::warn!("Nonce error detected, waiting before fallback");
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tracing::warn!("Nonce error detected, transaction failed");
             }
 
-            // Try alternate RPC if available
-            if let Some(alternate_provider) = &state.alternate_provider {
-                tracing::info!("Trying USDC approval with alternate RPC");
-
-                // Get fresh nonce from alternate RPC to avoid nonce conflicts
-                if let Err(nonce_error) = get_fresh_nonce_from_alternate(state).await {
-                    tracing::warn!("Could not sync nonce with alternate RPC: {}", nonce_error);
-                }
-
-                let alt_usdc_contract = IERC20::new(state.usdc_address, &**alternate_provider);
-
-                match alt_usdc_contract
-                    .approve(state.perp_manager_address, U256::from(margin_amount_usdc))
-                    .send()
-                    .await
-                {
-                    Ok(pending) => {
-                        tracing::info!("USDC approval succeeded with alternate RPC");
-                        Ok(pending)
-                    }
-                    Err(alt_e) => {
-                        let combined_error = format!(
-                            "USDC approval failed on both RPCs. Primary: {e}. Alternate: {alt_e}"
-                        );
-                        tracing::error!("{}", combined_error);
-                        Err(combined_error)
-                    }
-                }
-            } else {
-                tracing::error!("No alternate RPC configured, cannot fallback");
-                Err(error_msg)
-            }
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            Err(error_msg)
         }
     }?;
 
@@ -486,10 +484,12 @@ pub async fn deposit_liquidity_for_perp(
             tracing::warn!("get_receipt() failed for USDC approval: {}", e);
             tracing::info!("Falling back to on-chain approval check...");
 
-            // Try to get the receipt directly from the provider with timeout
+            // Try to get the receipt directly from the read provider with timeout
             match timeout(
                 Duration::from_secs(60),
-                state.provider.get_transaction_receipt(approval_tx_hash),
+                state
+                    .read_provider
+                    .get_transaction_receipt(approval_tx_hash),
             )
             .await
             {
@@ -545,7 +545,9 @@ pub async fn deposit_liquidity_for_perp(
 
                 match timeout(
                     Duration::from_secs(current_timeout),
-                    state.provider.get_transaction_receipt(approval_tx_hash),
+                    state
+                        .read_provider
+                        .get_transaction_receipt(approval_tx_hash),
                 )
                 .await
                 {
@@ -599,9 +601,8 @@ pub async fn deposit_liquidity_for_perp(
         }
     };
 
-    // Send the openMakerPosition transaction with RPC fallback
-    // Try primary RPC first
-    tracing::info!("Opening maker position with primary RPC");
+    // Send the openMakerPosition transaction
+    tracing::info!("Opening maker position with wallet {}", wallet_address);
     let pending_tx = match contract
         .openMakerPos(perp_id, open_maker_params.clone())
         .send()
@@ -631,87 +632,32 @@ pub async fn deposit_liquidity_for_perp(
                 tracing::error!("{}", error_msg);
             }
 
-            // Check if nonce error and sync if needed
+            // Check if nonce error
             if is_nonce_error(&error_msg) {
-                tracing::warn!("Nonce error detected, waiting before fallback");
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tracing::warn!("Nonce error detected, transaction failed");
             }
 
-            // Try alternate RPC if available
-            if let Some(alternate_provider) = &state.alternate_provider {
-                tracing::info!("Trying openMakerPosition with alternate RPC");
-
-                // Get fresh nonce from alternate RPC to avoid nonce conflicts
-                if let Err(nonce_error) = get_fresh_nonce_from_alternate(state).await {
-                    tracing::warn!("Could not sync nonce with alternate RPC: {}", nonce_error);
+            // Add specific troubleshooting hints
+            match error_type {
+                "Liquidity Deposit Reverted" => {
+                    tracing::error!("Troubleshooting hints:");
+                    tracing::error!("  - Check if perp ID exists and is active");
+                    tracing::error!("  - Verify margin amount is within allowed limits");
+                    tracing::error!("  - Ensure tick range is valid for the perp");
+                    tracing::error!(
+                        "  - Review leverage bounds (current config may have high scaling factor)"
+                    );
                 }
-
-                let alt_contract =
-                    IPerpManager::new(state.perp_manager_address, &**alternate_provider);
-
-                match alt_contract
-                    .openMakerPos(perp_id, open_maker_params.clone())
-                    .send()
-                    .await
-                {
-                    Ok(pending) => {
-                        tracing::info!("OpenMakerPosition succeeded with alternate RPC");
-                        Ok(pending)
-                    }
-                    Err(alt_e) => {
-                        let combined_error = format!(
-                            "OpenMakerPosition failed on both RPCs. Primary: {error_msg}. Alternate: {alt_e}"
-                        );
-                        tracing::error!("{}", combined_error);
-
-                        // Add specific troubleshooting hints
-                        match error_type {
-                            "Liquidity Deposit Reverted" => {
-                                tracing::error!("Troubleshooting hints:");
-                                tracing::error!("  - Check if perp ID exists and is active");
-                                tracing::error!(
-                                    "  - Verify margin amount is within allowed limits"
-                                );
-                                tracing::error!("  - Ensure tick range is valid for the perp");
-                                tracing::error!(
-                                    "  - Review leverage bounds (current config may have high scaling factor)"
-                                );
-                            }
-                            "Invalid Perp ID" => {
-                                tracing::error!("Troubleshooting hints:");
-                                tracing::error!("  - Verify perp ID format (32-byte hex string)");
-                                tracing::error!("  - Check if perp was successfully deployed");
-                            }
-                            _ => {}
-                        }
-
-                        Err(combined_error)
-                    }
+                "Invalid Perp ID" => {
+                    tracing::error!("Troubleshooting hints:");
+                    tracing::error!("  - Verify perp ID format (32-byte hex string)");
+                    tracing::error!("  - Check if perp was successfully deployed");
                 }
-            } else {
-                tracing::error!("No alternate RPC configured, cannot fallback");
-
-                // Add specific troubleshooting hints
-                match error_type {
-                    "Liquidity Deposit Reverted" => {
-                        tracing::error!("Troubleshooting hints:");
-                        tracing::error!("  - Check if perp ID exists and is active");
-                        tracing::error!("  - Verify margin amount is within allowed limits");
-                        tracing::error!("  - Ensure tick range is valid for the perp");
-                        tracing::error!(
-                            "  - Review leverage bounds (current config may have high scaling factor)"
-                        );
-                    }
-                    "Invalid Perp ID" => {
-                        tracing::error!("Troubleshooting hints:");
-                        tracing::error!("  - Verify perp ID format (32-byte hex string)");
-                        tracing::error!("  - Check if perp was successfully deployed");
-                    }
-                    _ => {}
-                }
-
-                Err(error_msg)
+                _ => {}
             }
+
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            Err(error_msg)
         }
     }?;
 
@@ -729,10 +675,10 @@ pub async fn deposit_liquidity_for_perp(
             tracing::warn!("get_receipt() failed for liquidity deposit: {}", e);
             tracing::info!("Falling back to on-chain deposit check...");
 
-            // Try to get the receipt directly from the provider with timeout
+            // Try to get the receipt directly from the read provider with timeout
             match timeout(
                 Duration::from_secs(30),
-                state.provider.get_transaction_receipt(deposit_tx_hash),
+                state.read_provider.get_transaction_receipt(deposit_tx_hash),
             )
             .await
             {

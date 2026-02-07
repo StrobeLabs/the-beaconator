@@ -7,7 +7,7 @@ use tracing;
 use crate::models::{AppState, CreateVerifiableBeaconRequest};
 use crate::routes::IDichotomousBeaconFactory;
 use crate::services::transaction::events::parse_beacon_created_event;
-use crate::services::transaction::execution::{get_fresh_nonce_from_alternate, is_nonce_error};
+use crate::services::transaction::execution::is_nonce_error;
 
 /// Creates a verifiable beacon using the DichotomousBeaconFactory.
 ///
@@ -41,11 +41,29 @@ pub async fn create_verifiable_beacon(
     tracing::info!("  Initial data: {}", request.initial_data);
     tracing::info!("  Initial cardinality: {}", request.initial_cardinality);
 
-    // Create contract instance
-    let contract = IDichotomousBeaconFactory::new(factory_address, &*state.provider);
+    // Acquire a wallet from the pool
+    let wallet_handle = state
+        .wallet_manager
+        .acquire_any_wallet()
+        .await
+        .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
+
+    let wallet_address = wallet_handle.address();
+    tracing::info!(
+        "Acquired wallet {} for verifiable beacon creation",
+        wallet_address
+    );
+
+    // Build provider with the acquired wallet
+    let provider = wallet_handle
+        .build_provider(&state.rpc_url)
+        .map_err(|e| format!("Failed to build provider: {e}"))?;
+
+    // Create contract instance using the wallet's provider
+    let contract = IDichotomousBeaconFactory::new(factory_address, &provider);
 
     // Send beacon creation transaction
-    tracing::info!("Creating verifiable beacon with primary RPC");
+    tracing::info!("Creating verifiable beacon with wallet {}", wallet_address);
     let pending_tx = match contract
         .createBeacon(
             verifier_address,
@@ -60,35 +78,12 @@ pub async fn create_verifiable_beacon(
             let error_msg = format!("Failed to send createBeacon transaction: {e}");
             tracing::error!("{}", error_msg);
 
-            // Check if nonce error and sync if needed
+            // Check if nonce error
             if is_nonce_error(&error_msg) {
-                tracing::warn!(
-                    "Nonce error detected, attempting to sync nonce from alternate RPC"
-                );
-                if let Ok(fresh_nonce) = get_fresh_nonce_from_alternate(state).await {
-                    tracing::info!("Retrying with fresh nonce: {}", fresh_nonce);
-                    contract
-                        .createBeacon(
-                            verifier_address,
-                            U256::from(request.initial_data),
-                            request.initial_cardinality,
-                        )
-                        .nonce(fresh_nonce)
-                        .send()
-                        .await
-                        .map_err(|retry_err| {
-                            let msg = format!(
-                                "Failed to resend createBeacon transaction after nonce sync: {retry_err}"
-                            );
-                            tracing::error!("{}", msg);
-                            msg
-                        })
-                } else {
-                    Err(error_msg)
-                }
-            } else {
-                Err(error_msg)
+                tracing::warn!("Nonce error detected, transaction failed");
             }
+
+            Err(error_msg)
         }
     }
     .map_err(|e| {

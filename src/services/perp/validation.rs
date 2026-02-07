@@ -3,7 +3,7 @@ use alloy::providers::Provider;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::AlloyProvider;
+use crate::ReadOnlyProvider;
 
 /// Contract error decoding utilities for PerpManager errors
 pub struct ContractErrorDecoder;
@@ -173,7 +173,7 @@ impl ContractErrorDecoder {
 
 /// Helper function to validate that a module address has deployed code
 pub async fn validate_module_address(
-    provider: &Arc<AlloyProvider>,
+    provider: &Arc<ReadOnlyProvider>,
     address: Address,
     module_name: &str,
 ) -> Result<(), String> {

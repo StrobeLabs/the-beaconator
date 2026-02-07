@@ -1,6 +1,7 @@
 use alloy::primitives::Address;
 use std::str::FromStr;
 
+use crate::AlloyProvider;
 use crate::models::{
     AppState, BatchCreatePerpcityBeaconResponse, BatchUpdateBeaconResponse, BeaconUpdateData,
     BeaconUpdateResult,
@@ -13,17 +14,17 @@ use crate::services::transaction::events::parse_beacon_created_events_from_multi
 /// This function handles the complete business logic for batch beacon creation,
 /// including validation, multicall execution, and result processing.
 ///
+/// The beacon owner will be set to the acquired wallet's address.
+///
 /// # Arguments
 /// * `state` - Application state
 /// * `count` - Number of beacons to create (1-100)
-/// * `owner_address` - Address that will own the created beacons
 ///
 /// # Returns
 /// BatchCreatePerpcityBeaconResponse with results
 pub async fn batch_create_perpcity_beacon(
     state: &AppState,
     count: u32,
-    owner_address: Address,
 ) -> Result<BatchCreatePerpcityBeaconResponse, String> {
     tracing::info!("Starting batch creation of {} Perpcity beacons", count);
 
@@ -32,10 +33,38 @@ pub async fn batch_create_perpcity_beacon(
         return Err(format!("Invalid beacon count: {count}"));
     }
 
+    // Acquire a wallet from the pool for all batch operations
+    let wallet_handle = state
+        .wallet_manager
+        .acquire_any_wallet()
+        .await
+        .map_err(|e| format!("Failed to acquire wallet for batch creation: {e}"))?;
+
+    let wallet_address = wallet_handle.address();
+    // The beacon owner will be the wallet that creates them
+    let owner_address = wallet_address;
+    tracing::info!(
+        "Acquired wallet {} for batch beacon creation (owner: {})",
+        wallet_address,
+        owner_address
+    );
+
+    // Build provider with the acquired wallet
+    let provider = wallet_handle
+        .build_provider(&state.rpc_url)
+        .map_err(|e| format!("Failed to build provider: {e}"))?;
+
     // Process all beacon creations using multicall for efficiency
     let batch_results = if let Some(multicall_address) = state.multicall3_address {
         // Use multicall3 for atomic batch beacon creation
-        batch_create_beacons_with_multicall3(state, multicall_address, count, owner_address).await
+        batch_create_beacons_with_multicall3(
+            state,
+            &provider,
+            multicall_address,
+            count,
+            owner_address,
+        )
+        .await
     } else {
         // No multicall3 configured - return error for all beacon creations
         let error_msg =
@@ -96,10 +125,25 @@ pub async fn batch_update_beacon(
         return Err("Batch update request exceeds maximum of 100 updates".to_string());
     }
 
+    // Acquire a wallet from the pool for all batch operations
+    let wallet_handle = state
+        .wallet_manager
+        .acquire_any_wallet()
+        .await
+        .map_err(|e| format!("Failed to acquire wallet for batch update: {e}"))?;
+
+    let wallet_address = wallet_handle.address();
+    tracing::info!("Acquired wallet {} for batch beacon update", wallet_address);
+
+    // Build provider with the acquired wallet
+    let provider = wallet_handle
+        .build_provider(&state.rpc_url)
+        .map_err(|e| format!("Failed to build provider: {e}"))?;
+
     // Process all updates using multicall for efficient batching
     let batch_results = if let Some(multicall_address) = state.multicall3_address {
         // Use multicall3 for efficient batch execution - single transaction with multiple calls
-        batch_update_with_multicall3(state, multicall_address, updates).await
+        batch_update_with_multicall3(state, &provider, multicall_address, updates).await
     } else {
         // No multicall3 configured - return error for all updates
         let error_msg =
@@ -156,6 +200,7 @@ pub async fn batch_update_beacon(
 /// Execute batch updates using multicall3 - single transaction with multiple calls
 async fn batch_update_with_multicall3(
     state: &AppState,
+    provider: &AlloyProvider,
     multicall_address: Address,
     updates: &[BeaconUpdateData],
 ) -> Vec<(String, Result<String, String>)> {
@@ -187,8 +232,8 @@ async fn batch_update_with_multicall3(
         let proof_bytes = update_data.proof.clone();
         let public_signals_bytes = update_data.public_signals.clone();
 
-        // Create the updateData call data using the IBeacon interface
-        let beacon_contract = IBeacon::new(beacon_address, &*state.provider);
+        // Create the updateData call data using the IBeacon interface (read provider for calldata generation)
+        let beacon_contract = IBeacon::new(beacon_address, &*state.read_provider);
         let call_data = beacon_contract
             .updateData(proof_bytes, public_signals_bytes)
             .calldata()
@@ -206,7 +251,7 @@ async fn batch_update_with_multicall3(
     }
 
     // Execute the multicall3 transaction - single transaction containing all beacon updates
-    let multicall_contract = IMulticall3::new(multicall_address, &*state.provider);
+    let multicall_contract = IMulticall3::new(multicall_address, provider);
 
     // First send the transaction
     match multicall_contract.aggregate3(calls.clone()).send().await {
@@ -359,6 +404,7 @@ async fn batch_update_with_multicall3(
 /// Execute batch beacon creation using multicall3 - single transaction with multiple calls
 async fn batch_create_beacons_with_multicall3(
     state: &AppState,
+    provider: &AlloyProvider,
     multicall_address: Address,
     count: u32,
     owner_address: Address,
@@ -369,8 +415,9 @@ async fn batch_create_beacons_with_multicall3(
     let mut calls = Vec::new();
 
     for _i in 1..=count {
-        // Create the createBeacon call data using the IBeaconFactory interface
-        let factory_contract = IBeaconFactory::new(state.beacon_factory_address, &*state.provider);
+        // Create the createBeacon call data using the IBeaconFactory interface (read provider for calldata generation)
+        let factory_contract =
+            IBeaconFactory::new(state.beacon_factory_address, &*state.read_provider);
         let call_data = factory_contract
             .createBeacon(owner_address)
             .calldata()
@@ -387,7 +434,7 @@ async fn batch_create_beacons_with_multicall3(
     }
 
     // Execute the multicall3 transaction - single transaction containing all beacon creations
-    let multicall_contract = IMulticall3::new(multicall_address, &*state.provider);
+    let multicall_contract = IMulticall3::new(multicall_address, provider);
 
     match multicall_contract.aggregate3(calls).send().await {
         Ok(pending_tx) => {
@@ -411,6 +458,7 @@ async fn batch_create_beacons_with_multicall3(
                             // Register all created beacons with the registry in another multicall
                             match register_beacons_with_multicall3(
                                 state,
+                                provider,
                                 multicall_address,
                                 &addresses,
                             )
@@ -478,6 +526,7 @@ async fn batch_create_beacons_with_multicall3(
 /// This means registration can be safely retried if it fails.
 async fn register_beacons_with_multicall3(
     state: &AppState,
+    provider: &AlloyProvider,
     multicall_address: Address,
     beacon_addresses: &[String],
 ) -> Result<(), String> {
@@ -492,9 +541,9 @@ async fn register_beacons_with_multicall3(
         let beacon_address = Address::from_str(beacon_addr_str)
             .map_err(|e| format!("Invalid beacon address {beacon_addr_str}: {e}"))?;
 
-        // Create the registerBeacon call data using the IBeaconRegistry interface
+        // Create the registerBeacon call data using the IBeaconRegistry interface (read provider for calldata generation)
         let registry_contract =
-            IBeaconRegistry::new(state.perpcity_registry_address, &*state.provider);
+            IBeaconRegistry::new(state.perpcity_registry_address, &*state.read_provider);
         let call_data = registry_contract
             .registerBeacon(beacon_address)
             .calldata()
@@ -511,7 +560,7 @@ async fn register_beacons_with_multicall3(
     }
 
     // Execute the multicall3 registration transaction
-    let multicall_contract = IMulticall3::new(multicall_address, &*state.provider);
+    let multicall_contract = IMulticall3::new(multicall_address, provider);
 
     match multicall_contract.aggregate3(calls).send().await {
         Ok(pending_tx) => match pending_tx.get_receipt().await {

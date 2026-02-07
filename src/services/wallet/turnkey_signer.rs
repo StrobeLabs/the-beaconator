@@ -21,8 +21,10 @@
 //! );
 //! ```
 
+use alloy::consensus::SignableTransaction;
+use alloy::network::TxSigner;
 use alloy::primitives::{Address, B256, ChainId, Signature, U256};
-use alloy::signers::{Error as SignerError, Signer};
+use alloy::signers::{Error as SignerError, Result as SignerResult, Signer};
 use async_trait::async_trait;
 use std::sync::Arc;
 use turnkey_client::generated::SignRawPayloadIntentV2;
@@ -232,6 +234,23 @@ impl Signer for TurnkeySigner {
     /// Set the chain ID.
     fn set_chain_id(&mut self, chain_id: Option<ChainId>) {
         self.chain_id = chain_id;
+    }
+}
+
+#[async_trait]
+impl TxSigner<Signature> for TurnkeySigner {
+    fn address(&self) -> Address {
+        self.address
+    }
+
+    async fn sign_transaction(
+        &self,
+        tx: &mut dyn SignableTransaction<Signature>,
+    ) -> SignerResult<Signature> {
+        // Get the signature hash from the transaction
+        let hash = tx.signature_hash();
+        // Sign it using our Turnkey-backed signing
+        self.sign_hash(&hash).await
     }
 }
 

@@ -3,10 +3,15 @@
 //! This module provides mock implementations of the wallet services
 //! for use in unit tests without requiring Redis or Turnkey connections.
 
+use alloy::network::EthereumWallet;
 use alloy::primitives::Address;
+use alloy::providers::ProviderBuilder;
+use alloy::signers::Signer;
+use alloy::signers::local::PrivateKeySigner;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use crate::AlloyProvider;
 use crate::models::wallet::{WalletInfo, WalletStatus};
 
 /// Mock wallet pool for testing
@@ -142,6 +147,100 @@ impl MockWalletLock {
     pub fn lock_holder(&self, address: &Address) -> Option<String> {
         let locks = self.locks.read().unwrap();
         locks.get(address).cloned()
+    }
+}
+
+/// A mock wallet handle for testing that uses PrivateKeySigner
+pub struct MockWalletHandle {
+    /// The signer for this wallet
+    pub signer: PrivateKeySigner,
+    /// The address of this wallet
+    address: Address,
+}
+
+impl MockWalletHandle {
+    /// Get the Ethereum address of this wallet
+    pub fn address(&self) -> Address {
+        self.address
+    }
+
+    /// Build an AlloyProvider using this wallet's signer
+    pub fn build_provider(&self, rpc_url: &str) -> Result<AlloyProvider, String> {
+        let wallet = EthereumWallet::from(self.signer.clone());
+
+        let provider = ProviderBuilder::new().wallet(wallet).connect_http(
+            rpc_url
+                .parse()
+                .map_err(|e| format!("Invalid RPC URL '{rpc_url}': {e}"))?,
+        );
+
+        Ok(provider)
+    }
+}
+
+/// Mock WalletManager for testing without Redis or Turnkey
+///
+/// This provides the same interface as WalletManager but uses
+/// local PrivateKeySigners for simplicity in tests.
+pub struct MockWalletManager {
+    signers: Vec<PrivateKeySigner>,
+    current_index: RwLock<usize>,
+}
+
+impl MockWalletManager {
+    /// Create a new MockWalletManager with the given signers
+    pub fn new(signers: Vec<PrivateKeySigner>) -> Self {
+        Self {
+            signers,
+            current_index: RwLock::new(0),
+        }
+    }
+
+    /// Create a MockWalletManager from Anvil's deterministic test keys
+    pub fn from_anvil_keys() -> Self {
+        // Anvil's first 3 deterministic private keys
+        let keys = [
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+            "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
+        ];
+
+        let signers: Vec<PrivateKeySigner> = keys
+            .iter()
+            .map(|k| {
+                k.parse::<PrivateKeySigner>()
+                    .expect("Failed to parse test private key")
+                    .with_chain_id(Some(31337))
+            })
+            .collect();
+
+        Self::new(signers)
+    }
+
+    /// Acquire a wallet for a beacon (returns mock handle)
+    pub async fn acquire_for_beacon(&self, _beacon: &Address) -> Result<MockWalletHandle, String> {
+        self.acquire_any_wallet().await
+    }
+
+    /// Acquire any available wallet from the pool
+    pub async fn acquire_any_wallet(&self) -> Result<MockWalletHandle, String> {
+        if self.signers.is_empty() {
+            return Err("No signers available in mock wallet manager".to_string());
+        }
+
+        let mut index = self.current_index.write().unwrap();
+        let signer = self.signers[*index % self.signers.len()].clone();
+        *index = (*index + 1) % self.signers.len();
+
+        Ok(MockWalletHandle {
+            address: signer.address(),
+            signer,
+        })
+    }
+
+    /// Get the address of the first signer (for backwards compatibility in tests)
+    pub fn first_address(&self) -> Option<Address> {
+        self.signers.first().map(|s| s.address())
     }
 }
 

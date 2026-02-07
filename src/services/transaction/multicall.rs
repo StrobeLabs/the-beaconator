@@ -33,8 +33,23 @@ pub async fn execute_multicall(
         return Err("No calls provided for multicall".to_string());
     }
 
+    // Acquire a wallet from the pool for the multicall transaction
+    let wallet_handle = state
+        .wallet_manager
+        .acquire_any_wallet()
+        .await
+        .map_err(|e| format!("Failed to acquire wallet for multicall: {e}"))?;
+
+    let wallet_address = wallet_handle.address();
+    tracing::info!("Acquired wallet {} for multicall execution", wallet_address);
+
+    // Build provider with the acquired wallet
+    let provider = wallet_handle
+        .build_provider(&state.rpc_url)
+        .map_err(|e| format!("Failed to build provider: {e}"))?;
+
     // Create multicall contract instance
-    let multicall_contract = IMulticall3::new(multicall_address, &*state.provider);
+    let multicall_contract = IMulticall3::new(multicall_address, &provider);
 
     // Execute the multicall transaction
     let pending_tx = multicall_contract

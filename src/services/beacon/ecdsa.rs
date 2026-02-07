@@ -8,7 +8,6 @@ use tracing;
 
 use crate::models::{AppState, UpdateBeaconWithEcdsaRequest};
 use crate::routes::{IEcdsaBeacon, IEcdsaVerifierAdapter};
-use crate::services::wallet::WalletHandle;
 
 /// Updates a beacon using ECDSA signature from the appropriate wallet.
 ///
@@ -39,9 +38,9 @@ pub async fn update_beacon_with_ecdsa(
         measurement
     );
 
-    // 2. Get verifier adapter address from beacon
-    let beacon = IEcdsaBeacon::new(beacon_address, &*state.provider);
-    let verifier_address_raw = beacon
+    // 2. Get verifier adapter address from beacon using read provider
+    let beacon_read = IEcdsaBeacon::new(beacon_address, &*state.read_provider);
+    let verifier_address_raw = beacon_read
         .verifierAdapter()
         .call()
         .await
@@ -50,8 +49,8 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Beacon verifier adapter: {}", verifier_address);
 
-    // Get the designated signer from the verifier adapter
-    let verifier = IEcdsaVerifierAdapter::new(verifier_address, &*state.provider);
+    // Get the designated signer from the verifier adapter using read provider
+    let verifier = IEcdsaVerifierAdapter::new(verifier_address, &*state.read_provider);
     let designated_signer_raw = verifier
         .SIGNER()
         .call()
@@ -61,62 +60,36 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Designated signer for this beacon: {}", designated_signer);
 
-    // 3. Acquire the appropriate wallet for signing
-    // If WalletManager is available, try to use it. Otherwise, fall back to the single wallet.
-    let wallet_handle: Option<WalletHandle> = if let Some(ref wallet_manager) = state.wallet_manager
-    {
-        match wallet_manager.acquire_for_beacon(&beacon_address).await {
-            Ok(handle) => {
-                // Verify the acquired wallet matches the designated signer
-                if handle.address() != designated_signer {
-                    return Err(format!(
-                        "Acquired wallet {} does not match designated signer {} for beacon {}",
-                        handle.address(),
-                        designated_signer,
-                        beacon_address
-                    ));
-                }
-                tracing::info!(
-                    "Acquired wallet {} via WalletManager for beacon {}",
-                    handle.address(),
-                    beacon_address
-                );
-                Some(handle)
-            }
-            Err(e) => {
-                // Log the error but fall back to single wallet mode
-                tracing::warn!(
-                    "WalletManager failed to acquire wallet for beacon {}: {}. Falling back to single wallet.",
-                    beacon_address,
-                    e
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
+    // 3. Acquire the appropriate wallet for signing via WalletManager
+    let wallet_handle = state
+        .wallet_manager
+        .acquire_for_beacon(&beacon_address)
+        .await
+        .map_err(|e| format!("Failed to acquire wallet for beacon {beacon_address}: {e}"))?;
 
-    // If we couldn't get a wallet from WalletManager, use the single wallet
-    let using_wallet_address = if let Some(ref handle) = wallet_handle {
-        handle.address()
-    } else {
-        // Verify the single wallet is the designated signer
-        if designated_signer != state.wallet_address {
-            return Err(format!(
-                "Beaconator wallet {} is not the designated signer {} for this verifier adapter. \
-                 Consider adding the designated wallet to the wallet pool.",
-                state.wallet_address, designated_signer
-            ));
-        }
-        state.wallet_address
-    };
+    // Verify the acquired wallet matches the designated signer
+    if wallet_handle.address() != designated_signer {
+        return Err(format!(
+            "Acquired wallet {} does not match designated signer {} for beacon {}. \
+             Ensure the designated signer is added to the wallet pool.",
+            wallet_handle.address(),
+            designated_signer,
+            beacon_address
+        ));
+    }
 
+    let wallet_address = wallet_handle.address();
     tracing::info!(
-        "Using wallet {} for signing (designated signer: {})",
-        using_wallet_address,
+        "Acquired wallet {} via WalletManager for beacon {} (designated signer: {})",
+        wallet_address,
+        beacon_address,
         designated_signer
     );
+
+    // Build provider with the acquired wallet for sending transactions
+    let provider = wallet_handle
+        .build_provider(&state.rpc_url)
+        .map_err(|e| format!("Failed to build provider: {e}"))?;
 
     // 4. Generate nonce from high-resolution timestamp (nanoseconds) to avoid collisions
     let nonce = U256::from(
@@ -138,22 +111,12 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Got EIP-712 digest: {:?}", digest);
 
-    // 6. Sign the digest with the appropriate wallet
-    let signature = if let Some(ref handle) = wallet_handle {
-        // Use WalletManager's Turnkey signer
-        handle
-            .signer
-            .sign_hash(&digest)
-            .await
-            .map_err(|e| format!("Failed to sign digest with Turnkey wallet: {e}"))?
-    } else {
-        // Use the single wallet signer (fallback)
-        state
-            .signer
-            .sign_hash(&digest)
-            .await
-            .map_err(|e| format!("Failed to sign digest: {e}"))?
-    };
+    // 6. Sign the digest with the acquired wallet
+    let signature = wallet_handle
+        .signer
+        .sign_hash(&digest)
+        .await
+        .map_err(|e| format!("Failed to sign digest with wallet: {e}"))?;
 
     tracing::info!("Signed digest successfully");
 
@@ -169,9 +132,13 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::debug!("Inputs bytes length: {}", inputs_bytes.len());
 
-    // 9. Call beacon.updateIndex(signature, inputs)
-    tracing::info!("Sending updateIndex transaction to beacon");
-    let pending_tx = beacon
+    // 9. Call beacon.updateIndex(signature, inputs) using the write provider
+    tracing::info!(
+        "Sending updateIndex transaction to beacon with wallet {}",
+        wallet_address
+    );
+    let beacon_write = IEcdsaBeacon::new(beacon_address, &provider);
+    let pending_tx = beacon_write
         .updateIndex(sig_bytes.clone(), inputs_bytes.clone())
         .send()
         .await

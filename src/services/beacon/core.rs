@@ -7,88 +7,62 @@ use tracing;
 use crate::models::{AppState, UpdateBeaconRequest};
 use crate::routes::{IBeacon, IBeaconFactory, IBeaconRegistry};
 use crate::services::transaction::events::{parse_beacon_created_event, parse_data_updated_event};
-use crate::services::transaction::execution::{get_fresh_nonce_from_alternate, is_nonce_error};
+use crate::services::transaction::execution::is_nonce_error;
 
 /// Create a beacon via the factory contract
 ///
 /// This function handles:
-/// - Transaction execution with RPC fallback
+/// - Wallet acquisition from WalletManager
+/// - Transaction execution with error handling
 /// - Transaction confirmation with progressive timeouts
 /// - Event parsing to extract beacon address
+///
+/// The beacon owner will be set to the acquired wallet's address.
 pub async fn create_beacon_via_factory(
     state: &AppState,
-    owner_address: Address,
     factory_address: Address,
 ) -> Result<Address, String> {
+    // Acquire a wallet from the pool
+    let wallet_handle = state
+        .wallet_manager
+        .acquire_any_wallet()
+        .await
+        .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
+
+    let wallet_address = wallet_handle.address();
+    // The beacon owner will be the wallet that creates it
+    let owner_address = wallet_address;
+
     tracing::info!(
         "Creating beacon via factory {} for owner {}",
         factory_address,
         owner_address
     );
+    tracing::info!("Acquired wallet {} for beacon creation", wallet_address);
 
-    // Create contract instance using the sol! generated interface
-    let contract = IBeaconFactory::new(factory_address, &*state.provider);
+    // Build provider with the acquired wallet
+    let provider = wallet_handle
+        .build_provider(&state.rpc_url)
+        .map_err(|e| format!("Failed to build provider: {e}"))?;
 
-    // Send the beacon creation transaction with RPC fallback
-    // Try primary RPC first
-    tracing::info!("Creating beacon with primary RPC");
+    // Create contract instance using the wallet's provider
+    let contract = IBeaconFactory::new(factory_address, &provider);
+
+    // Send the beacon creation transaction
+    tracing::info!("Creating beacon with wallet {}", wallet_address);
     let pending_tx = match contract.createBeacon(owner_address).send().await {
         Ok(pending) => Ok(pending),
         Err(e) => {
             let error_msg = format!("Failed to send createBeacon transaction: {e}");
             tracing::error!("{}", error_msg);
 
-            // Check if nonce error and sync if needed
+            // Check if nonce error
             if is_nonce_error(&error_msg) {
-                tracing::warn!("Nonce error detected, waiting before fallback");
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tracing::warn!("Nonce error detected, transaction failed");
             }
 
-            // Try alternate RPC if available
-            if let Some(alternate_provider) = &state.alternate_provider {
-                tracing::info!("Trying beacon creation with alternate RPC");
-
-                // Get fresh nonce from alternate RPC to avoid nonce conflicts
-                let fresh_nonce = match get_fresh_nonce_from_alternate(state).await {
-                    Ok(nonce) => {
-                        tracing::info!("Got fresh nonce from alternate RPC: {nonce}");
-                        Some(nonce)
-                    }
-                    Err(nonce_error) => {
-                        tracing::warn!("Could not sync nonce with alternate RPC: {nonce_error}");
-                        None
-                    }
-                };
-
-                let alt_contract = IBeaconFactory::new(factory_address, &**alternate_provider);
-
-                // Build transaction, optionally with fresh nonce
-                let tx_builder = alt_contract.createBeacon(owner_address);
-                let tx_result = if let Some(nonce) = fresh_nonce {
-                    tx_builder.nonce(nonce).send().await
-                } else {
-                    tx_builder.send().await
-                };
-
-                match tx_result {
-                    Ok(pending) => {
-                        tracing::info!("Beacon creation succeeded with alternate RPC");
-                        Ok(pending)
-                    }
-                    Err(alt_e) => {
-                        let combined_error = format!(
-                            "Beacon creation failed on both RPCs. Primary: {e}. Alternate: {alt_e}"
-                        );
-                        tracing::error!("{}", combined_error);
-                        sentry::capture_message(&combined_error, sentry::Level::Error);
-                        Err(combined_error)
-                    }
-                }
-            } else {
-                tracing::error!("No alternate RPC configured, cannot fallback");
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                Err(error_msg)
-            }
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            Err(error_msg)
         }
     }?;
 
@@ -110,10 +84,10 @@ pub async fn create_beacon_via_factory(
 
             tracing::info!("Checking transaction {} on-chain...", tx_hash);
 
-            // Try to get the receipt directly from the provider with timeout
+            // Try to get the receipt directly from the read provider with timeout
             match timeout(
                 Duration::from_secs(30),
-                state.provider.get_transaction_receipt(tx_hash),
+                state.read_provider.get_transaction_receipt(tx_hash),
             )
             .await
             {
@@ -272,7 +246,7 @@ pub async fn is_transaction_confirmed(
         tx_hash
     );
 
-    match state.provider.get_transaction_receipt(tx_hash).await {
+    match state.read_provider.get_transaction_receipt(tx_hash).await {
         Ok(Some(receipt)) => {
             tracing::info!(
                 "Transaction {} is confirmed in block {}",
@@ -307,8 +281,8 @@ pub async fn is_beacon_registered(
         beacon_address
     );
 
-    // Create contract instance and call beacons(address) directly
-    let contract = IBeaconRegistry::new(registry_address, &*state.provider);
+    // Create contract instance and call beacons(address) directly using read provider
+    let contract = IBeaconRegistry::new(registry_address, &*state.read_provider);
 
     match contract.beacons(beacon_address).call().await {
         Ok(is_registered) => {
@@ -334,7 +308,8 @@ pub async fn is_beacon_registered(
 ///
 /// This function handles:
 /// - Pre-registration validation (check if already registered)
-/// - Transaction execution with RPC fallback
+/// - Wallet acquisition from WalletManager
+/// - Transaction execution with error handling
 /// - Transaction confirmation with progressive timeouts
 pub async fn register_beacon_with_registry(
     state: &AppState,
@@ -346,12 +321,6 @@ pub async fn register_beacon_with_registry(
         beacon_address,
         registry_address
     );
-
-    // Pre-registration validation
-    tracing::info!("Pre-registration validation:");
-    tracing::info!("  - Beacon address: {}", beacon_address);
-    tracing::info!("  - Registry address: {}", registry_address);
-    tracing::info!("  - Wallet address: {}", state.wallet_address);
 
     // Check if beacon is already registered
     tracing::info!("Checking if beacon is already registered...");
@@ -370,7 +339,7 @@ pub async fn register_beacon_with_registry(
 
     // Validate beacon contract exists and has code
     tracing::info!("Validating beacon contract...");
-    match state.provider.get_code_at(beacon_address).await {
+    match state.read_provider.get_code_at(beacon_address).await {
         Ok(code) => {
             if code.is_empty() {
                 let error_msg = format!("Beacon address {beacon_address} has no deployed code");
@@ -387,69 +356,39 @@ pub async fn register_beacon_with_registry(
         }
     }
 
-    // Create contract instance using the sol! generated interface
-    let contract = IBeaconRegistry::new(registry_address, &*state.provider);
+    // Acquire a wallet from the pool
+    let wallet_handle = state
+        .wallet_manager
+        .acquire_any_wallet()
+        .await
+        .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
 
-    // Send the registration transaction with RPC fallback
-    // Try primary RPC first
-    tracing::info!("Registering beacon with primary RPC");
+    let wallet_address = wallet_handle.address();
+    tracing::info!("Acquired wallet {} for beacon registration", wallet_address);
+
+    // Build provider with the acquired wallet
+    let provider = wallet_handle
+        .build_provider(&state.rpc_url)
+        .map_err(|e| format!("Failed to build provider: {e}"))?;
+
+    // Create contract instance using the wallet's provider
+    let contract = IBeaconRegistry::new(registry_address, &provider);
+
+    // Send the registration transaction
+    tracing::info!("Registering beacon with wallet {}", wallet_address);
     let pending_tx = match contract.registerBeacon(beacon_address).send().await {
         Ok(pending) => Ok(pending),
         Err(e) => {
             let error_msg = format!("Failed to send registerBeacon transaction: {e}");
             tracing::error!("{}", error_msg);
 
-            // Check if nonce error and sync if needed
+            // Check if nonce error
             if is_nonce_error(&error_msg) {
-                tracing::warn!("Nonce error detected, waiting before fallback");
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tracing::warn!("Nonce error detected, transaction failed");
             }
 
-            // Try alternate RPC if available
-            if let Some(alternate_provider) = &state.alternate_provider {
-                tracing::info!("Trying beacon registration with alternate RPC");
-
-                // Get fresh nonce from alternate RPC to avoid nonce conflicts
-                let fresh_nonce = match get_fresh_nonce_from_alternate(state).await {
-                    Ok(nonce) => {
-                        tracing::info!("Got fresh nonce from alternate RPC: {nonce}");
-                        Some(nonce)
-                    }
-                    Err(nonce_error) => {
-                        tracing::warn!("Could not sync nonce with alternate RPC: {nonce_error}");
-                        None
-                    }
-                };
-
-                let alt_contract = IBeaconRegistry::new(registry_address, &**alternate_provider);
-
-                // Build transaction, optionally with fresh nonce
-                let tx_builder = alt_contract.registerBeacon(beacon_address);
-                let tx_result = if let Some(nonce) = fresh_nonce {
-                    tx_builder.nonce(nonce).send().await
-                } else {
-                    tx_builder.send().await
-                };
-
-                match tx_result {
-                    Ok(pending) => {
-                        tracing::info!("Beacon registration succeeded with alternate RPC");
-                        Ok(pending)
-                    }
-                    Err(alt_e) => {
-                        let combined_error = format!(
-                            "Beacon registration failed on both RPCs. Primary: {e}. Alternate: {alt_e}"
-                        );
-                        tracing::error!("{}", combined_error);
-                        sentry::capture_message(&combined_error, sentry::Level::Error);
-                        Err(combined_error)
-                    }
-                }
-            } else {
-                tracing::error!("No alternate RPC configured, cannot fallback");
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                Err(error_msg)
-            }
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            Err(error_msg)
         }
     }?;
 
@@ -471,10 +410,10 @@ pub async fn register_beacon_with_registry(
 
             tracing::info!("Checking registration transaction {} on-chain...", tx_hash);
 
-            // Try to get the receipt directly from the provider with timeout
+            // Try to get the receipt directly from the read provider with timeout
             match timeout(
                 Duration::from_secs(30),
-                state.provider.get_transaction_receipt(tx_hash),
+                state.read_provider.get_transaction_receipt(tx_hash),
             )
             .await
             {
@@ -622,8 +561,9 @@ pub async fn register_beacon_with_registry(
 ///
 /// This function handles:
 /// - Address validation
-/// - Transaction execution with RPC fallback
-/// - Transaction confirmation with progressive timeouts
+/// - Wallet acquisition from WalletManager
+/// - Transaction execution with error handling
+/// - Transaction confirmation with timeouts
 pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Result<B256, String> {
     // Parse the beacon address
     let beacon_address = match Address::from_str(&request.beacon_address) {
@@ -640,12 +580,26 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
     let proof_bytes = request.proof;
     let public_signals_bytes = request.public_signals;
 
-    // Create contract instance using the sol! generated interface
-    let contract = IBeacon::new(beacon_address, &*state.provider);
+    // Acquire a wallet from the pool (prefer wallet designated for this beacon)
+    let wallet_handle = state
+        .wallet_manager
+        .acquire_for_beacon(&beacon_address)
+        .await
+        .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
 
-    // Send the update transaction with RPC fallback
-    // Try primary RPC first
-    tracing::info!("Updating beacon with primary RPC");
+    let wallet_address = wallet_handle.address();
+    tracing::info!("Acquired wallet {} for beacon update", wallet_address);
+
+    // Build provider with the acquired wallet
+    let provider = wallet_handle
+        .build_provider(&state.rpc_url)
+        .map_err(|e| format!("Failed to build provider: {e}"))?;
+
+    // Create contract instance using the wallet's provider
+    let contract = IBeacon::new(beacon_address, &provider);
+
+    // Send the update transaction
+    tracing::info!("Updating beacon with wallet {}", wallet_address);
     let pending_tx = match contract
         .updateData(proof_bytes.clone(), public_signals_bytes.clone())
         .send()
@@ -656,58 +610,13 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
             let error_msg = format!("Failed to send updateData transaction: {e}");
             tracing::error!("{}", error_msg);
 
-            // Check if nonce error and sync if needed
+            // Check if nonce error
             if is_nonce_error(&error_msg) {
-                tracing::warn!("Nonce error detected, waiting before fallback");
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tracing::warn!("Nonce error detected, transaction failed");
             }
 
-            // Try alternate RPC if available
-            if let Some(alternate_provider) = &state.alternate_provider {
-                tracing::info!("Trying beacon update with alternate RPC");
-
-                // Get fresh nonce from alternate RPC to avoid nonce conflicts
-                let fresh_nonce = match get_fresh_nonce_from_alternate(state).await {
-                    Ok(nonce) => {
-                        tracing::info!("Got fresh nonce from alternate RPC: {nonce}");
-                        Some(nonce)
-                    }
-                    Err(nonce_error) => {
-                        tracing::warn!("Could not sync nonce with alternate RPC: {nonce_error}");
-                        None
-                    }
-                };
-
-                let alt_contract = IBeacon::new(beacon_address, &**alternate_provider);
-
-                // Build transaction, optionally with fresh nonce
-                let tx_builder =
-                    alt_contract.updateData(proof_bytes.clone(), public_signals_bytes.clone());
-                let tx_result = if let Some(nonce) = fresh_nonce {
-                    tx_builder.nonce(nonce).send().await
-                } else {
-                    tx_builder.send().await
-                };
-
-                match tx_result {
-                    Ok(pending) => {
-                        tracing::info!("Beacon update succeeded with alternate RPC");
-                        Ok(pending)
-                    }
-                    Err(alt_e) => {
-                        let combined_error = format!(
-                            "Beacon update failed on both RPCs. Primary: {e}. Alternate: {alt_e}"
-                        );
-                        tracing::error!("{}", combined_error);
-                        sentry::capture_message(&combined_error, sentry::Level::Error);
-                        Err(combined_error)
-                    }
-                }
-            } else {
-                tracing::error!("No alternate RPC configured, cannot fallback");
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                Err(error_msg)
-            }
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            Err(error_msg)
         }
     }?;
 
@@ -729,10 +638,10 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
 
             tracing::info!("Checking transaction {} on-chain...", tx_hash);
 
-            // Try to get the receipt directly from the provider with timeout
+            // Try to get the receipt directly from the read provider with timeout
             match timeout(
                 Duration::from_secs(30),
-                state.provider.get_transaction_receipt(tx_hash),
+                state.read_provider.get_transaction_receipt(tx_hash),
             )
             .await
             {

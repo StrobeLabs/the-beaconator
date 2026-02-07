@@ -164,4 +164,4 @@ sol! {
 }
 
 // Re-export transaction utilities from services module
-pub use crate::services::transaction::execution::{get_fresh_nonce_from_alternate, is_nonce_error};
+pub use crate::services::transaction::execution::is_nonce_error;

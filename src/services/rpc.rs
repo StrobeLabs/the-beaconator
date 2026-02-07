@@ -5,8 +5,8 @@ use alloy::signers::{Signer, local::PrivateKeySigner};
 use std::env;
 use std::sync::Arc;
 
-// Import the AlloyProvider type from lib.rs
-use crate::AlloyProvider;
+// Import provider types from lib.rs
+use crate::{AlloyProvider, ReadOnlyProvider};
 
 /// Configuration for RPC endpoints
 #[derive(Debug, Clone)]
@@ -17,10 +17,16 @@ pub struct RpcConfig {
     pub alternate_rpc_url: Option<String>,
 }
 
-/// Container for primary and optional alternate RPC providers
+/// Container for primary and optional alternate RPC providers (with wallet for signing)
 pub struct RpcProviders {
     pub primary: Arc<AlloyProvider>,
     pub alternate: Option<Arc<AlloyProvider>>,
+}
+
+/// Container for read-only RPC providers (no wallet, for queries only)
+pub struct ReadOnlyProviders {
+    pub primary: Arc<ReadOnlyProvider>,
+    pub alternate: Option<Arc<ReadOnlyProvider>>,
 }
 
 impl RpcConfig {
@@ -121,6 +127,51 @@ impl RpcConfig {
         );
 
         Ok(provider)
+    }
+
+    /// Build a read-only provider from a URL (no wallet, for queries only)
+    pub fn build_read_only_provider(url: &str) -> Result<ReadOnlyProvider, String> {
+        let provider = ProviderBuilder::new().connect_http(
+            url.parse()
+                .map_err(|e| format!("Invalid RPC URL '{url}': {e}"))?,
+        );
+
+        Ok(provider)
+    }
+
+    /// Build read-only RPC providers (no wallet, for queries only)
+    pub fn build_read_only_providers(&self) -> Result<ReadOnlyProviders, String> {
+        // Build primary RPC URL
+        let primary_rpc_url = self.build_rpc_url();
+
+        // Create primary read-only provider
+        let primary_provider = Self::build_read_only_provider(&primary_rpc_url)?;
+        tracing::info!("Primary read-only RPC provider setup successful");
+
+        // Build alternate read-only provider if needed
+        let alternate_provider = if self.should_use_alternate() {
+            let alternate_url = self.alternate_rpc_url.as_ref().unwrap();
+            tracing::info!(
+                "Setting up alternate read-only RPC provider: {}",
+                alternate_url
+            );
+
+            let provider = Self::build_read_only_provider(alternate_url)?;
+            tracing::info!("Alternate read-only RPC provider setup successful");
+            Some(Arc::new(provider))
+        } else {
+            None
+        };
+
+        Ok(ReadOnlyProviders {
+            primary: Arc::new(primary_provider),
+            alternate: alternate_provider,
+        })
+    }
+
+    /// Get the RPC URL (public accessor for use by WalletHandle)
+    pub fn get_rpc_url(&self) -> String {
+        self.build_rpc_url()
     }
 
     /// Build RPC providers with the given wallet and chain ID

@@ -4,10 +4,13 @@
 //! operations, locking, and beacon mappings into a unified interface.
 
 use super::{TurnkeySigner, WalletLock, WalletLockGuard, WalletPool};
+use alloy::network::EthereumWallet;
 use alloy::primitives::Address;
+use alloy::providers::ProviderBuilder;
 use alloy::signers::Signer;
 
-use crate::models::wallet::WalletManagerConfig;
+use crate::AlloyProvider;
+use crate::models::wallet::{WalletInfo, WalletManagerConfig};
 
 /// A handle to a locked wallet ready for use
 ///
@@ -25,6 +28,27 @@ impl WalletHandle {
     pub fn address(&self) -> Address {
         self.signer.address()
     }
+
+    /// Build an AlloyProvider using this wallet's signer
+    ///
+    /// Creates a provider that can sign transactions using the Turnkey wallet.
+    ///
+    /// # Arguments
+    /// * `rpc_url` - The RPC URL to connect to
+    ///
+    /// # Returns
+    /// An AlloyProvider configured with this wallet's signer
+    pub fn build_provider(&self, rpc_url: &str) -> Result<AlloyProvider, String> {
+        let wallet = EthereumWallet::from(self.signer.clone());
+
+        let provider = ProviderBuilder::new().wallet(wallet).connect_http(
+            rpc_url
+                .parse()
+                .map_err(|e| format!("Invalid RPC URL '{rpc_url}': {e}"))?,
+        );
+
+        Ok(provider)
+    }
 }
 
 /// Central coordinator for wallet operations
@@ -34,10 +58,12 @@ impl WalletHandle {
 /// - Managing the wallet pool
 /// - Looking up beacon-to-wallet mappings
 pub struct WalletManager {
-    /// The wallet pool
-    pool: WalletPool,
-    /// Configuration
-    config: WalletManagerConfig,
+    /// The wallet pool (None in test stub mode)
+    pool: Option<WalletPool>,
+    /// Configuration (None in test stub mode)
+    config: Option<WalletManagerConfig>,
+    /// Whether this is a test stub that will panic on use
+    is_test_stub: bool,
 }
 
 impl WalletManager {
@@ -53,7 +79,41 @@ impl WalletManager {
 
         let pool = WalletPool::new(&config.redis_url, instance_id).await?;
 
-        Ok(Self { pool, config })
+        Ok(Self {
+            pool: Some(pool),
+            config: Some(config),
+            is_test_stub: false,
+        })
+    }
+
+    /// Create a test stub WalletManager that panics when used
+    ///
+    /// This is for test utilities that need to construct AppState
+    /// but don't actually use WalletManager features.
+    pub fn test_stub() -> Self {
+        Self {
+            pool: None,
+            config: None,
+            is_test_stub: true,
+        }
+    }
+
+    fn require_pool(&self) -> &WalletPool {
+        self.pool.as_ref().unwrap_or_else(|| {
+            panic!(
+                "WalletManager::test_stub() was used but wallet operations were attempted. \
+                 This test needs to be updated to use a real WalletManager with Redis."
+            )
+        })
+    }
+
+    fn require_config(&self) -> &WalletManagerConfig {
+        self.config.as_ref().unwrap_or_else(|| {
+            panic!(
+                "WalletManager::test_stub() was used but wallet operations were attempted. \
+                 This test needs to be updated to use a real WalletManager with Redis."
+            )
+        })
     }
 
     /// Acquire a wallet for a beacon update operation
@@ -67,8 +127,9 @@ impl WalletManager {
     /// # Returns
     /// A WalletHandle with the locked wallet ready for use
     pub async fn acquire_for_beacon(&self, beacon: &Address) -> Result<WalletHandle, String> {
+        let pool = self.require_pool();
         // Check if beacon has a designated wallet
-        if let Some(wallet_address) = self.pool.get_wallet_for_beacon(beacon).await? {
+        if let Some(wallet_address) = pool.get_wallet_for_beacon(beacon).await? {
             self.acquire_specific_wallet(&wallet_address).await
         } else {
             self.acquire_any_wallet().await
@@ -80,30 +141,33 @@ impl WalletManager {
     /// # Arguments
     /// * `address` - The wallet address to acquire
     pub async fn acquire_specific_wallet(&self, address: &Address) -> Result<WalletHandle, String> {
+        let pool = self.require_pool();
+        let config = self.require_config();
+
         // Get wallet info from pool
-        let wallet_info = self.pool.get_wallet_info(address).await?;
+        let wallet_info = pool.get_wallet_info(address).await?;
 
         // Create and acquire lock
         let lock = WalletLock::new(
-            self.pool.redis_client().clone(),
+            pool.redis_client().clone(),
             *address,
-            self.pool.instance_id().to_string(),
-            self.config.lock_ttl,
+            pool.instance_id().to_string(),
+            config.lock_ttl,
         );
 
         let lock_guard = lock
-            .acquire(self.config.lock_retry_count, self.config.lock_retry_delay)
+            .acquire(config.lock_retry_count, config.lock_retry_delay)
             .await?;
 
         // Create signer
         let signer = TurnkeySigner::new(
-            self.config.turnkey_api_url.clone(),
-            self.config.turnkey_organization_id.clone(),
-            self.config.turnkey_api_public_key.clone(),
-            self.config.turnkey_api_private_key.clone(),
+            config.turnkey_api_url.clone(),
+            config.turnkey_organization_id.clone(),
+            config.turnkey_api_public_key.clone(),
+            config.turnkey_api_private_key.clone(),
             wallet_info.turnkey_key_id.clone(),
             wallet_info.address,
-            self.config.chain_id,
+            config.chain_id,
         )
         .map_err(|e| format!("Failed to create Turnkey signer: {e}"))?;
 
@@ -112,7 +176,10 @@ impl WalletManager {
 
     /// Acquire any available wallet from the pool
     pub async fn acquire_any_wallet(&self) -> Result<WalletHandle, String> {
-        let available = self.pool.list_available_wallets().await?;
+        let pool = self.require_pool();
+        let config = self.require_config();
+
+        let available = pool.list_available_wallets().await?;
 
         if available.is_empty() {
             return Err("No available wallets in the pool".to_string());
@@ -121,25 +188,25 @@ impl WalletManager {
         // Try to acquire each available wallet until one succeeds
         for wallet_info in available {
             let lock = WalletLock::new(
-                self.pool.redis_client().clone(),
+                pool.redis_client().clone(),
                 wallet_info.address,
-                self.pool.instance_id().to_string(),
-                self.config.lock_ttl,
+                pool.instance_id().to_string(),
+                config.lock_ttl,
             );
 
             match lock
-                .acquire(self.config.lock_retry_count, self.config.lock_retry_delay)
+                .acquire(config.lock_retry_count, config.lock_retry_delay)
                 .await
             {
                 Ok(lock_guard) => {
                     let signer = TurnkeySigner::new(
-                        self.config.turnkey_api_url.clone(),
-                        self.config.turnkey_organization_id.clone(),
-                        self.config.turnkey_api_public_key.clone(),
-                        self.config.turnkey_api_private_key.clone(),
+                        config.turnkey_api_url.clone(),
+                        config.turnkey_organization_id.clone(),
+                        config.turnkey_api_public_key.clone(),
+                        config.turnkey_api_private_key.clone(),
                         wallet_info.turnkey_key_id.clone(),
                         wallet_info.address,
-                        self.config.chain_id,
+                        config.chain_id,
                     )
                     .map_err(|e| format!("Failed to create Turnkey signer: {e}"))?;
 
@@ -154,12 +221,12 @@ impl WalletManager {
 
     /// Get access to the wallet pool
     pub fn pool(&self) -> &WalletPool {
-        &self.pool
+        self.require_pool()
     }
 
     /// Get the instance ID
     pub fn instance_id(&self) -> &str {
-        self.pool.instance_id()
+        self.require_pool().instance_id()
     }
 
     /// Create a lock for a specific wallet
@@ -167,11 +234,23 @@ impl WalletManager {
     /// This is useful when you need to manage the lock separately from
     /// acquiring a wallet handle.
     pub fn create_lock(&self, address: &Address) -> WalletLock {
+        let pool = self.require_pool();
+        let config = self.require_config();
         WalletLock::new(
-            self.pool.redis_client().clone(),
+            pool.redis_client().clone(),
             *address,
-            self.pool.instance_id().to_string(),
-            self.config.lock_ttl,
+            pool.instance_id().to_string(),
+            config.lock_ttl,
         )
+    }
+
+    /// List all wallets in the pool
+    pub async fn list_wallets(&self) -> Result<Vec<WalletInfo>, String> {
+        self.require_pool().list_wallets().await
+    }
+
+    /// Check if this is a test stub
+    pub fn is_test_stub(&self) -> bool {
+        self.is_test_stub
     }
 }

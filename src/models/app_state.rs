@@ -3,8 +3,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::AlloyProvider;
 use crate::services::wallet::WalletManager;
+use crate::{AlloyProvider, ReadOnlyProvider};
 
 /// API endpoint information for documentation
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -176,10 +176,25 @@ pub struct ApiSummary {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub provider: Arc<AlloyProvider>,
-    pub alternate_provider: Option<Arc<AlloyProvider>>,
-    pub wallet_address: Address,
+    // Read-only providers for queries (no wallet)
+    pub read_provider: Arc<ReadOnlyProvider>,
+    pub alternate_read_provider: Option<Arc<ReadOnlyProvider>>,
+
+    // Funding provider (PRIVATE_KEY wallet) - ONLY for fund_guest_wallet
+    pub funding_provider: Arc<AlloyProvider>,
+    pub funding_wallet_address: Address,
+
+    // WalletManager for contract operations (Turnkey wallets)
+    pub wallet_manager: Arc<WalletManager>,
+
+    // RPC configuration for building providers from WalletHandle
+    pub rpc_url: String,
+    pub chain_id: u64,
+
+    // Signer for ECDSA signing (using funding wallet)
     pub signer: PrivateKeySigner,
+
+    // Contract ABIs
     pub beacon_abi: JsonAbi,
     pub beacon_factory_abi: JsonAbi,
     pub beacon_registry_abi: JsonAbi,
@@ -189,19 +204,28 @@ pub struct AppState {
     pub step_beacon_abi: JsonAbi,
     pub ecdsa_beacon_abi: JsonAbi,
     pub ecdsa_verifier_adapter_abi: JsonAbi,
+
+    // Contract addresses
     pub beacon_factory_address: Address,
     pub perpcity_registry_address: Address,
     pub perp_manager_address: Address,
     pub usdc_address: Address,
     pub dichotomous_beacon_factory_address: Option<Address>,
+
+    // Transfer limits
     pub usdc_transfer_limit: u128,
     pub eth_transfer_limit: u128,
+
+    // Authentication
     pub access_token: String,
+
+    // Perp module addresses
     pub fees_module_address: Address,
     pub margin_ratios_module_address: Address,
     pub lockup_period_module_address: Address,
     pub sqrt_price_impact_limit_module_address: Address,
     pub default_starting_sqrt_price_x96: Option<u128>,
-    pub multicall3_address: Option<Address>, // Optional multicall3 contract for batch operations
-    pub wallet_manager: Option<Arc<WalletManager>>, // Optional multi-wallet manager for distributed operations
+
+    // Optional multicall3 contract for batch operations
+    pub multicall3_address: Option<Address>,
 }

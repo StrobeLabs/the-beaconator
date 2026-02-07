@@ -8,14 +8,13 @@
 
 pub mod lock;
 pub mod manager;
+pub mod mock;
 pub mod pool;
 pub mod turnkey_signer;
 
-#[cfg(test)]
-pub mod mock;
-
 pub use lock::{WalletLock, WalletLockGuard};
 pub use manager::{WalletHandle, WalletManager};
+pub use mock::{MockWalletHandle, MockWalletManager};
 pub use pool::WalletPool;
 pub use turnkey_signer::TurnkeySigner;
 
