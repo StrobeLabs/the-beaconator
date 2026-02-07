@@ -1,5 +1,4 @@
 use alloy::primitives::{Address, B256, Bytes, U256};
-use alloy::signers::Signer;
 use alloy::sol_types::SolValue;
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

@@ -85,10 +85,12 @@ test-redis: ## Run all Redis-dependent tests (spins up Redis container)
 		docker run -d --name beaconator-redis -p 6379:6379 redis:alpine || true; \
 		sleep 2; \
 	fi
+	@echo "Flushing Redis to ensure clean state..."
+	@redis-cli -h 127.0.0.1 -p 6379 FLUSHALL > /dev/null 2>&1 || true
 	@echo "Running wallet module tests..."
-	@REDIS_URL=redis://127.0.0.1:6379 cargo test --lib wallet -- --ignored --nocapture
+	@REDIS_URL=redis://127.0.0.1:6379 cargo test --lib wallet -- --ignored --nocapture --test-threads=1
 	@echo "Running unit tests that require WalletManager..."
-	@REDIS_URL=redis://127.0.0.1:6379 cargo test unit_tests -- --ignored --nocapture
+	@REDIS_URL=redis://127.0.0.1:6379 cargo test unit_tests -- --ignored --nocapture --test-threads=1
 	@echo "Redis-dependent tests completed ✅"
 
 test-full: ## Run full test suite including integration tests

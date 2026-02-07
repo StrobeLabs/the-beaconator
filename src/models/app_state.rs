@@ -191,7 +191,10 @@ pub struct AppState {
     pub rpc_url: String,
     pub chain_id: u64,
 
-    // Signer for ECDSA signing (using funding wallet)
+    /// Legacy signer field - currently unused.
+    /// ECDSA signing operations now use wallet_handle.signer from WalletManager.
+    /// Kept for backwards compatibility; may be removed in a future refactor.
+    #[allow(dead_code)]
     pub signer: PrivateKeySigner,
 
     // Contract ABIs

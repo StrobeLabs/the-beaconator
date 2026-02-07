@@ -66,10 +66,10 @@ impl WalletPool {
 
         let mut wallets = Vec::new();
         for addr_str in addresses {
-            if let Ok(address) = Address::from_str(&addr_str)
-                && let Ok(info) = self.get_wallet_info(&address).await
-            {
-                wallets.push(info);
+            if let Ok(address) = Address::from_str(&addr_str) {
+                if let Ok(info) = self.get_wallet_info(&address).await {
+                    wallets.push(info);
+                }
             }
         }
 

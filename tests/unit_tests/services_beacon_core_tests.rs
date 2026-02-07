@@ -8,7 +8,7 @@ use the_beaconator::services::beacon::core::{
 
 #[tokio::test]
 async fn test_update_beacon_invalid_address() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
 
     let request = UpdateBeaconRequest {
         beacon_address: "invalid_address".to_string(),
@@ -25,7 +25,7 @@ async fn test_update_beacon_invalid_address() {
 
 #[tokio::test]
 async fn test_is_beacon_registered_with_mock_state() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let beacon_address = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
     let registry_address = Address::from_str("0x0987654321098765432109876543210987654321").unwrap();
 
@@ -38,7 +38,7 @@ async fn test_is_beacon_registered_with_mock_state() {
 #[tokio::test]
 async fn test_is_transaction_confirmed_with_mock_state() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
     let tx_hash =
         B256::from_str("0x1234567890123456789012345678901234567890123456789012345678901234")
             .unwrap();
@@ -52,7 +52,7 @@ async fn test_is_transaction_confirmed_with_mock_state() {
 #[ignore = "requires WalletManager with Redis"]
 async fn test_create_beacon_via_factory_network_failure() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
     let factory_address = Address::from_str("0x0987654321098765432109876543210987654321").unwrap();
 
     // Should fail deterministically due to mock provider
@@ -63,7 +63,7 @@ async fn test_create_beacon_via_factory_network_failure() {
 #[tokio::test]
 async fn test_register_beacon_with_registry_network_failure() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
     let beacon_address = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
     let registry_address = Address::from_str("0x0987654321098765432109876543210987654321").unwrap();
 
@@ -75,7 +75,7 @@ async fn test_register_beacon_with_registry_network_failure() {
 #[tokio::test]
 async fn test_update_beacon_empty_address() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
 
     let request = UpdateBeaconRequest {
         beacon_address: "".to_string(),
@@ -94,7 +94,7 @@ async fn test_update_beacon_empty_address() {
 #[ignore = "requires WalletManager with Redis"]
 async fn test_update_beacon_zero_address() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
 
     let request = UpdateBeaconRequest {
         beacon_address: "0x0000000000000000000000000000000000000000".to_string(),
@@ -113,7 +113,7 @@ async fn test_update_beacon_zero_address() {
 #[ignore = "requires WalletManager with Redis"]
 async fn test_update_beacon_max_address() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
 
     let request = UpdateBeaconRequest {
         beacon_address: "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF".to_string(),
@@ -132,7 +132,7 @@ async fn test_update_beacon_max_address() {
 #[ignore = "requires WalletManager with Redis"]
 async fn test_update_beacon_various_proof_sizes() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
 
     let large_proof = format!("0x{}", "ff".repeat(100));
     let very_large_proof = format!("0x{}", "00".repeat(1000));
@@ -164,7 +164,7 @@ async fn test_update_beacon_various_proof_sizes() {
 #[ignore = "requires WalletManager with Redis"]
 async fn test_update_beacon_various_public_signals() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
 
     let test_public_signals = vec![
         "0x0000000000000000000000000000000000000000000000000000000000000000", // 0
@@ -190,7 +190,7 @@ async fn test_update_beacon_various_public_signals() {
 #[tokio::test]
 #[ignore = "requires WalletManager with Redis"]
 async fn test_create_beacon_via_factory_zero_factory() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let factory_address = Address::from_str("0x0000000000000000000000000000000000000000").unwrap();
 
     let result = create_beacon_via_factory(&app_state, factory_address).await;
@@ -200,7 +200,7 @@ async fn test_create_beacon_via_factory_zero_factory() {
 #[tokio::test]
 #[ignore = "requires WalletManager with Redis"]
 async fn test_create_beacon_via_factory_nonzero_factory() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let factory_address = Address::from_str("0x0987654321098765432109876543210987654321").unwrap();
 
     let result = create_beacon_via_factory(&app_state, factory_address).await;
@@ -210,7 +210,7 @@ async fn test_create_beacon_via_factory_nonzero_factory() {
 #[tokio::test]
 #[ignore = "requires WalletManager with Redis"]
 async fn test_create_beacon_via_factory_valid_address() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let factory_address = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
 
     let result = create_beacon_via_factory(&app_state, factory_address).await;
@@ -219,7 +219,7 @@ async fn test_create_beacon_via_factory_valid_address() {
 
 #[tokio::test]
 async fn test_is_beacon_registered_zero_addresses() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let zero_address = Address::from_str("0x0000000000000000000000000000000000000000").unwrap();
 
     // Test zero beacon address
@@ -234,7 +234,7 @@ async fn test_is_beacon_registered_zero_addresses() {
 
 #[tokio::test]
 async fn test_is_beacon_registered_same_addresses() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let address = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
 
     let result = is_beacon_registered(&app_state, address, address).await;
@@ -243,7 +243,7 @@ async fn test_is_beacon_registered_same_addresses() {
 
 #[tokio::test]
 async fn test_is_transaction_confirmed_zero_hash() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let zero_hash = B256::from([0u8; 32]);
 
     let result = is_transaction_confirmed(&app_state, zero_hash).await;
@@ -252,7 +252,7 @@ async fn test_is_transaction_confirmed_zero_hash() {
 
 #[tokio::test]
 async fn test_is_transaction_confirmed_max_hash() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let max_hash = B256::from([0xFFu8; 32]);
 
     let result = is_transaction_confirmed(&app_state, max_hash).await;
@@ -261,7 +261,7 @@ async fn test_is_transaction_confirmed_max_hash() {
 
 #[tokio::test]
 async fn test_is_transaction_confirmed_various_hashes() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
 
     let test_hashes = vec![
         B256::from([0u8; 32]),   // All zeros
@@ -279,7 +279,7 @@ async fn test_is_transaction_confirmed_various_hashes() {
 
 #[tokio::test]
 async fn test_register_beacon_with_registry_zero_addresses() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let zero_address = Address::from_str("0x0000000000000000000000000000000000000000").unwrap();
 
     // Test zero beacon address
@@ -299,7 +299,7 @@ async fn test_register_beacon_with_registry_zero_addresses() {
 
 #[tokio::test]
 async fn test_register_beacon_with_registry_same_addresses() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let address = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
 
     let result = register_beacon_with_registry(&app_state, address, address).await;
@@ -308,7 +308,7 @@ async fn test_register_beacon_with_registry_same_addresses() {
 
 #[tokio::test]
 async fn test_register_beacon_with_registry_max_addresses() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let max_address = Address::from_str("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF").unwrap();
 
     let result = register_beacon_with_registry(&app_state, max_address, max_address).await;

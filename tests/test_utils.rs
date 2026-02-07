@@ -137,8 +137,61 @@ use std::str::FromStr;
 use std::sync::Arc;
 use the_beaconator::ReadOnlyProvider;
 use the_beaconator::models::AppState;
+use the_beaconator::models::wallet::{WalletInfo, WalletStatus};
 use the_beaconator::services::wallet::WalletManager;
 use tokio::sync::OnceCell;
+
+/// Create a WalletManager - uses real Redis if REDIS_URL is set, otherwise test_stub
+///
+/// This function allows tests marked with `#[ignore = "requires WalletManager with Redis"]`
+/// to work when Redis is available (e.g., in CI with the Redis service).
+/// When Redis is available, it also populates the wallet pool with test wallets.
+pub async fn create_test_wallet_manager() -> Arc<WalletManager> {
+    if let Ok(redis_url) = std::env::var("REDIS_URL") {
+        // Create mock signers from Anvil's deterministic test keys
+        let test_keys = [
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80", // Account 0
+            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d", // Account 1
+            "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a", // Account 2
+        ];
+
+        let signers: Vec<PrivateKeySigner> = test_keys
+            .iter()
+            .map(|k| k.parse::<PrivateKeySigner>().expect("Invalid test key"))
+            .collect();
+
+        match WalletManager::test_with_mock_signers(&redis_url, signers).await {
+            Ok(manager) => {
+                // Populate wallet pool with the mock signer addresses
+                for (i, addr) in manager.mock_signer_addresses().iter().enumerate() {
+                    let wallet_info = WalletInfo {
+                        address: *addr,
+                        turnkey_key_id: format!("test-key-{i}"),
+                        status: WalletStatus::Available,
+                        designated_beacons: vec![],
+                    };
+                    if let Err(e) = manager.pool().add_wallet(wallet_info).await {
+                        tracing::warn!("Failed to add test wallet {}: {}", addr, e);
+                    }
+                }
+                tracing::info!(
+                    "Created WalletManager with {} mock signers for testing",
+                    manager.mock_signer_addresses().len()
+                );
+                Arc::new(manager)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to create WalletManager with mock signers: {e}, falling back to test stub"
+                );
+                Arc::new(WalletManager::test_stub())
+            }
+        }
+    } else {
+        tracing::debug!("REDIS_URL not set, using WalletManager test stub");
+        Arc::new(WalletManager::test_stub())
+    }
+}
 
 /// Build a read-only provider (without wallet) for test purposes
 fn build_test_read_only_provider(rpc_url: &str) -> Arc<ReadOnlyProvider> {
@@ -516,6 +569,104 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
     (app_state, anvil)
 }
 
+/// Create an isolated test AppState with both Anvil (blockchain) and Redis (wallet management)
+///
+/// This is the recommended helper for integration tests that need both:
+/// - Real blockchain interaction via Anvil
+/// - Wallet locking/management via Redis
+///
+/// Returns the AppState and AnvilManager. The AnvilManager must be kept alive for the
+/// duration of the test (it terminates the Anvil instance when dropped).
+///
+/// # Example
+///
+/// ```rust
+/// #[tokio::test]
+/// #[ignore = "requires Anvil and Redis"]
+/// async fn test_full_integration() {
+///     let (app_state, _anvil) = create_isolated_test_app_state_with_redis().await;
+///     // app_state has:
+///     // - Real Anvil blockchain connection
+///     // - Real WalletManager with Redis (if REDIS_URL is set)
+///     // - Pre-populated wallet pool with test wallets
+/// }
+/// ```
+pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilManager) {
+    // Create isolated Anvil instance
+    let anvil = AnvilManager::new().await;
+
+    // Deploy test contracts
+    let deployment = TestDeployment::deploy_isolated(&anvil)
+        .await
+        .expect("Failed to deploy test contracts");
+
+    // Load real ABIs from test fixtures
+    let beacon_abi = load_test_abi("Beacon");
+    let beacon_factory_abi = load_test_abi("BeaconFactory");
+    let beacon_registry_abi = load_test_abi("BeaconRegistry");
+    let perp_manager_abi = load_test_abi("PerpManager");
+
+    // Create signer for ECDSA operations (using Anvil's first deterministic test key)
+    let test_signer = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+        .parse::<PrivateKeySigner>()
+        .expect("Failed to parse test private key")
+        .with_chain_id(Some(31337));
+
+    // Build read-only provider separately
+    let read_provider = build_test_read_only_provider(anvil.rpc_url());
+
+    // Create WalletManager - uses real Redis if REDIS_URL is set, otherwise test stub
+    let wallet_manager = create_test_wallet_manager().await;
+
+    let app_state = AppState {
+        read_provider,
+        alternate_read_provider: None,
+        funding_provider: deployment.provider,
+        funding_wallet_address: deployment.deployer,
+        rpc_url: anvil.rpc_url().to_string(),
+        chain_id: 31337,
+        signer: test_signer,
+        beacon_abi,
+        beacon_factory_abi,
+        beacon_registry_abi,
+        perp_manager_abi,
+        multicall3_abi: load_test_abi("Multicall3"),
+        dichotomous_beacon_factory_abi: JsonAbi::new(),
+        step_beacon_abi: JsonAbi::new(),
+        ecdsa_beacon_abi: JsonAbi::new(),
+        ecdsa_verifier_adapter_abi: JsonAbi::new(),
+        beacon_factory_address: deployment.beacon_factory,
+        perpcity_registry_address: deployment.beacon_registry,
+        perp_manager_address: deployment.perp_hook,
+        usdc_address: deployment.usdc,
+        dichotomous_beacon_factory_address: None,
+        usdc_transfer_limit: 1_000_000_000,
+        eth_transfer_limit: 10_000_000_000_000_000,
+        access_token: "test_token".to_string(),
+        fees_module_address: Address::from_str("0x4567890123456789012345678901234567890123")
+            .unwrap(),
+        margin_ratios_module_address: Address::from_str(
+            "0x5678901234567890123456789012345678901234",
+        )
+        .unwrap(),
+        lockup_period_module_address: Address::from_str(
+            "0x6789012345678901234567890123456789012345",
+        )
+        .unwrap(),
+        sqrt_price_impact_limit_module_address: Address::from_str(
+            "0x7890123456789012345678901234567890123456",
+        )
+        .unwrap(),
+        default_starting_sqrt_price_x96: Some(560227709747861419891227623424),
+        multicall3_address: Some(
+            Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
+        ),
+        wallet_manager,
+    };
+
+    (app_state, anvil)
+}
+
 /// DEPRECATED: Use create_isolated_test_app_state() for better test isolation
 #[deprecated(note = "Use create_isolated_test_app_state() for better test isolation")]
 pub async fn create_test_app_state_with_account(account_index: usize) -> AppState {
@@ -635,8 +786,12 @@ pub async fn mock_contract_deployment(name: &str) -> ContractDeploymentResult {
     }
 }
 
-/// Create a synchronous test AppState for simple tests (fallback)
-pub fn create_simple_test_app_state() -> AppState {
+/// Create a test AppState for simple tests
+///
+/// This is async because it may create a real WalletManager when REDIS_URL is set.
+/// When REDIS_URL is not set, it uses a test stub that will panic if wallet operations
+/// are attempted.
+pub async fn create_simple_test_app_state() -> AppState {
     // Create mock provider with wallet for testing - this won't work for real network calls
     let signer = alloy::signers::local::PrivateKeySigner::random();
     let wallet = alloy::network::EthereumWallet::from(signer.clone());
@@ -650,6 +805,9 @@ pub fn create_simple_test_app_state() -> AppState {
     // Build read-only provider separately
     let read_provider = build_test_read_only_provider("http://localhost:8545");
 
+    // Create WalletManager - uses real Redis if REDIS_URL is set
+    let wallet_manager = create_test_wallet_manager().await;
+
     AppState {
         read_provider,
         alternate_read_provider: None,
@@ -697,12 +855,14 @@ pub fn create_simple_test_app_state() -> AppState {
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
-        wallet_manager: Arc::new(WalletManager::test_stub()),
+        wallet_manager,
     }
 }
 
 /// Create a test AppState with a custom provider (for mocking network behavior)
-pub fn create_test_app_state_with_provider(
+///
+/// This is async because it may create a real WalletManager when REDIS_URL is set.
+pub async fn create_test_app_state_with_provider(
     provider: Arc<the_beaconator::AlloyProvider>,
 ) -> AppState {
     // Create a random signer for ECDSA operations in tests
@@ -711,6 +871,9 @@ pub fn create_test_app_state_with_provider(
     // Build read-only provider separately (uses hardcoded localhost since custom provider URL unknown)
     let read_provider = build_test_read_only_provider("http://localhost:8545");
 
+    // Create WalletManager - uses real Redis if REDIS_URL is set
+    let wallet_manager = create_test_wallet_manager().await;
+
     AppState {
         read_provider,
         alternate_read_provider: None,
@@ -758,7 +921,7 @@ pub fn create_test_app_state_with_provider(
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
-        wallet_manager: Arc::new(WalletManager::test_stub()),
+        wallet_manager,
     }
 }
 

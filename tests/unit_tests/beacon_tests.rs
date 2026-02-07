@@ -22,7 +22,7 @@ use the_beaconator::services::beacon::core::{
 #[ignore = "requires WalletManager with Redis"]
 async fn test_batch_update_beacon_with_multicall3() {
     let token = ApiToken("test_token".to_string());
-    let mut app_state = crate::test_utils::create_simple_test_app_state();
+    let mut app_state = crate::test_utils::create_simple_test_app_state().await;
 
     // Set multicall3 address for the test
     app_state.multicall3_address =
@@ -42,7 +42,6 @@ async fn test_batch_update_beacon_with_multicall3() {
         updates: vec![update_data],
     });
 
-    // This will fail in test environment due to no actual contracts, but should not panic
     let result = batch_update_beacon(request, token, state).await;
 
     // Should return an error response rather than panic
@@ -62,7 +61,7 @@ async fn test_batch_update_beacon_with_multicall3() {
 #[ignore = "requires WalletManager with Redis"]
 async fn test_batch_update_beacon_without_multicall3() {
     let token = ApiToken("test_token".to_string());
-    let app_state = crate::test_utils::create_simple_test_app_state(); // No multicall3_address set
+    let app_state = crate::test_utils::create_simple_test_app_state().await; // No multicall3_address set
     let state = State::from(&app_state);
 
     let update_data = BeaconUpdateData {
@@ -106,7 +105,7 @@ async fn test_batch_update_beacon_without_multicall3() {
 #[ignore = "requires WalletManager with Redis"]
 async fn test_batch_create_beacons_with_multicall3() {
     let token = ApiToken("test_token".to_string());
-    let mut app_state = crate::test_utils::create_simple_test_app_state();
+    let mut app_state = crate::test_utils::create_simple_test_app_state().await;
 
     // Set multicall3 address for the test
     app_state.multicall3_address =
@@ -165,7 +164,7 @@ async fn test_create_beacon_functionality() {
     use rocket::State;
 
     let token = ApiToken("test_token".to_string());
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let state = State::from(&app_state);
 
     let request = Json(CreateBeaconRequest {
@@ -179,9 +178,9 @@ async fn test_create_beacon_functionality() {
     assert!(result.is_err());
 }
 
-#[test]
-fn test_app_state_has_required_contract_info() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+#[tokio::test]
+async fn test_app_state_has_required_contract_info() {
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
 
     // Test that all required contract addresses are set
     assert_ne!(
@@ -222,7 +221,7 @@ fn test_batch_create_response_serialization() {
 #[tokio::test]
 #[ignore = "requires WalletManager with Redis"]
 async fn test_create_beacon_via_factory_helper() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let factory_address = app_state.beacon_factory_address;
 
     // This will fail without a real network, but tests the function signature
@@ -232,7 +231,7 @@ async fn test_create_beacon_via_factory_helper() {
 
 #[tokio::test]
 async fn test_register_beacon_with_registry_helper() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let beacon_address = Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
     let registry_address = app_state.perpcity_registry_address;
 
@@ -243,7 +242,7 @@ async fn test_register_beacon_with_registry_helper() {
 
 #[tokio::test]
 async fn test_transaction_confirmation_timeout_handling() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let tx_hash =
         B256::from_str("0x1234567890123456789012345678901234567890123456789012345678901234")
             .unwrap();
@@ -258,7 +257,7 @@ async fn test_transaction_confirmation_timeout_handling() {
 
 #[tokio::test]
 async fn test_beacon_registration_check() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let beacon_address = Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
     let registry_address = app_state.perpcity_registry_address;
 

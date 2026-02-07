@@ -13,7 +13,7 @@ pub mod pool;
 pub mod turnkey_signer;
 
 pub use lock::{WalletLock, WalletLockGuard};
-pub use manager::{WalletHandle, WalletManager};
+pub use manager::{WalletHandle, WalletManager, WalletSigner};
 pub use mock::{MockWalletHandle, MockWalletManager};
 pub use pool::WalletPool;
 pub use turnkey_signer::TurnkeySigner;
