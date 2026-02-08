@@ -1,6 +1,6 @@
 # Makefile for the-beaconator
 
-.PHONY: help build build-release test test-unit test-integration test-parallel test-verbose test-coverage test-verify lint fmt check clean docker-build docker-run dev
+.PHONY: help build build-release test test-unit test-integration test-parallel test-verbose test-coverage test-verify lint fmt fmt-check check clean clean-all docker-build docker-build-cached docker-run docker-run-local docker-test dev docs install pre-commit release-prep quality test-fast test-wallet test-wallet-stop test-redis test-full
 
 # Default target
 help: ## Show this help message
@@ -61,9 +61,15 @@ test-fast: ## Run tests quickly (unit tests + fast integration tests, under 10s)
 
 test-wallet: ## Run wallet tests with Redis (requires Redis on localhost:6379)
 	@echo "Running wallet tests (requires Redis)..."
-	@if ! docker ps | grep -q beaconator-redis; then \
-		echo "Starting Redis container..."; \
-		docker run -d --name beaconator-redis -p 6379:6379 redis:alpine || true; \
+	@if docker ps -a --format '{{.Names}}' | grep -q '^beaconator-redis$$'; then \
+		if ! docker ps --format '{{.Names}}' | grep -q '^beaconator-redis$$'; then \
+			echo "Starting existing Redis container..."; \
+			docker start beaconator-redis; \
+			sleep 2; \
+		fi; \
+	else \
+		echo "Creating Redis container..."; \
+		docker run -d --name beaconator-redis -p 6379:6379 redis:alpine; \
 		sleep 2; \
 	fi
 	@echo "Running wallet module tests..."
@@ -80,9 +86,15 @@ test-wallet-stop: ## Stop the Redis container used for wallet tests
 
 test-redis: ## Run all Redis-dependent tests (spins up Redis container)
 	@echo "Running all Redis-dependent tests..."
-	@if ! docker ps | grep -q beaconator-redis; then \
-		echo "Starting Redis container..."; \
-		docker run -d --name beaconator-redis -p 6379:6379 redis:alpine || true; \
+	@if docker ps -a --format '{{.Names}}' | grep -q '^beaconator-redis$$'; then \
+		if ! docker ps --format '{{.Names}}' | grep -q '^beaconator-redis$$'; then \
+			echo "Starting existing Redis container..."; \
+			docker start beaconator-redis; \
+			sleep 2; \
+		fi; \
+	else \
+		echo "Creating Redis container..."; \
+		docker run -d --name beaconator-redis -p 6379:6379 redis:alpine; \
 		sleep 2; \
 	fi
 	@echo "Flushing Redis to ensure clean state..."
