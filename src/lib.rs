@@ -283,38 +283,64 @@ pub async fn create_rocket() -> Rocket<Build> {
         }
     }
 
-    // Initialize WalletManager (REQUIRED for contract operations)
-    let mut wallet_config = WalletManagerConfig::from_env().unwrap_or_else(|e| {
-        panic!(
-            "WalletManager configuration is required: {e}. \
-             Required env vars: REDIS_URL, TURNKEY_API_URL, TURNKEY_ORGANIZATION_ID, TURNKEY_API_PUBLIC_KEY, TURNKEY_API_PRIVATE_KEY"
-        )
-    });
+    // Initialize WalletManager (optional based on MULTI_WALLET_ENABLED env var)
+    let multi_wallet_enabled = std::env::var("MULTI_WALLET_ENABLED")
+        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .unwrap_or(false);
 
-    // Set chain_id from the already-determined chain_id
-    wallet_config.chain_id = Some(chain_id);
+    let wallet_manager = if multi_wallet_enabled {
+        match WalletManagerConfig::from_env() {
+            Ok(mut wallet_config) => {
+                // Set chain_id from the already-determined chain_id
+                wallet_config.chain_id = Some(chain_id);
 
-    let wallet_manager = WalletManager::new(wallet_config).await.unwrap_or_else(|e| {
-        panic!(
-            "WalletManager failed to initialize: {e}. \
-             Check Redis connectivity and Turnkey credentials."
-        )
-    });
+                match WalletManager::new(wallet_config).await {
+                    Ok(manager) => {
+                        tracing::info!("WalletManager initialized for contract operations");
 
-    tracing::info!("WalletManager initialized for contract operations");
+                        // Log wallet pool status
+                        match manager.list_wallets().await {
+                            Ok(wallets) => {
+                                tracing::info!("Wallet pool contains {} wallets", wallets.len());
+                                for wallet in &wallets {
+                                    tracing::info!("  - {} ({:?})", wallet.address, wallet.status);
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to list wallets in pool: {}", e);
+                            }
+                        }
 
-    // Log wallet pool status
-    match wallet_manager.list_wallets().await {
-        Ok(wallets) => {
-            tracing::info!("Wallet pool contains {} wallets", wallets.len());
-            for wallet in &wallets {
-                tracing::info!("  - {} ({:?})", wallet.address, wallet.status);
+                        manager
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "WalletManager failed to initialize: {e}. \
+                             Check Redis connectivity and Turnkey credentials. \
+                             Falling back to stub (contract operations will fail)."
+                        );
+                        WalletManager::test_stub()
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    "WalletManager configuration error: {e}. \
+                     Required env vars: REDIS_URL, TURNKEY_API_URL, TURNKEY_ORGANIZATION_ID, \
+                     TURNKEY_API_PUBLIC_KEY, TURNKEY_API_PRIVATE_KEY. \
+                     Falling back to stub (contract operations will fail)."
+                );
+                WalletManager::test_stub()
             }
         }
-        Err(e) => {
-            tracing::warn!("Failed to list wallets in pool: {}", e);
-        }
-    }
+    } else {
+        tracing::warn!(
+            "MULTI_WALLET_ENABLED is not set or false. \
+             WalletManager using stub mode (contract operations requiring wallet pool will fail). \
+             Set MULTI_WALLET_ENABLED=true to enable multi-wallet support."
+        );
+        WalletManager::test_stub()
+    };
 
     let app_state = AppState {
         // Providers

@@ -125,35 +125,108 @@ pub async fn batch_update_beacon(
         return Err("Batch update request exceeds maximum of 100 updates".to_string());
     }
 
-    // Acquire a wallet from the pool for all batch operations
-    let wallet_handle = state
-        .wallet_manager
-        .acquire_any_wallet()
-        .await
-        .map_err(|e| format!("Failed to acquire wallet for batch update: {e}"))?;
+    // Group updates by owner wallet to ensure correct wallet is used for each beacon
+    let mut updates_by_wallet: std::collections::HashMap<Address, Vec<&BeaconUpdateData>> =
+        std::collections::HashMap::new();
+    let mut parse_errors: Vec<(String, String)> = Vec::new();
 
-    let wallet_address = wallet_handle.address();
-    tracing::info!("Acquired wallet {} for batch beacon update", wallet_address);
+    for update in updates {
+        // Parse beacon address
+        match Address::from_str(&update.beacon_address) {
+            Ok(beacon_addr) => {
+                // Get the wallet that owns this beacon (or any available wallet if no owner set)
+                match state.wallet_manager.acquire_for_beacon(&beacon_addr).await {
+                    Ok(handle) => {
+                        let wallet_addr = handle.address();
+                        // Release the handle immediately - we just need to know which wallet to use
+                        drop(handle);
+                        updates_by_wallet
+                            .entry(wallet_addr)
+                            .or_default()
+                            .push(update);
+                    }
+                    Err(e) => {
+                        parse_errors.push((
+                            update.beacon_address.clone(),
+                            format!("Failed to determine wallet for beacon: {e}"),
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                parse_errors.push((
+                    update.beacon_address.clone(),
+                    format!("Invalid beacon address: {e}"),
+                ));
+            }
+        }
+    }
 
-    // Build provider with the acquired wallet
-    let provider = wallet_handle
-        .build_provider(&state.rpc_url)
-        .map_err(|e| format!("Failed to build provider: {e}"))?;
+    // Process each wallet's updates separately
+    let mut batch_results: Vec<(String, Result<String, String>)> = Vec::new();
 
-    // Process all updates using multicall for efficient batching
-    let batch_results = if let Some(multicall_address) = state.multicall3_address {
-        // Use multicall3 for efficient batch execution - single transaction with multiple calls
-        batch_update_with_multicall3(state, &provider, multicall_address, updates).await
-    } else {
-        // No multicall3 configured - return error for all updates
-        let error_msg =
-            "Batch operations require Multicall3 contract address to be configured".to_string();
-        tracing::error!("{}", error_msg);
-        updates
-            .iter()
-            .map(|update| (update.beacon_address.clone(), Err(error_msg.clone())))
-            .collect()
-    };
+    // Add parse errors to results
+    for (beacon_addr, error) in parse_errors {
+        batch_results.push((beacon_addr, Err(error)));
+    }
+
+    // Process updates for each wallet
+    for (wallet_addr, wallet_updates) in updates_by_wallet {
+        // Acquire the specific wallet for this batch
+        let wallet_handle = match state
+            .wallet_manager
+            .acquire_specific_wallet(&wallet_addr)
+            .await
+        {
+            Ok(handle) => handle,
+            Err(e) => {
+                // Mark all updates for this wallet as failed
+                let error_msg = format!("Failed to acquire wallet {wallet_addr}: {e}");
+                tracing::error!("{}", error_msg);
+                for update in wallet_updates {
+                    batch_results.push((update.beacon_address.clone(), Err(error_msg.clone())));
+                }
+                continue;
+            }
+        };
+
+        tracing::info!(
+            "Acquired wallet {} for batch update of {} beacons",
+            wallet_addr,
+            wallet_updates.len()
+        );
+
+        // Build provider with the acquired wallet
+        let provider = match wallet_handle.build_provider(&state.rpc_url) {
+            Ok(p) => p,
+            Err(e) => {
+                let error_msg = format!("Failed to build provider for wallet {wallet_addr}: {e}");
+                tracing::error!("{}", error_msg);
+                for update in wallet_updates {
+                    batch_results.push((update.beacon_address.clone(), Err(error_msg.clone())));
+                }
+                continue;
+            }
+        };
+
+        // Process this wallet's updates using multicall
+        if let Some(multicall_address) = state.multicall3_address {
+            // Convert &[&BeaconUpdateData] to &[BeaconUpdateData] for the function call
+            let updates_slice: Vec<BeaconUpdateData> =
+                wallet_updates.iter().map(|u| (*u).clone()).collect();
+            let wallet_batch_results =
+                batch_update_with_multicall3(state, &provider, multicall_address, &updates_slice)
+                    .await;
+            batch_results.extend(wallet_batch_results);
+        } else {
+            let error_msg =
+                "Batch operations require Multicall3 contract address to be configured".to_string();
+            tracing::error!("{}", error_msg);
+            for update in wallet_updates {
+                batch_results.push((update.beacon_address.clone(), Err(error_msg.clone())));
+            }
+        }
+    }
 
     // Process the results
     let mut results = Vec::new();

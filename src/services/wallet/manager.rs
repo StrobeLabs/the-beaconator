@@ -316,6 +316,8 @@ impl WalletManager {
         }
 
         // Try to acquire each available wallet until one succeeds
+        let mut last_error: Option<String> = None;
+
         for wallet_info in available {
             let lock = WalletLock::new(
                 pool.redis_client().clone(),
@@ -329,7 +331,7 @@ impl WalletManager {
                 .await
             {
                 Ok(lock_guard) => {
-                    let turnkey_signer = TurnkeySigner::new(
+                    match TurnkeySigner::new(
                         config.turnkey_api_url.clone(),
                         config.turnkey_organization_id.clone(),
                         config.turnkey_api_public_key.clone(),
@@ -337,19 +339,31 @@ impl WalletManager {
                         wallet_info.turnkey_key_id.clone(),
                         wallet_info.address,
                         config.chain_id,
-                    )
-                    .map_err(|e| format!("Failed to create Turnkey signer: {e}"))?;
-
-                    return Ok(WalletHandle {
-                        signer: WalletSigner::Turnkey(turnkey_signer),
-                        lock_guard,
-                    });
+                    ) {
+                        Ok(turnkey_signer) => {
+                            return Ok(WalletHandle {
+                                signer: WalletSigner::Turnkey(turnkey_signer),
+                                lock_guard,
+                            });
+                        }
+                        Err(e) => {
+                            // Log and continue trying other wallets
+                            let error_msg = format!(
+                                "Failed to create Turnkey signer for wallet {}: {e}",
+                                wallet_info.address
+                            );
+                            tracing::warn!("{}", error_msg);
+                            last_error = Some(error_msg);
+                            // lock_guard drops here, releasing the lock
+                            continue;
+                        }
+                    }
                 }
                 Err(_) => continue, // Try next wallet
             }
         }
 
-        Err("Failed to acquire any wallet from the pool".to_string())
+        Err(last_error.unwrap_or_else(|| "Failed to acquire any wallet from the pool".to_string()))
     }
 
     /// Get access to the wallet pool
