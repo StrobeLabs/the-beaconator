@@ -14,7 +14,7 @@ async fn test_create_verifiable_beacon_integration() {
     app_state.dichotomous_beacon_factory_address = Some(app_state.beacon_factory_address);
 
     let request = CreateVerifiableBeaconRequest {
-        verifier_address: format!("{:?}", app_state.wallet_address),
+        verifier_address: format!("{:?}", app_state.funding_wallet_address),
         initial_data: 12345,
         initial_cardinality: 10,
     };
@@ -54,7 +54,7 @@ async fn test_create_verifiable_beacon_no_factory() {
     assert!(app_state.dichotomous_beacon_factory_address.is_none());
 
     let request = CreateVerifiableBeaconRequest {
-        verifier_address: format!("{:?}", app_state.wallet_address),
+        verifier_address: format!("{:?}", app_state.funding_wallet_address),
         initial_data: 12345,
         initial_cardinality: 10,
     };
@@ -164,7 +164,7 @@ async fn test_concurrent_verifiable_beacon_operations() {
         let app_state_clone = app_state.clone();
         let handle = tokio::spawn(async move {
             let request = CreateVerifiableBeaconRequest {
-                verifier_address: format!("{:?}", app_state_clone.wallet_address),
+                verifier_address: format!("{:?}", app_state_clone.funding_wallet_address),
                 initial_data: 1000 + i,
                 initial_cardinality: 10 + i as u32,
             };
@@ -202,7 +202,7 @@ async fn test_verifiable_beacon_extreme_values() {
 
     // Test with minimum values
     let min_request = CreateVerifiableBeaconRequest {
-        verifier_address: format!("{:?}", app_state.wallet_address),
+        verifier_address: format!("{:?}", app_state.funding_wallet_address),
         initial_data: 0,
         initial_cardinality: 0,
     };
@@ -215,7 +215,7 @@ async fn test_verifiable_beacon_extreme_values() {
 
     // Test with maximum values
     let max_request = CreateVerifiableBeaconRequest {
-        verifier_address: format!("{:?}", app_state.wallet_address),
+        verifier_address: format!("{:?}", app_state.funding_wallet_address),
         initial_data: u128::MAX,
         initial_cardinality: u32::MAX,
     };

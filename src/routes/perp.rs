@@ -37,7 +37,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
             "perp_manager_address",
             state.perp_manager_address.to_string().into(),
         );
-        scope.set_extra("wallet_address", state.wallet_address.to_string().into());
+        scope.set_extra("wallet_source", "WalletManager pool".into());
     });
 
     // Parse the beacon address
@@ -108,13 +108,14 @@ pub async fn deploy_perp_for_beacon_endpoint(
     // Validate all module addresses have deployed code
     tracing::info!("Validating module addresses...");
 
-    if let Err(e) = validate_module_address(&state.provider, fees_module, "Fees module").await {
+    if let Err(e) = validate_module_address(&state.read_provider, fees_module, "Fees module").await
+    {
         sentry::capture_message(&e, sentry::Level::Error);
         return Err(Status::BadRequest);
     }
 
     if let Err(e) = validate_module_address(
-        &state.provider,
+        &state.read_provider,
         margin_ratios_module,
         "Margin ratios module",
     )
@@ -125,7 +126,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
     }
 
     if let Err(e) = validate_module_address(
-        &state.provider,
+        &state.read_provider,
         lockup_period_module,
         "Lockup period module",
     )
@@ -136,7 +137,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
     }
 
     if let Err(e) = validate_module_address(
-        &state.provider,
+        &state.read_provider,
         sqrt_price_impact_limit_module,
         "Sqrt price impact limit module",
     )
@@ -199,8 +200,8 @@ pub async fn deploy_perp_for_beacon_endpoint(
             tracing::error!("Error context:");
             tracing::error!("  - Beacon address: {}", beacon_address);
             tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
-            tracing::error!("  - Wallet address: {}", state.wallet_address);
             tracing::error!("  - USDC address: {}", state.usdc_address);
+            tracing::error!("  - Wallet source: WalletManager pool");
 
             // Provide actionable next steps based on error
             tracing::error!("Recommended next steps:");
@@ -324,7 +325,7 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             tracing::error!("  - Perp ID: {}", request.perp_id);
             tracing::error!("  - Margin amount: {} USDC", request.margin_amount_usdc);
             tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
-            tracing::error!("  - Wallet address: {}", state.wallet_address);
+            tracing::error!("  - Wallet source: WalletManager pool");
 
             // Check for the specific unknown error 0xfb8f41b2 and provide detailed analysis
             if e.contains("0xfb8f41b2") {
@@ -345,10 +346,7 @@ pub async fn deposit_liquidity_for_perp_endpoint(
 
                 // Add specific troubleshooting for this error
                 tracing::error!("   Troubleshooting steps:");
-                tracing::error!(
-                    "     1. Verify USDC balance for wallet: {}",
-                    state.wallet_address
-                );
+                tracing::error!("     1. Verify USDC balance for wallet from pool");
                 tracing::error!(
                     "     2. Check USDC allowance for PerpManager: {}",
                     state.perp_manager_address
@@ -403,9 +401,9 @@ pub async fn batch_deposit_liquidity_for_perps(
     #[allow(unused_variables)] request: Json<BatchDepositLiquidityForPerpsRequest>,
     _token: ApiToken,
     _state: &State<AppState>,
-) -> Status {
+) -> Result<Json<ApiResponse<()>>, Status> {
     tracing::warn!("Batch deposit liquidity endpoint called but not yet implemented");
-    Status::NotImplemented
+    Err(Status::NotImplemented)
 }
 
 /// Deploys perpetual contracts for multiple beacons in a batch operation.
@@ -418,9 +416,9 @@ pub async fn batch_deploy_perps_for_beacons(
     #[allow(unused_variables)] request: Json<BatchDeployPerpsForBeaconsRequest>,
     _token: ApiToken,
     _state: &State<AppState>,
-) -> Status {
+) -> Result<Json<ApiResponse<()>>, Status> {
     tracing::warn!("Batch deploy perps endpoint called but not yet implemented");
-    Status::NotImplemented
+    Err(Status::NotImplemented)
 }
 
 // Tests moved to tests/unit_tests/perp_route_tests.rs

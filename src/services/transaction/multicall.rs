@@ -8,7 +8,6 @@ use tracing;
 
 use crate::models::AppState;
 use crate::routes::IMulticall3;
-use crate::services::transaction::execution::execute_transaction_serialized;
 
 /// Execute multiple contract calls in a single transaction using Multicall3
 ///
@@ -34,23 +33,35 @@ pub async fn execute_multicall(
         return Err("No calls provided for multicall".to_string());
     }
 
-    // Create multicall contract instance
-    let multicall_contract = IMulticall3::new(multicall_address, &*state.provider);
+    // Acquire a wallet from the pool for the multicall transaction
+    let wallet_handle = state
+        .wallet_manager
+        .acquire_any_wallet()
+        .await
+        .map_err(|e| format!("Failed to acquire wallet for multicall: {e}"))?;
 
-    // Execute the multicall transaction (serialized to prevent nonce conflicts)
-    let pending_tx = execute_transaction_serialized(async {
-        multicall_contract
-            .aggregate3(calls.clone())
-            .send()
-            .await
-            .map_err(|e| {
-                let error_msg = format!("Failed to send multicall transaction: {e}");
-                tracing::error!("{}", error_msg);
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                error_msg
-            })
-    })
-    .await?;
+    let wallet_address = wallet_handle.address();
+    tracing::info!("Acquired wallet {} for multicall execution", wallet_address);
+
+    // Build provider with the acquired wallet
+    let provider = wallet_handle
+        .build_provider(&state.rpc_url)
+        .map_err(|e| format!("Failed to build provider: {e}"))?;
+
+    // Create multicall contract instance
+    let multicall_contract = IMulticall3::new(multicall_address, &provider);
+
+    // Execute the multicall transaction
+    let pending_tx = multicall_contract
+        .aggregate3(calls.clone())
+        .send()
+        .await
+        .map_err(|e| {
+            let error_msg = format!("Failed to send multicall transaction: {e}");
+            tracing::error!("{}", error_msg);
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            error_msg
+        })?;
 
     tracing::info!("Multicall transaction sent, awaiting confirmation...");
 

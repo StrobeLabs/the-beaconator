@@ -5,7 +5,7 @@ use the_beaconator::services::beacon::verifiable::create_verifiable_beacon;
 
 #[tokio::test]
 async fn test_create_verifiable_beacon_invalid_verifier_address() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
 
     let request = CreateVerifiableBeaconRequest {
         verifier_address: "invalid_address".to_string(),
@@ -28,7 +28,7 @@ async fn test_create_verifiable_beacon_invalid_verifier_address() {
 
 #[tokio::test]
 async fn test_create_verifiable_beacon_no_factory_configured() {
-    let mut app_state = crate::test_utils::create_simple_test_app_state();
+    let mut app_state = crate::test_utils::create_simple_test_app_state().await;
     app_state.dichotomous_beacon_factory_address = None; // Remove factory address
 
     let request = CreateVerifiableBeaconRequest {
@@ -44,7 +44,7 @@ async fn test_create_verifiable_beacon_no_factory_configured() {
 
 #[tokio::test]
 async fn test_create_verifiable_beacon_network_failure() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
 
     let request = CreateVerifiableBeaconRequest {
         verifier_address: "0x1234567890123456789012345678901234567890".to_string(),

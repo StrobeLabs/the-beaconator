@@ -34,15 +34,12 @@ pub async fn create_beacon(
     let _guard = sentry::Hub::current().push_scope();
     sentry::configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_beacon");
-        scope.set_extra("wallet_address", state.wallet_address.to_string().into());
+        scope.set_extra("wallet_source", "WalletManager pool".into());
     });
 
-    let owner_address = state.wallet_address;
-    tracing::info!("Creating beacon for owner: {}", owner_address);
+    tracing::info!("Creating beacon via WalletManager pool");
 
-    match create_beacon_via_factory(state.inner(), owner_address, state.beacon_factory_address)
-        .await
-    {
+    match create_beacon_via_factory(state.inner(), state.beacon_factory_address).await {
         Ok(beacon_address) => {
             tracing::info!("Successfully created beacon at address: {}", beacon_address);
             sentry::capture_message(
@@ -178,7 +175,7 @@ pub async fn create_perpcity_beacon(
 
     // Log configuration details for debugging
     tracing::debug!("Configuration:");
-    tracing::debug!("  - Wallet address: {}", state.wallet_address);
+    tracing::debug!("  - Wallet source: WalletManager pool");
     tracing::debug!(
         "  - Beacon factory address: {}",
         state.beacon_factory_address
@@ -191,7 +188,7 @@ pub async fn create_perpcity_beacon(
     let _guard = sentry::Hub::current().push_scope();
     sentry::configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_perpcity_beacon");
-        scope.set_extra("wallet_address", state.wallet_address.to_string().into());
+        scope.set_extra("wallet_source", "WalletManager pool".into());
         scope.set_extra(
             "beacon_factory_address",
             state.beacon_factory_address.to_string().into(),
@@ -202,30 +199,29 @@ pub async fn create_perpcity_beacon(
         );
     });
 
-    // Create a beacon using the factory
-    let owner_address = state.wallet_address;
-    tracing::info!("Starting beacon creation for owner: {}", owner_address);
+    // Create a beacon using the factory (wallet acquired internally by service)
+    tracing::info!("Starting beacon creation via WalletManager pool");
 
-    let beacon_address =
-        match create_beacon_via_factory(state, owner_address, state.beacon_factory_address).await {
-            Ok(address) => {
-                tracing::info!("Successfully created beacon at address: {}", address);
-                sentry::capture_message(
-                    &format!("Beacon created successfully at: {address}"),
-                    sentry::Level::Info,
-                );
-                address
-            }
-            Err(e) => {
-                tracing::error!("Failed to create beacon: {}", e);
-                tracing::error!("Error details: {:?}", e);
-                sentry::capture_message(
-                    &format!("Failed to create beacon: {e}"),
-                    sentry::Level::Error,
-                );
-                return Err(Status::InternalServerError);
-            }
-        };
+    let beacon_address = match create_beacon_via_factory(state, state.beacon_factory_address).await
+    {
+        Ok(address) => {
+            tracing::info!("Successfully created beacon at address: {}", address);
+            sentry::capture_message(
+                &format!("Beacon created successfully at: {address}"),
+                sentry::Level::Info,
+            );
+            address
+        }
+        Err(e) => {
+            tracing::error!("Failed to create beacon: {}", e);
+            tracing::error!("Error details: {:?}", e);
+            sentry::capture_message(
+                &format!("Failed to create beacon: {e}"),
+                sentry::Level::Error,
+            );
+            return Err(Status::InternalServerError);
+        }
+    };
 
     // The beacon creation transaction is now fully confirmed, so we can safely proceed with registration
     tracing::info!("Beacon creation completed successfully, proceeding with registration...");
@@ -306,7 +302,6 @@ pub async fn batch_create_perpcity_beacon(
     });
 
     let count = request.count;
-    let owner_address = state.wallet_address;
 
     // Validate the count
     if count == 0 || count > 100 {
@@ -314,8 +309,8 @@ pub async fn batch_create_perpcity_beacon(
         return Err(Status::BadRequest);
     }
 
-    // Use the extracted service function
-    match service_batch_create_perpcity_beacon(state.inner(), count, owner_address).await {
+    // Use the extracted service function (wallet acquired internally by service)
+    match service_batch_create_perpcity_beacon(state.inner(), count).await {
         Ok(response_data) => {
             let created_count = response_data.created_count;
             let failed_count = response_data.failed_count;

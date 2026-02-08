@@ -142,11 +142,11 @@ mod contract_error_decoder_tests {
 
     #[test]
     fn test_decode_error_data_invalid_hex_in_params() {
-        // Valid selector but invalid hex in parameters
+        // Valid selector but params data too short (only 10 chars, needs 192)
         let error_data = "0x239b350fZZZZZZZZZZ";
 
         let result = ContractErrorDecoder::decode_error_data(error_data);
-        // Should return None because hex parsing fails
+        // Should return None because params data is too short
         assert!(result.is_none());
     }
 

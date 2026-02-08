@@ -17,11 +17,10 @@ use the_beaconator::services::beacon::core::{
 async fn test_create_beacon_via_factory_with_anvil() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
-    let owner_address = app_state.wallet_address;
     let factory_address = app_state.beacon_factory_address;
 
     // Create beacon via factory - this should execute actual contract calls
-    let result = create_beacon_via_factory(&app_state, owner_address, factory_address).await;
+    let result = create_beacon_via_factory(&app_state, factory_address).await;
 
     // In integration test, this should succeed with real contract deployment
     assert!(
@@ -53,10 +52,9 @@ async fn test_register_beacon_with_registry_integration() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
     // First create a beacon
-    let owner_address = app_state.wallet_address;
     let factory_address = app_state.beacon_factory_address;
 
-    let beacon_result = create_beacon_via_factory(&app_state, owner_address, factory_address).await;
+    let beacon_result = create_beacon_via_factory(&app_state, factory_address).await;
     assert!(beacon_result.is_ok(), "Beacon creation should succeed");
 
     let beacon_address = beacon_result.unwrap();
@@ -88,10 +86,9 @@ async fn test_update_beacon_integration() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
     // Create a beacon first
-    let owner_address = app_state.wallet_address;
     let factory_address = app_state.beacon_factory_address;
 
-    let beacon_result = create_beacon_via_factory(&app_state, owner_address, factory_address).await;
+    let beacon_result = create_beacon_via_factory(&app_state, factory_address).await;
     assert!(beacon_result.is_ok(), "Beacon creation should succeed");
 
     let beacon_address = beacon_result.unwrap();
@@ -128,10 +125,9 @@ async fn test_transaction_confirmation_integration() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
     // Create a beacon to get a real transaction hash
-    let owner_address = app_state.wallet_address;
     let factory_address = app_state.beacon_factory_address;
 
-    let beacon_result = create_beacon_via_factory(&app_state, owner_address, factory_address).await;
+    let beacon_result = create_beacon_via_factory(&app_state, factory_address).await;
     assert!(beacon_result.is_ok(), "Beacon creation should succeed");
 
     // For this test, we'll use a known invalid transaction hash
@@ -196,7 +192,6 @@ async fn test_beacon_registration_check_integration() {
 async fn test_multiple_beacon_creation_sequence() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
-    let owner_address = app_state.wallet_address;
     let factory_address = app_state.beacon_factory_address;
 
     let mut beacon_addresses = Vec::new();
@@ -205,8 +200,7 @@ async fn test_multiple_beacon_creation_sequence() {
     for i in 0..3 {
         println!("Creating beacon {i}");
 
-        let beacon_result =
-            create_beacon_via_factory(&app_state, owner_address, factory_address).await;
+        let beacon_result = create_beacon_via_factory(&app_state, factory_address).await;
         assert!(
             beacon_result.is_ok(),
             "Beacon {i} creation should succeed: {beacon_result:?}"
@@ -245,18 +239,9 @@ async fn test_beacon_operations_error_handling() {
 
     // Test with zero addresses
     let zero_address = Address::ZERO;
-    let factory_address = app_state.beacon_factory_address;
-
-    // Creating beacon with zero owner should handle gracefully
-    let result = create_beacon_via_factory(&app_state, zero_address, factory_address).await;
-    match result {
-        Ok(_) => println!("Zero owner beacon creation unexpectedly succeeded"),
-        Err(e) => println!("Zero owner beacon creation failed as expected: {e}"),
-    }
 
     // Test with zero factory address
-    let owner_address = app_state.wallet_address;
-    let result = create_beacon_via_factory(&app_state, owner_address, zero_address).await;
+    let result = create_beacon_via_factory(&app_state, zero_address).await;
     assert!(result.is_err(), "Zero factory address should fail");
 
     // Test invalid update request
@@ -287,13 +272,12 @@ async fn test_beacon_operations_error_handling() {
 async fn test_beacon_operation_timeouts() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
-    let owner_address = app_state.wallet_address;
     let factory_address = app_state.beacon_factory_address;
 
     // Test beacon creation with timeout
     let result = timeout(
         Duration::from_secs(30),
-        create_beacon_via_factory(&app_state, owner_address, factory_address),
+        create_beacon_via_factory(&app_state, factory_address),
     )
     .await;
 
@@ -316,7 +300,6 @@ async fn test_beacon_operation_timeouts() {
 async fn test_concurrent_beacon_operations() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
-    let owner_address = app_state.wallet_address;
     let factory_address = app_state.beacon_factory_address;
 
     // Create multiple beacons concurrently
@@ -326,8 +309,7 @@ async fn test_concurrent_beacon_operations() {
         let app_state_clone = app_state.clone();
         let handle = tokio::spawn(async move {
             println!("Starting concurrent beacon creation {i}");
-            let result =
-                create_beacon_via_factory(&app_state_clone, owner_address, factory_address).await;
+            let result = create_beacon_via_factory(&app_state_clone, factory_address).await;
             (i, result)
         });
         handles.push(handle);

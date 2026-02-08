@@ -1,6 +1,6 @@
 # Makefile for the-beaconator
 
-.PHONY: help build build-release test test-unit test-integration test-parallel test-verbose test-coverage test-verify lint fmt check clean docker-build docker-run dev
+.PHONY: help build build-release test test-unit test-integration test-parallel test-verbose test-coverage test-verify lint fmt fmt-check check clean clean-all docker-build docker-build-cached docker-run docker-run-local docker-test dev docs install pre-commit release-prep quality test-fast test-wallet test-wallet-stop test-redis test-full
 
 # Default target
 help: ## Show this help message
@@ -59,6 +59,52 @@ test-fast: ## Run tests quickly (unit tests + fast integration tests, under 10s)
 	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test integration_tests::models_test -- --nocapture
 	@echo "Fast tests completed ✅"
 
+test-wallet: ## Run wallet tests with Redis (requires Redis on localhost:6379)
+	@echo "Running wallet tests (requires Redis)..."
+	@if docker ps -a --format '{{.Names}}' | grep -q '^beaconator-redis$$'; then \
+		if ! docker ps --format '{{.Names}}' | grep -q '^beaconator-redis$$'; then \
+			echo "Starting existing Redis container..."; \
+			docker start beaconator-redis; \
+			sleep 2; \
+		fi; \
+	else \
+		echo "Creating Redis container..."; \
+		docker run -d --name beaconator-redis -p 6379:6379 redis:alpine; \
+		sleep 2; \
+	fi
+	@echo "Running wallet module tests..."
+	@REDIS_URL=redis://127.0.0.1:6379 cargo test --lib wallet -- --ignored --nocapture
+	@echo "Running unit tests that require WalletManager..."
+	@REDIS_URL=redis://127.0.0.1:6379 cargo test unit_tests -- --ignored --nocapture
+	@echo "Wallet tests completed ✅"
+
+test-wallet-stop: ## Stop the Redis container used for wallet tests
+	@echo "Stopping Redis container..."
+	@docker stop beaconator-redis 2>/dev/null || true
+	@docker rm beaconator-redis 2>/dev/null || true
+	@echo "Redis container stopped ✅"
+
+test-redis: ## Run all Redis-dependent tests (spins up Redis container)
+	@echo "Running all Redis-dependent tests..."
+	@if docker ps -a --format '{{.Names}}' | grep -q '^beaconator-redis$$'; then \
+		if ! docker ps --format '{{.Names}}' | grep -q '^beaconator-redis$$'; then \
+			echo "Starting existing Redis container..."; \
+			docker start beaconator-redis; \
+			sleep 2; \
+		fi; \
+	else \
+		echo "Creating Redis container..."; \
+		docker run -d --name beaconator-redis -p 6379:6379 redis:alpine; \
+		sleep 2; \
+	fi
+	@echo "Flushing Redis to ensure clean state..."
+	@redis-cli -h 127.0.0.1 -p 6379 FLUSHALL > /dev/null 2>&1 || true
+	@echo "Running wallet module tests..."
+	@REDIS_URL=redis://127.0.0.1:6379 cargo test --lib wallet -- --ignored --nocapture --test-threads=1
+	@echo "Running unit tests that require WalletManager..."
+	@REDIS_URL=redis://127.0.0.1:6379 cargo test unit_tests -- --ignored --nocapture --test-threads=1
+	@echo "Redis-dependent tests completed ✅"
+
 test-full: ## Run full test suite including integration tests
 	$(MAKE) test
 
@@ -112,7 +158,7 @@ check: ## Run cargo check and anvil cleanup (faster than build)
 	./scripts/anvil-cleanup.sh
 
 # Comprehensive quality check
-quality: fmt-check lint test-fast ## Run all quality checks (format, lint, fast tests)
+quality: fmt-check lint test-fast test-redis ## Run all quality checks (format, lint, tests including Redis)
 
 # Cleanup targets
 clean: ## Clean build artifacts

@@ -169,12 +169,13 @@ mod tests {
         let (app_state, _anvil) = create_isolated_test_app_state().await;
 
         // Verify test setup
-        assert_ne!(app_state.wallet_address, Address::ZERO);
+        assert_ne!(app_state.funding_wallet_address, Address::ZERO);
         assert_ne!(app_state.usdc_address, Address::ZERO);
 
         // Check that we can get the balance (even if it's zero)
         let balance_result =
-            TestUtils::get_balance(&app_state.provider, app_state.wallet_address).await;
+            TestUtils::get_balance(&app_state.read_provider, app_state.funding_wallet_address)
+                .await;
         assert!(balance_result.is_ok());
     }
 
@@ -184,7 +185,7 @@ mod tests {
     async fn test_ierc20_interface() {
         // Test that IERC20 interface is properly defined
         let (app_state, _anvil) = create_isolated_test_app_state().await;
-        let usdc_contract = IERC20::new(app_state.usdc_address, &*app_state.provider);
+        let usdc_contract = IERC20::new(app_state.usdc_address, &*app_state.read_provider);
 
         // Verify the contract instance was created
         assert_eq!(*usdc_contract.address(), app_state.usdc_address);

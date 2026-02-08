@@ -9,13 +9,13 @@ use the_beaconator::models::FundGuestWalletRequest;
 use the_beaconator::routes::wallet::fund_guest_wallet;
 
 // Helper to create test app state
-fn create_test_state() -> the_beaconator::models::AppState {
-    crate::test_utils::create_simple_test_app_state()
+async fn create_test_state() -> the_beaconator::models::AppState {
+    crate::test_utils::create_simple_test_app_state().await
 }
 
 #[tokio::test]
 async fn test_fund_wallet_invalid_address() {
-    let test_state = create_test_state();
+    let test_state = create_test_state().await;
     let state = State::from(&test_state);
     let token = ApiToken("test_token".to_string());
 
@@ -33,7 +33,7 @@ async fn test_fund_wallet_invalid_address() {
 
 #[tokio::test]
 async fn test_fund_wallet_empty_address() {
-    let test_state = create_test_state();
+    let test_state = create_test_state().await;
     let state = State::from(&test_state);
     let token = ApiToken("test_token".to_string());
 
@@ -51,7 +51,7 @@ async fn test_fund_wallet_empty_address() {
 
 #[tokio::test]
 async fn test_fund_wallet_invalid_usdc_amount() {
-    let test_state = create_test_state();
+    let test_state = create_test_state().await;
     let state = State::from(&test_state);
     let token = ApiToken("test_token".to_string());
 
@@ -69,7 +69,7 @@ async fn test_fund_wallet_invalid_usdc_amount() {
 
 #[tokio::test]
 async fn test_fund_wallet_invalid_eth_amount() {
-    let test_state = create_test_state();
+    let test_state = create_test_state().await;
     let state = State::from(&test_state);
     let token = ApiToken("test_token".to_string());
 
@@ -87,7 +87,7 @@ async fn test_fund_wallet_invalid_eth_amount() {
 
 #[tokio::test]
 async fn test_fund_wallet_negative_usdc() {
-    let test_state = create_test_state();
+    let test_state = create_test_state().await;
     let state = State::from(&test_state);
     let token = ApiToken("test_token".to_string());
 
@@ -105,7 +105,7 @@ async fn test_fund_wallet_negative_usdc() {
 
 #[tokio::test]
 async fn test_fund_wallet_negative_eth() {
-    let test_state = create_test_state();
+    let test_state = create_test_state().await;
     let state = State::from(&test_state);
     let token = ApiToken("test_token".to_string());
 
@@ -123,7 +123,7 @@ async fn test_fund_wallet_negative_eth() {
 
 #[tokio::test]
 async fn test_fund_wallet_usdc_exceeds_limit() {
-    let mut state = create_test_state();
+    let mut state = create_test_state().await;
     state.usdc_transfer_limit = 10_000_000; // 10 USDC
     let state = State::from(&state);
     let token = ApiToken("test_token".to_string());
@@ -143,7 +143,7 @@ async fn test_fund_wallet_usdc_exceeds_limit() {
 
 #[tokio::test]
 async fn test_fund_wallet_eth_exceeds_limit() {
-    let mut state = create_test_state();
+    let mut state = create_test_state().await;
     state.eth_transfer_limit = 1_000_000_000_000_000; // 0.001 ETH
     let state = State::from(&state);
     let token = ApiToken("test_token".to_string());
@@ -163,7 +163,7 @@ async fn test_fund_wallet_eth_exceeds_limit() {
 
 #[tokio::test]
 async fn test_fund_wallet_zero_amounts() {
-    let test_state = create_test_state();
+    let test_state = create_test_state().await;
     let state = State::from(&test_state);
     let token = ApiToken("test_token".to_string());
 
@@ -181,7 +181,7 @@ async fn test_fund_wallet_zero_amounts() {
 
 #[tokio::test]
 async fn test_fund_wallet_valid_format_network_failure() {
-    let test_state = create_test_state();
+    let test_state = create_test_state().await;
     let state = State::from(&test_state);
     let token = ApiToken("test_token".to_string());
 
@@ -198,7 +198,7 @@ async fn test_fund_wallet_valid_format_network_failure() {
 
 #[tokio::test]
 async fn test_fund_wallet_decimal_usdc_amount() {
-    let test_state = create_test_state();
+    let test_state = create_test_state().await;
     let state = State::from(&test_state);
     let token = ApiToken("test_token".to_string());
 
@@ -216,7 +216,7 @@ async fn test_fund_wallet_decimal_usdc_amount() {
 
 #[tokio::test]
 async fn test_fund_wallet_scientific_notation() {
-    let test_state = create_test_state();
+    let test_state = create_test_state().await;
     let state = State::from(&test_state);
     let token = ApiToken("test_token".to_string());
 
@@ -234,7 +234,7 @@ async fn test_fund_wallet_scientific_notation() {
 
 #[tokio::test]
 async fn test_fund_wallet_address_with_mixed_case() {
-    let test_state = create_test_state();
+    let test_state = create_test_state().await;
     let state = State::from(&test_state);
     let token = ApiToken("test_token".to_string());
 
@@ -252,7 +252,7 @@ async fn test_fund_wallet_address_with_mixed_case() {
 
 #[tokio::test]
 async fn test_fund_wallet_max_u128_amounts() {
-    let test_state = create_test_state();
+    let test_state = create_test_state().await;
     let state = State::from(&test_state);
     let token = ApiToken("test_token".to_string());
 

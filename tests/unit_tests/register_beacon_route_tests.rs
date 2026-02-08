@@ -10,7 +10,7 @@ use the_beaconator::routes::beacon::register_beacon;
 
 #[tokio::test]
 async fn test_register_beacon_invalid_beacon_address() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -26,7 +26,7 @@ async fn test_register_beacon_invalid_beacon_address() {
 
 #[tokio::test]
 async fn test_register_beacon_invalid_registry_address() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -42,7 +42,7 @@ async fn test_register_beacon_invalid_registry_address() {
 
 #[tokio::test]
 async fn test_register_beacon_both_addresses_invalid() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -59,7 +59,7 @@ async fn test_register_beacon_both_addresses_invalid() {
 #[tokio::test]
 async fn test_register_beacon_zero_beacon_address() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -77,7 +77,7 @@ async fn test_register_beacon_zero_beacon_address() {
 #[tokio::test]
 async fn test_register_beacon_zero_registry_address() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -95,7 +95,7 @@ async fn test_register_beacon_zero_registry_address() {
 #[tokio::test]
 async fn test_register_beacon_network_failure() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -113,7 +113,7 @@ async fn test_register_beacon_network_failure() {
 #[tokio::test]
 async fn test_register_beacon_address_case_sensitivity() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -132,7 +132,7 @@ async fn test_register_beacon_address_case_sensitivity() {
 #[tokio::test]
 async fn test_register_beacon_address_without_0x_prefix() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -148,7 +148,7 @@ async fn test_register_beacon_address_without_0x_prefix() {
 
 #[tokio::test]
 async fn test_register_beacon_too_short_address() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -164,7 +164,7 @@ async fn test_register_beacon_too_short_address() {
 
 #[tokio::test]
 async fn test_register_beacon_too_long_address() {
-    let app_state = crate::test_utils::create_simple_test_app_state();
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
@@ -214,7 +214,7 @@ async fn test_register_beacon_request_deserialization() {
 #[tokio::test]
 async fn test_register_beacon_same_beacon_and_registry() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider);
+    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
     let state = State::from(&app_state);
     let token = ApiToken("test_token".to_string());
 
