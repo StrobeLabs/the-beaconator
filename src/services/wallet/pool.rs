@@ -7,17 +7,30 @@ use alloy::primitives::Address;
 use redis::AsyncCommands;
 use std::str::FromStr;
 
-use crate::models::wallet::{RedisKeys, WalletInfo, WalletStatus};
+use crate::models::wallet::{PrefixedRedisKeys, WalletInfo, WalletStatus};
 
 /// Redis-backed wallet pool
 pub struct WalletPool {
     redis: redis::Client,
     instance_id: String,
+    keys: PrefixedRedisKeys,
 }
 
 impl WalletPool {
-    /// Create a new wallet pool
+    /// Create a new wallet pool with the default "beaconator:" prefix
     pub async fn new(redis_url: &str, instance_id: String) -> Result<Self, String> {
+        Self::with_prefix(redis_url, instance_id, "beaconator:").await
+    }
+
+    /// Create a new wallet pool with a custom prefix
+    ///
+    /// This is useful for test isolation - each test can use a unique prefix
+    /// to avoid conflicts when running tests in parallel.
+    pub async fn with_prefix(
+        redis_url: &str,
+        instance_id: String,
+        prefix: &str,
+    ) -> Result<Self, String> {
         let redis = redis::Client::open(redis_url)
             .map_err(|e| format!("Failed to connect to Redis: {e}"))?;
 
@@ -32,9 +45,13 @@ impl WalletPool {
             .await
             .map_err(|e| format!("Redis ping failed: {e}"))?;
 
-        tracing::info!("Wallet pool connected to Redis");
+        tracing::info!("Wallet pool connected to Redis with prefix '{}'", prefix);
 
-        Ok(Self { redis, instance_id })
+        Ok(Self {
+            redis,
+            instance_id,
+            keys: PrefixedRedisKeys::new(prefix),
+        })
     }
 
     /// Get a Redis connection
@@ -55,12 +72,17 @@ impl WalletPool {
         &self.redis
     }
 
+    /// Get the Redis key generator (for creating locks with matching prefix)
+    pub fn keys(&self) -> &PrefixedRedisKeys {
+        &self.keys
+    }
+
     /// List all wallets in the pool
     pub async fn list_wallets(&self) -> Result<Vec<WalletInfo>, String> {
         let mut conn = self.get_conn().await?;
 
         let addresses: Vec<String> = conn
-            .smembers(RedisKeys::wallet_pool())
+            .smembers(self.keys.wallet_pool())
             .await
             .map_err(|e| format!("Failed to list wallets: {e}"))?;
 
@@ -98,8 +120,8 @@ impl WalletPool {
         // Use atomic pipeline to add wallet to pool set and store wallet info
         let _: () = redis::pipe()
             .atomic()
-            .sadd(RedisKeys::wallet_pool(), info.address.to_string())
-            .set(RedisKeys::wallet_info(&info.address), info_json)
+            .sadd(self.keys.wallet_pool(), info.address.to_string())
+            .set(self.keys.wallet_info(&info.address), info_json)
             .query_async(&mut conn)
             .await
             .map_err(|e| format!("Failed to add wallet to pool: {e}"))?;
@@ -114,7 +136,7 @@ impl WalletPool {
         let mut conn = self.get_conn().await?;
 
         let info_json: Option<String> = conn
-            .get(RedisKeys::wallet_info(address))
+            .get(self.keys.wallet_info(address))
             .await
             .map_err(|e| format!("Failed to get wallet info: {e}"))?;
 
@@ -133,7 +155,7 @@ impl WalletPool {
             .map_err(|e| format!("Failed to serialize wallet info: {e}"))?;
 
         let _: () = conn
-            .set(RedisKeys::wallet_info(&info.address), info_json)
+            .set(self.keys.wallet_info(&info.address), info_json)
             .await
             .map_err(|e| format!("Failed to update wallet info: {e}"))?;
 
@@ -161,7 +183,7 @@ impl WalletPool {
 
         // First, get all beacons designated to this wallet
         let beacon_strs: Vec<String> = conn
-            .smembers(RedisKeys::wallet_beacons(address))
+            .smembers(self.keys.wallet_beacons(address))
             .await
             .map_err(|e| format!("Failed to get beacons for wallet: {e}"))?;
 
@@ -172,18 +194,18 @@ impl WalletPool {
         // Add beacon->wallet reverse mapping deletions to pipeline
         for beacon_str in &beacon_strs {
             if let Ok(beacon_addr) = Address::from_str(beacon_str) {
-                pipe.del(RedisKeys::beacon_wallet(&beacon_addr));
+                pipe.del(self.keys.beacon_wallet(&beacon_addr));
             }
         }
 
         // Add wallet pool removal
-        pipe.srem(RedisKeys::wallet_pool(), address.to_string());
+        pipe.srem(self.keys.wallet_pool(), address.to_string());
 
         // Add wallet info deletion
-        pipe.del(RedisKeys::wallet_info(address));
+        pipe.del(self.keys.wallet_info(address));
 
         // Add wallet beacons set deletion
-        pipe.del(RedisKeys::wallet_beacons(address));
+        pipe.del(self.keys.wallet_beacons(address));
 
         // Execute all deletions atomically
         let _: () = pipe
@@ -201,7 +223,7 @@ impl WalletPool {
         let mut conn = self.get_conn().await?;
 
         let exists: bool = conn
-            .sismember(RedisKeys::wallet_pool(), address.to_string())
+            .sismember(self.keys.wallet_pool(), address.to_string())
             .await
             .map_err(|e| format!("Failed to check wallet existence: {e}"))?;
 
@@ -213,7 +235,7 @@ impl WalletPool {
         let mut conn = self.get_conn().await?;
 
         let count: usize = conn
-            .scard(RedisKeys::wallet_pool())
+            .scard(self.keys.wallet_pool())
             .await
             .map_err(|e| format!("Failed to count wallets: {e}"))?;
 
@@ -241,11 +263,11 @@ impl WalletPool {
         let _: () = redis::pipe()
             .atomic()
             .sadd(
-                RedisKeys::wallet_beacons(wallet_address),
+                self.keys.wallet_beacons(wallet_address),
                 beacon_address.to_string(),
             )
             .set(
-                RedisKeys::beacon_wallet(beacon_address),
+                self.keys.beacon_wallet(beacon_address),
                 wallet_address.to_string(),
             )
             .query_async(&mut conn)
@@ -293,10 +315,10 @@ impl WalletPool {
     ) -> Result<Option<Address>, String> {
         let mut conn = self.get_conn().await?;
 
-        let wallet_str: Option<String> =
-            conn.get(RedisKeys::beacon_wallet(beacon_address))
-                .await
-                .map_err(|e| format!("Failed to get wallet for beacon: {e}"))?;
+        let wallet_str: Option<String> = conn
+            .get(self.keys.beacon_wallet(beacon_address))
+            .await
+            .map_err(|e| format!("Failed to get wallet for beacon: {e}"))?;
 
         match wallet_str {
             Some(addr) => {
@@ -316,7 +338,7 @@ impl WalletPool {
         let mut conn = self.get_conn().await?;
 
         let beacon_strs: Vec<String> = conn
-            .smembers(RedisKeys::wallet_beacons(wallet_address))
+            .smembers(self.keys.wallet_beacons(wallet_address))
             .await
             .map_err(|e| format!("Failed to get beacons for wallet: {e}"))?;
 
@@ -345,10 +367,10 @@ impl WalletPool {
         let _: () = redis::pipe()
             .atomic()
             .srem(
-                RedisKeys::wallet_beacons(wallet_address),
+                self.keys.wallet_beacons(wallet_address),
                 beacon_address.to_string(),
             )
-            .del(RedisKeys::beacon_wallet(beacon_address))
+            .del(self.keys.beacon_wallet(beacon_address))
             .query_async(&mut conn)
             .await
             .map_err(|e| format!("Failed to remove beacon mapping: {e}"))?;
@@ -384,23 +406,60 @@ impl WalletPool {
 
         Ok(())
     }
+
+    /// Clean up all Redis keys with this pool's prefix
+    ///
+    /// This is useful for test teardown to remove all keys created during a test.
+    /// WARNING: This will delete ALL keys matching the prefix pattern.
+    pub async fn cleanup(&self) -> Result<(), String> {
+        let mut conn = self.get_conn().await?;
+        let pattern = format!("{}*", self.keys.prefix());
+
+        // Use KEYS to find all keys with our prefix
+        // Note: In production with large datasets, SCAN would be preferred
+        // but for test cleanup, KEYS is simpler and sufficient
+        let keys: Vec<String> = redis::cmd("KEYS")
+            .arg(&pattern)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| format!("Failed to scan keys: {e}"))?;
+
+        if !keys.is_empty() {
+            tracing::debug!(
+                "Cleaning up {} Redis keys with prefix '{}'",
+                keys.len(),
+                self.keys.prefix()
+            );
+            let _: () = redis::cmd("DEL")
+                .arg(&keys)
+                .query_async(&mut conn)
+                .await
+                .map_err(|e| format!("Failed to delete keys: {e}"))?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
 
     // Note: These tests require a running Redis instance
     // Run with: cargo test --lib wallet -- --ignored
 
     #[tokio::test]
-    #[serial]
     #[ignore = "requires Redis"]
     async fn test_wallet_pool_operations() {
-        let pool = WalletPool::new("redis://127.0.0.1:6379", "test-instance".to_string())
-            .await
-            .expect("Failed to create pool");
+        // Use unique prefix for test isolation
+        let test_prefix = format!("test-{}:", uuid::Uuid::new_v4());
+        let pool = WalletPool::with_prefix(
+            "redis://127.0.0.1:6379",
+            "test-instance".to_string(),
+            &test_prefix,
+        )
+        .await
+        .expect("Failed to create pool");
 
         let address = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
         let info = WalletInfo {
@@ -425,12 +484,15 @@ mod tests {
 
         // Count
         let count = pool.wallet_count().await.expect("Failed to count");
-        assert!(count >= 1);
+        assert_eq!(count, 1); // Exact count since we have isolated prefix
 
         // Remove
         pool.remove_wallet(&address)
             .await
             .expect("Failed to remove");
         assert!(!pool.wallet_exists(&address).await.expect("Failed to check"));
+
+        // Cleanup test keys
+        pool.cleanup().await.expect("Failed to cleanup");
     }
 }

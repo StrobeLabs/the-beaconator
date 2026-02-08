@@ -146,8 +146,14 @@ use tokio::sync::OnceCell;
 /// This function allows tests marked with `#[ignore = "requires WalletManager with Redis"]`
 /// to work when Redis is available (e.g., in CI with the Redis service).
 /// When Redis is available, it also populates the wallet pool with test wallets.
+///
+/// Each invocation generates a unique Redis key prefix using UUID, enabling
+/// parallel test execution without conflicts over shared Redis state.
 pub async fn create_test_wallet_manager() -> Arc<WalletManager> {
     if let Ok(redis_url) = std::env::var("REDIS_URL") {
+        // Generate unique prefix for test isolation
+        let test_prefix = format!("test-{}:", uuid::Uuid::new_v4());
+
         // Create mock signers from Anvil's deterministic test keys
         let test_keys = [
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80", // Account 0
@@ -160,7 +166,9 @@ pub async fn create_test_wallet_manager() -> Arc<WalletManager> {
             .map(|k| k.parse::<PrivateKeySigner>().expect("Invalid test key"))
             .collect();
 
-        match WalletManager::test_with_mock_signers(&redis_url, signers).await {
+        match WalletManager::test_with_mock_signers_and_prefix(&redis_url, signers, &test_prefix)
+            .await
+        {
             Ok(manager) => {
                 // Populate wallet pool with the mock signer addresses
                 for (i, addr) in manager.mock_signer_addresses().iter().enumerate() {
@@ -175,8 +183,9 @@ pub async fn create_test_wallet_manager() -> Arc<WalletManager> {
                     }
                 }
                 tracing::info!(
-                    "Created WalletManager with {} mock signers for testing",
-                    manager.mock_signer_addresses().len()
+                    "Created WalletManager with {} mock signers for testing (prefix: {})",
+                    manager.mock_signer_addresses().len(),
+                    test_prefix
                 );
                 Arc::new(manager)
             }

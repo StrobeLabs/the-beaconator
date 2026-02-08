@@ -141,8 +141,20 @@ impl WalletManager {
         redis_url: &str,
         signers: Vec<PrivateKeySigner>,
     ) -> Result<Self, String> {
+        Self::test_with_mock_signers_and_prefix(redis_url, signers, "beaconator:").await
+    }
+
+    /// Create a WalletManager with mock local signers and a custom prefix for testing
+    ///
+    /// Using a unique prefix per test allows tests to run in parallel without
+    /// conflicting over shared Redis state.
+    pub async fn test_with_mock_signers_and_prefix(
+        redis_url: &str,
+        signers: Vec<PrivateKeySigner>,
+        prefix: &str,
+    ) -> Result<Self, String> {
         let instance_id = format!("test-{}", uuid::Uuid::new_v4());
-        let pool = WalletPool::new(redis_url, instance_id).await?;
+        let pool = WalletPool::with_prefix(redis_url, instance_id, prefix).await?;
 
         let mock_signers: HashMap<Address, PrivateKeySigner> =
             signers.into_iter().map(|s| (s.address(), s)).collect();
@@ -212,12 +224,13 @@ impl WalletManager {
 
             // Check if we have a mock signer for this address
             if let Some(signer) = mock_signers.get(address) {
-                // Create lock for this wallet
-                let lock = WalletLock::new(
+                // Create lock for this wallet using pool's keys for prefix isolation
+                let lock = WalletLock::with_keys(
                     pool.redis_client().clone(),
                     *address,
                     pool.instance_id().to_string(),
                     std::time::Duration::from_secs(30), // Default TTL for tests
+                    pool.keys(),
                 );
 
                 let lock_guard = lock
@@ -240,12 +253,13 @@ impl WalletManager {
         // Get wallet info from pool
         let wallet_info = pool.get_wallet_info(address).await?;
 
-        // Create and acquire lock
-        let lock = WalletLock::new(
+        // Create and acquire lock using pool's keys for prefix consistency
+        let lock = WalletLock::with_keys(
             pool.redis_client().clone(),
             *address,
             pool.instance_id().to_string(),
             config.lock_ttl,
+            pool.keys(),
         );
 
         let lock_guard = lock
@@ -284,12 +298,13 @@ impl WalletManager {
             // Find a mock signer for an available wallet
             for wallet_info in available {
                 if let Some(signer) = mock_signers.get(&wallet_info.address) {
-                    // Create lock for this wallet
-                    let lock = WalletLock::new(
+                    // Create lock for this wallet using pool's keys for prefix isolation
+                    let lock = WalletLock::with_keys(
                         pool.redis_client().clone(),
                         wallet_info.address,
                         pool.instance_id().to_string(),
                         std::time::Duration::from_secs(30), // Default TTL for tests
+                        pool.keys(),
                     );
 
                     if let Ok(lock_guard) =
@@ -319,11 +334,12 @@ impl WalletManager {
         let mut last_error: Option<String> = None;
 
         for wallet_info in available {
-            let lock = WalletLock::new(
+            let lock = WalletLock::with_keys(
                 pool.redis_client().clone(),
                 wallet_info.address,
                 pool.instance_id().to_string(),
                 config.lock_ttl,
+                pool.keys(),
             );
 
             match lock
@@ -383,11 +399,12 @@ impl WalletManager {
     pub fn create_lock(&self, address: &Address) -> WalletLock {
         let pool = self.require_pool();
         let config = self.require_config();
-        WalletLock::new(
+        WalletLock::with_keys(
             pool.redis_client().clone(),
             *address,
             pool.instance_id().to_string(),
             config.lock_ttl,
+            pool.keys(),
         )
     }
 

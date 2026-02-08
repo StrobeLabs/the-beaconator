@@ -87,7 +87,64 @@ impl WalletManagerConfig {
     }
 }
 
-/// Redis key patterns for wallet management
+/// Redis key generator with configurable prefix for test isolation
+///
+/// Each WalletPool instance can have its own prefix, allowing tests to run
+/// in parallel without conflicting over shared Redis keys.
+#[derive(Debug, Clone)]
+pub struct PrefixedRedisKeys {
+    prefix: String,
+}
+
+impl PrefixedRedisKeys {
+    /// Create a new key generator with the given prefix
+    pub fn new(prefix: &str) -> Self {
+        Self {
+            prefix: prefix.to_string(),
+        }
+    }
+
+    /// Get the prefix used by this key generator
+    pub fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    /// Set of all wallet addresses in the pool
+    pub fn wallet_pool(&self) -> String {
+        format!("{}wallet_pool", self.prefix)
+    }
+
+    /// Hash storing wallet metadata: wallet:{address} -> WalletInfo JSON
+    pub fn wallet_info(&self, address: &Address) -> String {
+        format!("{}wallet:{address}", self.prefix)
+    }
+
+    /// Lock key for a specific wallet: wallet_lock:{address}
+    pub fn wallet_lock(&self, address: &Address) -> String {
+        format!("{}wallet_lock:{address}", self.prefix)
+    }
+
+    /// Mapping from beacon address to designated wallet: beacon_wallet:{beacon}
+    pub fn beacon_wallet(&self, beacon: &Address) -> String {
+        format!("{}beacon_wallet:{beacon}", self.prefix)
+    }
+
+    /// Reverse mapping: which beacons use a wallet: wallet_beacons:{wallet}
+    pub fn wallet_beacons(&self, wallet: &Address) -> String {
+        format!("{}wallet_beacons:{wallet}", self.prefix)
+    }
+}
+
+impl Default for PrefixedRedisKeys {
+    fn default() -> Self {
+        Self::new("beaconator:")
+    }
+}
+
+/// Redis key patterns for wallet management (deprecated - use PrefixedRedisKeys)
+///
+/// This struct provides static methods for backwards compatibility.
+/// New code should use PrefixedRedisKeys for test isolation.
 pub struct RedisKeys;
 
 impl RedisKeys {

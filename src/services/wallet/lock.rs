@@ -7,7 +7,7 @@ use alloy::primitives::Address;
 use redis::AsyncCommands;
 use std::time::Duration;
 
-use crate::models::wallet::RedisKeys;
+use crate::models::wallet::PrefixedRedisKeys;
 
 /// A distributed lock for a specific wallet
 pub struct WalletLock {
@@ -19,14 +19,33 @@ pub struct WalletLock {
 }
 
 impl WalletLock {
-    /// Create a new wallet lock
+    /// Create a new wallet lock with default "beaconator:" prefix
     pub fn new(
         redis: redis::Client,
         wallet_address: Address,
         instance_id: String,
         ttl: Duration,
     ) -> Self {
-        let lock_key = RedisKeys::wallet_lock(&wallet_address);
+        Self::with_keys(
+            redis,
+            wallet_address,
+            instance_id,
+            ttl,
+            &PrefixedRedisKeys::default(),
+        )
+    }
+
+    /// Create a new wallet lock with a custom key generator
+    ///
+    /// This allows using a custom prefix for test isolation.
+    pub fn with_keys(
+        redis: redis::Client,
+        wallet_address: Address,
+        instance_id: String,
+        ttl: Duration,
+        keys: &PrefixedRedisKeys,
+    ) -> Self {
+        let lock_key = keys.wallet_lock(&wallet_address);
         Self {
             redis,
             wallet_address,
@@ -349,24 +368,27 @@ impl Drop for WalletLockGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
     use std::str::FromStr;
 
     // Note: These tests require a running Redis instance
     // Run with: cargo test --lib wallet -- --ignored
 
     #[tokio::test]
-    #[serial]
     #[ignore = "requires Redis"]
     async fn test_lock_acquire_release() {
+        // Use unique prefix for test isolation
+        let test_prefix = format!("test-{}:", uuid::Uuid::new_v4());
+        let keys = PrefixedRedisKeys::new(&test_prefix);
+
         let redis = redis::Client::open("redis://127.0.0.1:6379").expect("Failed to open Redis");
         let address = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
 
-        let lock = WalletLock::new(
+        let lock = WalletLock::with_keys(
             redis,
             address,
             "test-instance".to_string(),
             Duration::from_secs(10),
+            &keys,
         );
 
         // Acquire lock
@@ -390,18 +412,22 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial]
     #[ignore = "requires Redis"]
     async fn test_lock_contention() {
+        // Use unique prefix for test isolation
+        let test_prefix = format!("test-{}:", uuid::Uuid::new_v4());
+        let keys = PrefixedRedisKeys::new(&test_prefix);
+
         let redis = redis::Client::open("redis://127.0.0.1:6379").expect("Failed to open Redis");
         let address = Address::from_str("0x2234567890123456789012345678901234567890").unwrap();
 
         // Instance 1 acquires lock
-        let lock1 = WalletLock::new(
+        let lock1 = WalletLock::with_keys(
             redis.clone(),
             address,
             "instance-1".to_string(),
             Duration::from_secs(10),
+            &keys,
         );
         let _guard1 = lock1
             .acquire(1, Duration::from_millis(100))
@@ -409,28 +435,33 @@ mod tests {
             .expect("Instance 1 should acquire lock");
 
         // Instance 2 tries to acquire - should fail
-        let lock2 = WalletLock::new(
+        let lock2 = WalletLock::with_keys(
             redis,
             address,
             "instance-2".to_string(),
             Duration::from_secs(10),
+            &keys,
         );
         let result = lock2.try_acquire().await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
-    #[serial]
     #[ignore = "requires Redis"]
     async fn test_lock_extend() {
+        // Use unique prefix for test isolation
+        let test_prefix = format!("test-{}:", uuid::Uuid::new_v4());
+        let keys = PrefixedRedisKeys::new(&test_prefix);
+
         let redis = redis::Client::open("redis://127.0.0.1:6379").expect("Failed to open Redis");
         let address = Address::from_str("0x3234567890123456789012345678901234567890").unwrap();
 
-        let lock = WalletLock::new(
+        let lock = WalletLock::with_keys(
             redis,
             address,
             "test-instance".to_string(),
             Duration::from_secs(5),
+            &keys,
         );
 
         let guard = lock
