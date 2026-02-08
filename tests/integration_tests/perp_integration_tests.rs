@@ -66,6 +66,7 @@ async fn test_deposit_liquidity_invalid_margin_amount() {
 
 #[tokio::test]
 #[serial]
+#[ignore = "requires Redis - wallet operations needed before reaching on-chain validation"]
 async fn test_deposit_liquidity_zero_margin_amount() {
     let token = ApiToken("test_token".to_string());
     let app_state = create_simple_test_app_state().await;
