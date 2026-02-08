@@ -563,7 +563,7 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
-        wallet_manager: Arc::new(WalletManager::test_stub()),
+        wallet_manager: create_test_wallet_manager().await,
     };
 
     (app_state, anvil)
