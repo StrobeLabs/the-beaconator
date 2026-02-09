@@ -14,10 +14,9 @@ async fn test_register_beacon_with_anvil() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
     // First create a beacon to register
-    let owner_address = app_state.wallet_address;
     let factory_address = app_state.beacon_factory_address;
 
-    let beacon_result = create_beacon_via_factory(&app_state, owner_address, factory_address).await;
+    let beacon_result = create_beacon_via_factory(&app_state, factory_address).await;
     assert!(
         beacon_result.is_ok(),
         "Beacon creation should succeed: {beacon_result:?}"
@@ -55,10 +54,9 @@ async fn test_register_beacon_idempotency() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
     // Create a beacon
-    let owner_address = app_state.wallet_address;
     let factory_address = app_state.beacon_factory_address;
 
-    let beacon_result = create_beacon_via_factory(&app_state, owner_address, factory_address).await;
+    let beacon_result = create_beacon_via_factory(&app_state, factory_address).await;
     assert!(beacon_result.is_ok());
     let beacon_address = beacon_result.unwrap();
     let registry_address = app_state.perpcity_registry_address;
@@ -93,10 +91,9 @@ async fn test_register_beacon_with_different_registries() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
     // Create a beacon
-    let owner_address = app_state.wallet_address;
     let factory_address = app_state.beacon_factory_address;
 
-    let beacon_result = create_beacon_via_factory(&app_state, owner_address, factory_address).await;
+    let beacon_result = create_beacon_via_factory(&app_state, factory_address).await;
     assert!(beacon_result.is_ok());
     let beacon_address = beacon_result.unwrap();
 
@@ -136,7 +133,6 @@ async fn test_register_beacon_with_different_registries() {
 async fn test_register_multiple_beacons_sequentially() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
-    let owner_address = app_state.wallet_address;
     let factory_address = app_state.beacon_factory_address;
     let registry_address = app_state.perpcity_registry_address;
 
@@ -147,8 +143,7 @@ async fn test_register_multiple_beacons_sequentially() {
         println!("Creating and registering beacon {i}");
 
         // Create beacon
-        let beacon_result =
-            create_beacon_via_factory(&app_state, owner_address, factory_address).await;
+        let beacon_result = create_beacon_via_factory(&app_state, factory_address).await;
         assert!(beacon_result.is_ok(), "Beacon {i} creation should succeed");
         let beacon_address = beacon_result.unwrap();
 
@@ -223,15 +218,13 @@ async fn test_registration_check_unregistered_beacon() {
 async fn test_concurrent_beacon_registrations() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
-    let owner_address = app_state.wallet_address;
     let factory_address = app_state.beacon_factory_address;
     let registry_address = app_state.perpcity_registry_address;
 
     // Create multiple beacons first
     let mut beacon_addresses = Vec::new();
     for i in 0..3 {
-        let beacon_result =
-            create_beacon_via_factory(&app_state, owner_address, factory_address).await;
+        let beacon_result = create_beacon_via_factory(&app_state, factory_address).await;
         if let Ok(beacon_address) = beacon_result {
             beacon_addresses.push(beacon_address);
             println!("Created beacon {i} at {beacon_address}");
@@ -285,7 +278,7 @@ async fn test_registration_error_handling() {
             "Zero beacon address",
         ),
         (
-            app_state.wallet_address,
+            app_state.funding_wallet_address,
             Address::ZERO,
             "Zero registry address",
         ),
@@ -317,10 +310,9 @@ async fn test_registration_with_timeout() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
     // Create a beacon
-    let owner_address = app_state.wallet_address;
     let factory_address = app_state.beacon_factory_address;
 
-    let beacon_result = create_beacon_via_factory(&app_state, owner_address, factory_address).await;
+    let beacon_result = create_beacon_via_factory(&app_state, factory_address).await;
     assert!(beacon_result.is_ok());
     let beacon_address = beacon_result.unwrap();
     let registry_address = app_state.perpcity_registry_address;

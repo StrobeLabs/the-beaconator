@@ -1,6 +1,10 @@
 // Transaction execution tests - extracted from src/services/transaction/execution.rs
+//
+// Note: The global transaction serializer has been removed.
+// Transaction serialization is now handled by Redis-based distributed locks
+// in the wallet module. See `WalletLock` for details.
 
-use the_beaconator::services::transaction::execution::{get_transaction_mutex, is_nonce_error};
+use the_beaconator::services::transaction::execution::is_nonce_error;
 
 #[test]
 fn test_is_nonce_error_detection() {
@@ -15,18 +19,4 @@ fn test_is_nonce_error_detection() {
     assert!(!is_nonce_error("insufficient funds"));
     assert!(!is_nonce_error("gas limit exceeded"));
     assert!(!is_nonce_error(""));
-}
-
-#[test]
-fn test_transaction_mutex_initialization() {
-    // Test that we can get the transaction mutex (it should exist)
-    let mutex = get_transaction_mutex();
-
-    // Just verify the mutex exists and we can reference it
-    // We don't try to lock it since other tests might be using it
-    // The fact that this compiles and runs means the mutex is properly initialized
-    assert_eq!(
-        std::ptr::addr_of!(*mutex),
-        std::ptr::addr_of!(*get_transaction_mutex())
-    );
 }

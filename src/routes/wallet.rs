@@ -111,8 +111,12 @@ pub async fn fund_guest_wallet(
         alloy::primitives::utils::format_ether(U256::from(eth_amount))
     );
 
-    // Check beaconator wallet ETH balance
-    let eth_balance = match state.provider.get_balance(state.wallet_address).await {
+    // Check funding wallet ETH balance using read provider
+    let eth_balance = match state
+        .read_provider
+        .get_balance(state.funding_wallet_address)
+        .await
+    {
         Ok(balance) => balance,
         Err(e) => {
             tracing::error!("Failed to get ETH balance: {}", e);
@@ -147,9 +151,13 @@ pub async fn fund_guest_wallet(
         ));
     }
 
-    // Check USDC balance
-    let usdc_contract = IERC20::new(state.usdc_address, &*state.provider);
-    let usdc_balance = match usdc_contract.balanceOf(state.wallet_address).call().await {
+    // Check USDC balance using read provider
+    let usdc_read_contract = IERC20::new(state.usdc_address, &*state.read_provider);
+    let usdc_balance = match usdc_read_contract
+        .balanceOf(state.funding_wallet_address)
+        .call()
+        .await
+    {
         Ok(result) => result,
         Err(e) => {
             tracing::error!("Failed to get USDC balance: {}", e);
@@ -184,12 +192,12 @@ pub async fn fund_guest_wallet(
         ));
     }
 
-    // Send ETH
+    // Send ETH using funding provider
     let tx_request = TransactionRequest::default()
         .to(wallet_address)
         .value(U256::from(eth_amount));
 
-    let eth_tx_hash = match state.provider.send_transaction(tx_request).await {
+    let eth_tx_hash = match state.funding_provider.send_transaction(tx_request).await {
         Ok(pending) => match pending.get_receipt().await {
             Ok(receipt) => receipt.transaction_hash,
             Err(e) => {
@@ -224,8 +232,9 @@ pub async fn fund_guest_wallet(
 
     tracing::info!("ETH transfer hash: {:?}", eth_tx_hash);
 
-    // Send USDC
-    let usdc_receipt = match usdc_contract
+    // Send USDC using funding provider
+    let usdc_send_contract = IERC20::new(state.usdc_address, &*state.funding_provider);
+    let usdc_receipt = match usdc_send_contract
         .transfer(wallet_address, U256::from(usdc_amount))
         .send()
         .await

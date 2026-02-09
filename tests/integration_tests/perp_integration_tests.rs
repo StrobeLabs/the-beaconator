@@ -20,7 +20,7 @@ use the_beaconator::routes::perp::{
 #[serial]
 async fn test_deposit_liquidity_invalid_perp_id() {
     let token = ApiToken("test_token".to_string());
-    let app_state = create_simple_test_app_state();
+    let app_state = create_simple_test_app_state().await;
     let state = State::from(&app_state);
 
     // Test invalid perp ID (not hex)
@@ -44,7 +44,7 @@ async fn test_deposit_liquidity_invalid_perp_id() {
 #[serial]
 async fn test_deposit_liquidity_invalid_margin_amount() {
     let token = ApiToken("test_token".to_string());
-    let app_state = create_simple_test_app_state();
+    let app_state = create_simple_test_app_state().await;
     let state = State::from(&app_state);
 
     // Test invalid margin amount (not a number)
@@ -66,9 +66,10 @@ async fn test_deposit_liquidity_invalid_margin_amount() {
 
 #[tokio::test]
 #[serial]
+#[ignore = "requires Redis - wallet operations needed before reaching on-chain validation"]
 async fn test_deposit_liquidity_zero_margin_amount() {
     let token = ApiToken("test_token".to_string());
-    let app_state = create_simple_test_app_state();
+    let app_state = create_simple_test_app_state().await;
     let state = State::from(&app_state);
 
     let request = Json(DepositLiquidityForPerpRequest {
@@ -92,7 +93,7 @@ async fn test_deposit_liquidity_zero_margin_amount() {
 #[serial]
 async fn test_deploy_perp_invalid_beacon_address() {
     let token = ApiToken("test_token".to_string());
-    let app_state = create_simple_test_app_state();
+    let app_state = create_simple_test_app_state().await;
     let state = State::from(&app_state);
 
     // Test invalid beacon address
@@ -114,7 +115,7 @@ async fn test_deploy_perp_invalid_beacon_address() {
 #[serial]
 async fn test_deploy_perp_short_beacon_address() {
     let token = ApiToken("test_token".to_string());
-    let app_state = create_simple_test_app_state();
+    let app_state = create_simple_test_app_state().await;
     let state = State::from(&app_state);
 
     // Test short beacon address (missing characters)
@@ -136,7 +137,7 @@ async fn test_deploy_perp_short_beacon_address() {
 #[serial]
 async fn test_batch_deposit_liquidity_mixed_validity() {
     let token = ApiToken("test_token".to_string());
-    let app_state = create_simple_test_app_state();
+    let app_state = create_simple_test_app_state().await;
     let state = State::from(&app_state);
 
     // Mix of valid and invalid perp IDs
@@ -168,15 +169,16 @@ async fn test_batch_deposit_liquidity_mixed_validity() {
 
     let result = batch_deposit_liquidity_for_perps(request, token, state).await;
 
-    // Endpoint not implemented - should return NotImplemented
-    assert_eq!(result, Status::NotImplemented);
+    // Endpoint not implemented - should return Err(NotImplemented)
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err(), Status::NotImplemented);
 }
 
 #[tokio::test]
 #[serial]
 async fn test_batch_deposit_liquidity_invalid_count() {
     let token = ApiToken("test_token".to_string());
-    let app_state = create_simple_test_app_state();
+    let app_state = create_simple_test_app_state().await;
     let state = State::from(&app_state);
 
     // Empty deposits array
@@ -185,8 +187,9 @@ async fn test_batch_deposit_liquidity_invalid_count() {
     });
 
     let result = batch_deposit_liquidity_for_perps(request, token, state).await;
-    // Endpoint not implemented - should return NotImplemented regardless of input
-    assert_eq!(result, Status::NotImplemented);
+    // Endpoint not implemented - should return Err(NotImplemented) regardless of input
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err(), Status::NotImplemented);
 }
 
 #[test]

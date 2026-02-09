@@ -16,9 +16,11 @@ pub mod routes;
 pub mod services;
 
 use crate::models::AppState;
+use crate::models::wallet::WalletManagerConfig;
+use crate::services::wallet::WalletManager;
 use rocket::{Request, catch, catchers};
 
-// Let Rust infer the complex provider type
+// Provider type with embedded wallet for signing transactions
 pub type AlloyProvider = alloy::providers::fillers::FillProvider<
     alloy::providers::fillers::JoinFill<
         alloy::providers::fillers::JoinFill<
@@ -35,6 +37,25 @@ pub type AlloyProvider = alloy::providers::fillers::FillProvider<
             >,
         >,
         alloy::providers::fillers::WalletFiller<alloy::network::EthereumWallet>,
+    >,
+    alloy::providers::RootProvider<alloy::network::Ethereum>,
+    alloy::network::Ethereum,
+>;
+
+// Read-only provider type without wallet (for queries only, cannot sign transactions)
+pub type ReadOnlyProvider = alloy::providers::fillers::FillProvider<
+    alloy::providers::fillers::JoinFill<
+        alloy::providers::Identity,
+        alloy::providers::fillers::JoinFill<
+            alloy::providers::fillers::GasFiller,
+            alloy::providers::fillers::JoinFill<
+                alloy::providers::fillers::BlobGasFiller,
+                alloy::providers::fillers::JoinFill<
+                    alloy::providers::fillers::NonceFiller,
+                    alloy::providers::fillers::ChainIdFiller,
+                >,
+            >,
+        >,
     >,
     alloy::providers::RootProvider<alloy::network::Ethereum>,
     alloy::network::Ethereum,
@@ -215,20 +236,30 @@ pub async fn create_rocket() -> Rocket<Build> {
         ),
     };
 
-    // Parse the wallet private key
+    // Get the RPC URL for storing in AppState (used by WalletHandle to build providers)
+    let rpc_url = rpc_config.get_rpc_url();
+
+    // Build read-only providers (no wallet, for queries only)
+    let read_only_providers = rpc_config
+        .build_read_only_providers()
+        .unwrap_or_else(|e| panic!("Failed to build read-only RPC providers: {e}"));
+
+    let read_provider = read_only_providers.primary;
+    let alternate_read_provider = read_only_providers.alternate;
+
+    // Parse the funding wallet private key (ONLY for fund_guest_wallet endpoint)
     let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY environment variable not set");
 
-    // Build RPC providers using the RPC module
-    let rpc_providers = rpc_config
+    // Build funding provider with PRIVATE_KEY wallet (ONLY for fund_guest_wallet)
+    let funding_providers = rpc_config
         .build_providers(&private_key, chain_id)
-        .unwrap_or_else(|e| panic!("Failed to build RPC providers: {e}"));
+        .unwrap_or_else(|e| panic!("Failed to build funding RPC providers: {e}"));
 
-    let provider = rpc_providers.primary;
-    let alternate_provider = rpc_providers.alternate;
+    let funding_provider = funding_providers.primary;
 
-    // Get wallet address and create signer for ECDSA signing
-    let wallet_address = services::rpc::RpcConfig::get_wallet_address(&private_key)
-        .expect("Failed to get wallet address");
+    // Get funding wallet address
+    let funding_wallet_address = services::rpc::RpcConfig::get_wallet_address(&private_key)
+        .expect("Failed to get funding wallet address");
 
     // Parse the private key into a signer for ECDSA operations
     let signer = private_key
@@ -236,36 +267,67 @@ pub async fn create_rocket() -> Rocket<Build> {
         .expect("Failed to parse private key into signer")
         .with_chain_id(Some(chain_id));
 
-    // Log wallet configuration for debugging
-    tracing::info!("Wallet configured:");
-    tracing::info!("  - Address: {:?}", wallet_address);
+    // Log funding wallet configuration
+    tracing::info!("Funding wallet configured (for fund_guest_wallet only):");
+    tracing::info!("  - Address: {:?}", funding_wallet_address);
     tracing::info!("  - Chain ID: {:?}", chain_id);
     tracing::info!("  - ENV: {}", env_type);
 
-    // Check wallet balance and nonce for debugging
-    match provider.get_balance(wallet_address).await {
+    // Check funding wallet balance for debugging
+    match read_provider.get_balance(funding_wallet_address).await {
         Ok(balance) => {
-            tracing::info!("Wallet balance: {} ETH", format_ether(balance));
+            tracing::info!("Funding wallet balance: {} ETH", format_ether(balance));
         }
         Err(e) => {
-            tracing::warn!("Failed to get wallet balance: {}", e);
+            tracing::warn!("Failed to get funding wallet balance: {}", e);
         }
     }
 
-    match provider.get_transaction_count(wallet_address).await {
-        Ok(nonce) => {
-            tracing::info!("Wallet nonce: {}", nonce);
+    // Initialize WalletManager (REQUIRED for contract operations)
+    let mut wallet_config = WalletManagerConfig::from_env().unwrap_or_else(|e| {
+        panic!(
+            "WalletManager configuration is required: {e}. \
+             Required env vars: REDIS_URL, TURNKEY_API_URL, TURNKEY_ORGANIZATION_ID, TURNKEY_API_PUBLIC_KEY, TURNKEY_API_PRIVATE_KEY"
+        )
+    });
+
+    // Set chain_id from the already-determined chain_id
+    wallet_config.chain_id = Some(chain_id);
+
+    let wallet_manager = WalletManager::new(wallet_config).await.unwrap_or_else(|e| {
+        panic!(
+            "WalletManager failed to initialize: {e}. \
+             Check Redis connectivity and Turnkey credentials."
+        )
+    });
+
+    tracing::info!("WalletManager initialized for contract operations");
+
+    // Log wallet pool status
+    match wallet_manager.list_wallets().await {
+        Ok(wallets) => {
+            tracing::info!("Wallet pool contains {} wallets", wallets.len());
+            for wallet in &wallets {
+                tracing::info!("  - {} ({:?})", wallet.address, wallet.status);
+            }
         }
         Err(e) => {
-            tracing::warn!("Failed to get wallet nonce: {}", e);
+            tracing::warn!("Failed to list wallets in pool: {}", e);
         }
     }
 
     let app_state = AppState {
-        provider,
-        alternate_provider,
-        wallet_address,
+        // Providers
+        read_provider,
+        alternate_read_provider,
+        funding_provider,
+        funding_wallet_address,
+        wallet_manager: std::sync::Arc::new(wallet_manager),
+        rpc_url,
+        chain_id,
         signer,
+
+        // ABIs
         beacon_abi,
         beacon_factory_abi,
         beacon_registry_abi,
@@ -275,14 +337,22 @@ pub async fn create_rocket() -> Rocket<Build> {
         step_beacon_abi,
         ecdsa_beacon_abi,
         ecdsa_verifier_adapter_abi,
+
+        // Addresses
         beacon_factory_address,
         perpcity_registry_address,
         perp_manager_address,
         usdc_address,
         dichotomous_beacon_factory_address,
+
+        // Limits
         usdc_transfer_limit,
         eth_transfer_limit,
+
+        // Auth
         access_token,
+
+        // Perp modules
         fees_module_address,
         margin_ratios_module_address,
         lockup_period_module_address,
