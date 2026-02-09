@@ -190,10 +190,9 @@ pub struct AppState {
     pub rpc_url: String,
     pub chain_id: u64,
 
-    /// Legacy signer field - currently unused.
-    /// ECDSA signing operations now use wallet_handle.signer from WalletManager.
-    /// Kept for backwards compatibility; may be removed in a future refactor.
-    #[allow(dead_code)]
+    /// Signer from PRIVATE_KEY - used for ECDSA beacon signatures.
+    /// This wallet's address must match the designated signer configured
+    /// in each ECDSA beacon's verifier adapter.
     pub signer: PrivateKeySigner,
 
     // Contract ABIs

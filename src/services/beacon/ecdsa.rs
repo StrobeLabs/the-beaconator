@@ -1,4 +1,5 @@
 use alloy::primitives::{Address, B256, Bytes, U256};
+use alloy::signers::Signer;
 use alloy::sol_types::SolValue;
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -59,30 +60,32 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Designated signer for this beacon: {}", designated_signer);
 
-    // 3. Acquire the appropriate wallet for signing via WalletManager
-    let wallet_handle = state
-        .wallet_manager
-        .acquire_for_beacon(&beacon_address)
-        .await
-        .map_err(|e| format!("Failed to acquire wallet for beacon {beacon_address}: {e}"))?;
-
-    // Verify the acquired wallet matches the designated signer
-    if wallet_handle.address() != designated_signer {
+    // 3. Verify PRIVATE_KEY signer matches designated signer
+    let signer_address = state.signer.address();
+    if signer_address != designated_signer {
         return Err(format!(
-            "Acquired wallet {} does not match designated signer {} for beacon {}. \
-             Ensure the designated signer is added to the wallet pool.",
-            wallet_handle.address(),
-            designated_signer,
-            beacon_address
+            "PRIVATE_KEY wallet {signer_address} does not match designated signer {designated_signer} for beacon {beacon_address}. \
+             Update PRIVATE_KEY or reconfigure the beacon's verifier adapter."
         ));
     }
 
-    let wallet_address = wallet_handle.address();
     tracing::info!(
-        "Acquired wallet {} via WalletManager for beacon {} (designated signer: {})",
-        wallet_address,
-        beacon_address,
-        designated_signer
+        "Using PRIVATE_KEY signer {} for beacon {} ECDSA signature",
+        signer_address,
+        beacon_address
+    );
+
+    // 4. Acquire any available wallet from pool for sending the transaction
+    let wallet_handle = state
+        .wallet_manager
+        .acquire_any_wallet()
+        .await
+        .map_err(|e| format!("Failed to acquire wallet for transaction: {e}"))?;
+
+    let tx_wallet_address = wallet_handle.address();
+    tracing::info!(
+        "Using wallet {} from pool to send transaction (gas payer)",
+        tx_wallet_address
     );
 
     // Build provider with the acquired wallet for sending transactions
@@ -110,12 +113,12 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Got EIP-712 digest: {:?}", digest);
 
-    // 6. Sign the digest with the acquired wallet
-    let signature = wallet_handle
+    // 6. Sign the digest with PRIVATE_KEY signer (state.signer)
+    let signature = state
         .signer
         .sign_hash(&digest)
         .await
-        .map_err(|e| format!("Failed to sign digest with wallet: {e}"))?;
+        .map_err(|e| format!("Failed to sign digest with PRIVATE_KEY signer: {e}"))?;
 
     tracing::info!("Signed digest successfully");
 
@@ -134,7 +137,7 @@ pub async fn update_beacon_with_ecdsa(
     // 9. Call beacon.updateIndex(signature, inputs) using the write provider
     tracing::info!(
         "Sending updateIndex transaction to beacon with wallet {}",
-        wallet_address
+        tx_wallet_address
     );
     let beacon_write = IEcdsaBeacon::new(beacon_address, &provider);
     let pending_tx = beacon_write
