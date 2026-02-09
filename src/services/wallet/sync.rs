@@ -319,34 +319,34 @@ impl<'a> WalletSyncService<'a> {
         address: Address,
         turnkey_key_id: String,
     ) -> Result<bool, String> {
-        // Check if wallet already exists in pool
-        match self.pool.get_wallet_info(&address).await {
-            Ok(_info) => {
-                // Wallet exists, preserve existing state
-                tracing::debug!(
-                    address = %address,
-                    "Wallet already exists in pool, skipping"
-                );
-                Ok(false)
-            }
-            Err(_) => {
-                // Wallet doesn't exist, add it
-                let info = WalletInfo {
-                    address,
-                    turnkey_key_id,
-                    status: WalletStatus::Available,
-                    designated_beacons: vec![],
-                };
+        // Explicitly check if wallet exists using wallet_exists
+        // This properly distinguishes between "not found" and actual Redis errors
+        let exists = self.pool.wallet_exists(&address).await?;
 
-                self.pool.add_wallet(info).await?;
+        if exists {
+            // Wallet exists, preserve existing state
+            tracing::debug!(
+                address = %address,
+                "Wallet already exists in pool, skipping"
+            );
+            Ok(false)
+        } else {
+            // Wallet doesn't exist, add it
+            let info = WalletInfo {
+                address,
+                turnkey_key_id,
+                status: WalletStatus::Available,
+                designated_beacons: vec![],
+            };
 
-                tracing::info!(
-                    address = %address,
-                    "Added new wallet to pool"
-                );
+            self.pool.add_wallet(info).await?;
 
-                Ok(true)
-            }
+            tracing::info!(
+                address = %address,
+                "Added new wallet to pool"
+            );
+
+            Ok(true)
         }
     }
 }

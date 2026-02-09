@@ -110,6 +110,13 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
+    /// Anvil's first test account private key (well-known, deterministic)
+    /// This is a standard test key used across Ethereum tooling, not a secret.
+    /// Address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+    const ANVIL_TEST_PRIVATE_KEY: &str =
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const ANVIL_TEST_ADDRESS: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+
     // Test helper to create a config directly (bypassing env vars)
     fn create_test_config(env_type: &str, rpc_url: &str) -> RpcConfig {
         RpcConfig {
@@ -246,9 +253,7 @@ mod tests {
     #[test]
     fn test_build_provider_valid() {
         let config = create_test_config("mainnet", "http://localhost:8545");
-        // Use a valid test private key
-        let private_key = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-        let result = config.build_provider(private_key, 8453);
+        let result = config.build_provider(ANVIL_TEST_PRIVATE_KEY, 8453);
         assert!(result.is_ok());
     }
 
@@ -262,13 +267,12 @@ mod tests {
 
     #[test]
     fn test_get_wallet_address_valid() {
-        let private_key = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-        let result = RpcConfig::get_wallet_address(private_key);
+        let result = RpcConfig::get_wallet_address(ANVIL_TEST_PRIVATE_KEY);
         assert!(result.is_ok());
         // This key corresponds to Anvil's first test account
         assert_eq!(
             result.unwrap().to_string().to_lowercase(),
-            "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+            ANVIL_TEST_ADDRESS
         );
     }
 
