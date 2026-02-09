@@ -178,6 +178,16 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     needs: [format, lint, unit-tests, integration-tests, wallet-tests, full-integration-tests]
+    services:
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -204,7 +214,8 @@ jobs:
 
       - name: Test Docker image
         run: |
-          docker run --rm -d --name test-beaconator -p 8000:8000 \
+          # Use host network so container can reach Redis service
+          docker run --rm -d --name test-beaconator --network host \
             -e RPC_URL=https://mainnet.base.org \
             -e PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
             -e SENTRY_DSN=https://test@test.ingest.sentry.io/test \
@@ -218,9 +229,14 @@ jobs:
             -e MARGIN_RATIOS_MODULE_ADDRESS=0x5678901234567890123456789012345678901234 \
             -e LOCKUP_PERIOD_MODULE_ADDRESS=0x6789012345678901234567890123456789012345 \
             -e SQRT_PRICE_IMPACT_LIMIT_MODULE_ADDRESS=0x7890123456789012345678901234567890123456 \
+            -e REDIS_URL=redis://127.0.0.1:6379 \
+            -e TURNKEY_API_URL=https://api.turnkey.com \
+            -e TURNKEY_ORGANIZATION_ID=test-org-id \
+            -e TURNKEY_API_PUBLIC_KEY=test-public-key \
+            -e TURNKEY_API_PRIVATE_KEY=test-private-key \
             the-beaconator:latest
-          sleep 10
-          curl -f http://localhost:8000/ || exit 1
+          sleep 15
+          curl -f http://localhost:8000/ || (docker logs test-beaconator && exit 1)
           docker stop test-beaconator
 
       - name: Move cache
