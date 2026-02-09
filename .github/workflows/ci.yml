@@ -112,12 +112,10 @@ jobs:
         env:
           REDIS_URL: redis://127.0.0.1:6379
         run: |
-          # Flush Redis to ensure clean state
-          redis-cli -h 127.0.0.1 -p 6379 FLUSHALL || true
-          # Run wallet module tests from library (sequential to avoid race conditions)
-          cargo test --lib wallet -- --ignored --nocapture --test-threads=1
-          # Run unit tests that require WalletManager with Redis (sequential to avoid race conditions)
-          cargo test unit_tests -- --ignored --nocapture --test-threads=1
+          # Run wallet module tests from library (parallel - each test uses unique Redis prefix)
+          cargo test --lib wallet -- --ignored --nocapture
+          # Run unit tests that require WalletManager with Redis (parallel - each test uses unique Redis prefix)
+          cargo test unit_tests -- --ignored --nocapture
 
   # Full integration tests - needs both Anvil and Redis
   full-integration-tests:
@@ -159,8 +157,11 @@ jobs:
           redis-cli -h 127.0.0.1 -p 6379 FLUSHALL || true
           # Cleanup any existing Anvil instances
           ./scripts/anvil-cleanup.sh
-          # Run integration tests that need both Anvil and Redis (sequential for reliability)
-          cargo test integration_tests -- --ignored --nocapture --test-threads=1
+          # Run nonce conflict tests (need Redis, work with mock contracts)
+          # Parallel execution enabled - each test uses unique Redis key prefix
+          cargo test nonce_conflict_tests -- --ignored --nocapture
+          # Note: beacon_core and register_beacon integration tests are skipped
+          # because they require actual deployed contracts, not mock addresses
           # Cleanup
           ./scripts/anvil-cleanup.sh
 
