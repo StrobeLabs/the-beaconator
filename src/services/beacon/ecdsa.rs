@@ -9,18 +9,19 @@ use tracing;
 use crate::models::{AppState, UpdateBeaconWithEcdsaRequest};
 use crate::routes::{IEcdsaBeacon, IEcdsaVerifierAdapter};
 
-/// Updates a beacon using ECDSA signature from the appropriate wallet.
+/// Updates a beacon using ECDSA signature from the PRIVATE_KEY wallet.
 ///
 /// This function:
 /// 1. Gets the verifier adapter address from the beacon
 /// 2. Gets the designated signer from the verifier adapter
-/// 3. Acquires the appropriate wallet (via WalletManager if available, or fallback to single wallet)
-/// 4. Generates a nonce from the current timestamp
-/// 5. Gets the EIP-712 digest from the verifier
-/// 6. Signs the digest with the acquired wallet
-/// 7. Packs the signature as r || s || v (65 bytes)
-/// 8. ABI-encodes the inputs as (measurement, nonce)
-/// 9. Calls beacon.updateIndex(signature, inputs)
+/// 3. Verifies PRIVATE_KEY signer matches designated signer
+/// 4. Acquires any available wallet from pool for transaction sending
+/// 5. Generates a nonce from the current timestamp
+/// 6. Gets the EIP-712 digest from the verifier
+/// 7. Signs the digest with PRIVATE_KEY signer
+/// 8. Packs the signature as r || s || v (65 bytes)
+/// 9. ABI-encodes the inputs as (measurement, nonce)
+/// 10. Calls beacon.updateIndex(signature, inputs)
 pub async fn update_beacon_with_ecdsa(
     state: &AppState,
     request: UpdateBeaconWithEcdsaRequest,
@@ -93,7 +94,7 @@ pub async fn update_beacon_with_ecdsa(
         .build_provider(&state.rpc_url)
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
-    // 4. Generate nonce from high-resolution timestamp (nanoseconds) to avoid collisions
+    // 5. Generate nonce from high-resolution timestamp (nanoseconds) to avoid collisions
     let nonce = U256::from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -103,7 +104,7 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Using nonce (timestamp_nanos): {}", nonce);
 
-    // 5. Get EIP-712 digest from verifier
+    // 6. Get EIP-712 digest from verifier
     let digest_raw = verifier
         .digest(measurement, nonce)
         .call()
@@ -113,7 +114,7 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Got EIP-712 digest: {:?}", digest);
 
-    // 6. Sign the digest with PRIVATE_KEY signer (state.signer)
+    // 7. Sign the digest with PRIVATE_KEY signer (state.signer)
     let signature = state
         .signer
         .sign_hash(&digest)
@@ -122,19 +123,19 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Signed digest successfully");
 
-    // 7. Pack signature as r || s || v (65 bytes)
+    // 8. Pack signature as r || s || v (65 bytes)
     // Alloy signature.as_bytes() returns [r (32 bytes) | s (32 bytes) | v (1 byte)]
     let sig_bytes = Bytes::from(signature.as_bytes().to_vec());
 
     tracing::debug!("Signature bytes length: {}", sig_bytes.len());
 
-    // 8. ABI-encode inputs as (measurement, nonce)
+    // 9. ABI-encode inputs as (measurement, nonce)
     let inputs = (measurement, nonce).abi_encode();
     let inputs_bytes = Bytes::from(inputs);
 
     tracing::debug!("Inputs bytes length: {}", inputs_bytes.len());
 
-    // 9. Call beacon.updateIndex(signature, inputs) using the write provider
+    // 10. Call beacon.updateIndex(signature, inputs) using the write provider
     tracing::info!(
         "Sending updateIndex transaction to beacon with wallet {}",
         tx_wallet_address
@@ -152,7 +153,7 @@ pub async fn update_beacon_with_ecdsa(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Transaction hash: {:?}", tx_hash);
 
-    // 10. Wait for confirmation with timeout
+    // 11. Wait for confirmation with timeout
     let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
         Ok(Ok(receipt)) => {
             tracing::info!("Transaction confirmed via get_receipt()");
@@ -170,7 +171,7 @@ pub async fn update_beacon_with_ecdsa(
         }
     };
 
-    // 11. Validate transaction status
+    // 12. Validate transaction status
     if !receipt.status() {
         let error_msg = format!("UpdateIndex transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
@@ -179,7 +180,7 @@ pub async fn update_beacon_with_ecdsa(
         return Err(error_msg);
     }
 
-    // 12. Validate IndexUpdated event was emitted
+    // 13. Validate IndexUpdated event was emitted
     let index_updated_found = receipt.inner.logs().iter().any(|log| {
         // IndexUpdated event signature: keccak256("IndexUpdated(uint256)")
         log.address() == beacon_address
