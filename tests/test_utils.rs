@@ -354,6 +354,46 @@ pub fn load_test_abi(name: &str) -> JsonAbi {
         .unwrap_or_else(|_| panic!("Failed to parse test ABI file: {fixture_path}"))
 }
 
+/// Load compiled contract bytecode from Foundry output
+///
+/// Reads the Foundry-generated JSON artifact and extracts the bytecode.
+/// Expects artifacts at: tests/contracts/out/{name}.sol/{name}.json
+pub fn load_contract_bytecode(contract_name: &str) -> Vec<u8> {
+    let path = format!("tests/contracts/out/{contract_name}.sol/{contract_name}.json");
+    let json_content = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+        panic!("Failed to read contract artifact: {path}. Run 'cd tests/contracts && forge build'")
+    });
+
+    let artifact: serde_json::Value = serde_json::from_str(&json_content)
+        .unwrap_or_else(|_| panic!("Failed to parse contract artifact: {path}"));
+
+    let bytecode_hex = artifact["bytecode"]["object"]
+        .as_str()
+        .unwrap_or_else(|| panic!("No bytecode found in artifact: {path}"))
+        .trim_start_matches("0x");
+
+    hex::decode(bytecode_hex).unwrap_or_else(|_| panic!("Failed to decode bytecode from: {path}"))
+}
+
+/// Deploy a contract to Anvil using bytecode
+async fn deploy_contract(
+    provider: &the_beaconator::AlloyProvider,
+    bytecode: Vec<u8>,
+) -> Result<Address, Box<dyn std::error::Error>> {
+    use alloy::network::TransactionBuilder;
+    use alloy::providers::Provider;
+    use alloy::rpc::types::TransactionRequest;
+
+    let tx = TransactionRequest::default().with_deploy_code(bytecode);
+
+    let pending = provider.send_transaction(tx).await?;
+    let receipt = pending.get_receipt().await?;
+
+    receipt
+        .contract_address
+        .ok_or_else(|| "No contract address in deployment receipt".into())
+}
+
 /// Test deployment utilities
 pub struct TestDeployment {
     pub beacon_factory: Address,
@@ -366,6 +406,9 @@ pub struct TestDeployment {
 
 impl TestDeployment {
     /// Deploy test contracts to isolated Anvil instance
+    ///
+    /// Deploys MockBeaconFactory and MockBeaconRegistry contracts.
+    /// Requires: Run `cd tests/contracts && forge build` first.
     pub async fn deploy_isolated(anvil: &AnvilManager) -> Result<Self, Box<dyn std::error::Error>> {
         // Create provider with deployer account
         let signer = anvil.deployer_signer();
@@ -376,24 +419,60 @@ impl TestDeployment {
                 .connect_http(anvil.rpc_url().parse()?),
         );
 
-        // For testing, we'll use mock addresses for now
-        // In a real integration test, you would deploy actual contracts here
-        let beacon_factory = Address::from_str("0x5FbDB2315678afecb367f032d93F642f64180aa3")?;
-        let beacon_registry = Address::from_str("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512")?;
-        let perp_hook = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
-        let usdc = Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9")?;
+        // Check if contract artifacts exist (compiled with Foundry)
+        let factory_bytecode_path =
+            "tests/contracts/out/MockBeaconFactory.sol/MockBeaconFactory.json";
+        if std::path::Path::new(factory_bytecode_path).exists() {
+            // Deploy actual mock contracts
+            tracing::info!("Deploying mock contracts to Anvil...");
 
-        Ok(Self {
-            beacon_factory,
-            beacon_registry,
-            perp_hook,
-            usdc,
-            provider,
-            deployer: anvil.deployer_account(),
-        })
+            let factory_bytecode = load_contract_bytecode("MockBeaconFactory");
+            let beacon_factory = deploy_contract(&provider, factory_bytecode).await?;
+            tracing::info!("  - MockBeaconFactory deployed at: {beacon_factory}");
+
+            let registry_bytecode = load_contract_bytecode("MockBeaconRegistry");
+            let beacon_registry = deploy_contract(&provider, registry_bytecode).await?;
+            tracing::info!("  - MockBeaconRegistry deployed at: {beacon_registry}");
+
+            // Use mock addresses for contracts we don't need to test
+            let perp_hook = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
+            let usdc = Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9")?;
+
+            Ok(Self {
+                beacon_factory,
+                beacon_registry,
+                perp_hook,
+                usdc,
+                provider,
+                deployer: anvil.deployer_account(),
+            })
+        } else {
+            // Fallback to mock addresses if contracts not compiled
+            // This allows basic tests to run without Foundry
+            tracing::warn!(
+                "Mock contracts not compiled. Run 'cd tests/contracts && forge build'. Using mock addresses."
+            );
+
+            let beacon_factory = Address::from_str("0x5FbDB2315678afecb367f032d93F642f64180aa3")?;
+            let beacon_registry = Address::from_str("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512")?;
+            let perp_hook = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
+            let usdc = Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9")?;
+
+            Ok(Self {
+                beacon_factory,
+                beacon_registry,
+                perp_hook,
+                usdc,
+                provider,
+                deployer: anvil.deployer_account(),
+            })
+        }
     }
 
     /// Deploy test contracts to Anvil
+    ///
+    /// Deploys MockBeaconFactory and MockBeaconRegistry contracts.
+    /// Requires: Run `cd tests/contracts && forge build` first.
     pub async fn deploy(anvil: &AnvilConfig) -> Result<Self, Box<dyn std::error::Error>> {
         // Create provider with deployer account
         let signer = anvil.deployer_signer();
@@ -404,27 +483,53 @@ impl TestDeployment {
                 .connect_http(anvil.rpc_url.parse()?),
         );
 
-        // For testing, we'll use mock addresses for now
-        // In a real integration test, you would deploy actual contracts here
-        let beacon_factory = Address::from_str("0x5FbDB2315678afecb367f032d93F642f64180aa3")?;
-        let beacon_registry = Address::from_str("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512")?;
-        let perp_hook = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
-        let usdc = Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9")?;
+        // Check if contract artifacts exist (compiled with Foundry)
+        let factory_bytecode_path =
+            "tests/contracts/out/MockBeaconFactory.sol/MockBeaconFactory.json";
+        if std::path::Path::new(factory_bytecode_path).exists() {
+            // Deploy actual mock contracts
+            tracing::info!("Deploying mock contracts to Anvil...");
 
-        tracing::info!("Test contracts deployed:");
-        tracing::info!("  - BeaconFactory: {}", beacon_factory);
-        tracing::info!("  - BeaconRegistry: {}", beacon_registry);
-        tracing::info!("  - PerpManager: {}", perp_hook);
-        tracing::info!("  - USDC: {}", usdc);
+            let factory_bytecode = load_contract_bytecode("MockBeaconFactory");
+            let beacon_factory = deploy_contract(&provider, factory_bytecode).await?;
+            tracing::info!("  - MockBeaconFactory deployed at: {beacon_factory}");
 
-        Ok(Self {
-            beacon_factory,
-            beacon_registry,
-            perp_hook,
-            usdc,
-            deployer: anvil.deployer_account(),
-            provider,
-        })
+            let registry_bytecode = load_contract_bytecode("MockBeaconRegistry");
+            let beacon_registry = deploy_contract(&provider, registry_bytecode).await?;
+            tracing::info!("  - MockBeaconRegistry deployed at: {beacon_registry}");
+
+            // Use mock addresses for contracts we don't need to test
+            let perp_hook = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
+            let usdc = Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9")?;
+
+            Ok(Self {
+                beacon_factory,
+                beacon_registry,
+                perp_hook,
+                usdc,
+                deployer: anvil.deployer_account(),
+                provider,
+            })
+        } else {
+            // Fallback to mock addresses if contracts not compiled
+            tracing::warn!(
+                "Mock contracts not compiled. Run 'cd tests/contracts && forge build'. Using mock addresses."
+            );
+
+            let beacon_factory = Address::from_str("0x5FbDB2315678afecb367f032d93F642f64180aa3")?;
+            let beacon_registry = Address::from_str("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512")?;
+            let perp_hook = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
+            let usdc = Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9")?;
+
+            Ok(Self {
+                beacon_factory,
+                beacon_registry,
+                perp_hook,
+                usdc,
+                deployer: anvil.deployer_account(),
+                provider,
+            })
+        }
     }
 }
 

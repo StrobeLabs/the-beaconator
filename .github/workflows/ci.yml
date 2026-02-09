@@ -80,6 +80,10 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
+      - name: Compile mock contracts
+        working-directory: tests/contracts
+        run: forge build
+
       - name: Run integration tests
         run: |
           ./scripts/anvil-cleanup.sh
@@ -149,6 +153,10 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
+      - name: Compile mock contracts
+        working-directory: tests/contracts
+        run: forge build
+
       - name: Run full integration tests (Anvil + Redis)
         env:
           REDIS_URL: redis://127.0.0.1:6379
@@ -160,8 +168,9 @@ jobs:
           # Run nonce conflict tests (need Redis, work with mock contracts)
           # Parallel execution enabled - each test uses unique Redis key prefix
           cargo test nonce_conflict_tests -- --ignored --nocapture
-          # Note: beacon_core and register_beacon integration tests are skipped
-          # because they require actual deployed contracts, not mock addresses
+          # Run beacon integration tests (need Redis + Anvil + mock contracts)
+          cargo test beacon_core_integration_tests -- --ignored --nocapture
+          cargo test register_beacon_integration_tests -- --ignored --nocapture
           # Cleanup
           ./scripts/anvil-cleanup.sh
 
