@@ -161,8 +161,8 @@ jobs:
         env:
           REDIS_URL: redis://127.0.0.1:6379
         run: |
-          # Flush Redis to ensure clean state
-          redis-cli -h 127.0.0.1 -p 6379 FLUSHALL || true
+          # Flush Redis to ensure clean state (exec into the Redis service container)
+          docker exec $(docker ps -q -f ancestor=redis:alpine) redis-cli FLUSHALL
           # Cleanup any existing Anvil instances
           ./scripts/anvil-cleanup.sh
           # Run nonce conflict tests (need Redis, work with mock contracts)
