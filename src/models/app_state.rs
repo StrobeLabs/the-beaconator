@@ -176,9 +176,8 @@ pub struct ApiSummary {
 
 #[derive(Clone)]
 pub struct AppState {
-    // Read-only providers for queries (no wallet)
+    // Read-only provider for queries (no wallet)
     pub read_provider: Arc<ReadOnlyProvider>,
-    pub alternate_read_provider: Option<Arc<ReadOnlyProvider>>,
 
     // Funding provider (PRIVATE_KEY wallet) - ONLY for fund_guest_wallet
     pub funding_provider: Arc<AlloyProvider>,

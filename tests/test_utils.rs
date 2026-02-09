@@ -563,7 +563,6 @@ pub async fn create_test_app_state() -> AppState {
 
     AppState {
         read_provider,
-        alternate_read_provider: None,
         funding_provider: deployment.provider,
         funding_wallet_address: deployment.deployer,
         rpc_url: anvil.rpc_url.clone(),
@@ -636,7 +635,6 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
 
     let app_state = AppState {
         read_provider,
-        alternate_read_provider: None,
         funding_provider: deployment.provider,
         funding_wallet_address: deployment.deployer,
         rpc_url: anvil.rpc_url().to_string(),
@@ -734,7 +732,6 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
 
     let app_state = AppState {
         read_provider,
-        alternate_read_provider: None,
         funding_provider: deployment.provider,
         funding_wallet_address: deployment.deployer,
         rpc_url: anvil.rpc_url().to_string(),
@@ -804,7 +801,6 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
 
     AppState {
         read_provider,
-        alternate_read_provider: None,
         funding_provider: provider,
         funding_wallet_address: anvil.accounts[account_index],
         rpc_url: anvil.rpc_url.clone(),
@@ -924,7 +920,6 @@ pub async fn create_simple_test_app_state() -> AppState {
 
     AppState {
         read_provider,
-        alternate_read_provider: None,
         funding_provider: provider,
         funding_wallet_address: Address::from_str("0x1111111111111111111111111111111111111111")
             .unwrap(),
@@ -990,7 +985,6 @@ pub async fn create_test_app_state_with_provider(
 
     AppState {
         read_provider,
-        alternate_read_provider: None,
         funding_provider: provider,
         funding_wallet_address: Address::from_str("0x1111111111111111111111111111111111111111")
             .unwrap(),

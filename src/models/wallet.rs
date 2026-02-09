@@ -58,6 +58,9 @@ pub struct WalletManagerConfig {
     pub instance_id: Option<String>,
     /// Chain ID for EIP-155 signatures (e.g., 8453 for Base mainnet)
     pub chain_id: Option<u64>,
+    /// Allowed Turnkey wallet IDs - only wallets with these IDs will be synced
+    /// If empty, all wallets in the organization will be synced (not recommended for production)
+    pub allowed_wallet_ids: Vec<String>,
 }
 
 impl WalletManagerConfig {
@@ -66,6 +69,16 @@ impl WalletManagerConfig {
         let chain_id = std::env::var("CHAIN_ID")
             .ok()
             .and_then(|s| s.parse::<u64>().ok());
+
+        // Parse allowed wallet IDs from comma-separated list
+        let allowed_wallet_ids = std::env::var("BEACONATOR_WALLET_IDS")
+            .map(|s| {
+                s.split(',')
+                    .map(|id| id.trim().to_string())
+                    .filter(|id| !id.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
 
         Ok(Self {
             redis_url: std::env::var("REDIS_URL")
@@ -83,6 +96,7 @@ impl WalletManagerConfig {
             lock_retry_delay: Duration::from_millis(500),
             instance_id: std::env::var("BEACONATOR_INSTANCE_ID").ok(),
             chain_id,
+            allowed_wallet_ids,
         })
     }
 }
