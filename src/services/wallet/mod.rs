@@ -10,12 +10,16 @@ pub mod lock;
 pub mod manager;
 pub mod mock;
 pub mod pool;
+pub mod sync;
+pub mod turnkey_api;
 pub mod turnkey_signer;
 
 pub use lock::{WalletLock, WalletLockGuard};
 pub use manager::{WalletHandle, WalletManager, WalletSigner};
 pub use mock::{MockWalletHandle, MockWalletManager};
 pub use pool::WalletPool;
+pub use sync::{SyncResult, WalletSyncService};
+pub use turnkey_api::{TurnkeyWalletAPI, TurnkeyWalletAPIError, TurnkeyWalletAccount};
 pub use turnkey_signer::TurnkeySigner;
 
 // Re-export model types for convenience

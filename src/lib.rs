@@ -17,7 +17,7 @@ pub mod services;
 
 use crate::models::AppState;
 use crate::models::wallet::WalletManagerConfig;
-use crate::services::wallet::WalletManager;
+use crate::services::wallet::{TurnkeyWalletAPI, WalletManager, WalletSyncService};
 use rocket::{Request, catch, catchers};
 
 // Provider type with embedded wallet for signing transactions
@@ -237,25 +237,24 @@ pub async fn create_rocket() -> Rocket<Build> {
     };
 
     // Get the RPC URL for storing in AppState (used by WalletHandle to build providers)
-    let rpc_url = rpc_config.get_rpc_url();
+    let rpc_url = rpc_config.rpc_url().to_string();
 
-    // Build read-only providers (no wallet, for queries only)
-    let read_only_providers = rpc_config
-        .build_read_only_providers()
-        .unwrap_or_else(|e| panic!("Failed to build read-only RPC providers: {e}"));
-
-    let read_provider = read_only_providers.primary;
-    let alternate_read_provider = read_only_providers.alternate;
+    // Build read-only provider (no wallet, for queries only)
+    let read_provider = std::sync::Arc::new(
+        rpc_config
+            .build_read_only_provider_from_config()
+            .unwrap_or_else(|e| panic!("Failed to build read-only RPC provider: {e}")),
+    );
 
     // Parse the funding wallet private key (ONLY for fund_guest_wallet endpoint)
     let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY environment variable not set");
 
     // Build funding provider with PRIVATE_KEY wallet (ONLY for fund_guest_wallet)
-    let funding_providers = rpc_config
-        .build_providers(&private_key, chain_id)
-        .unwrap_or_else(|e| panic!("Failed to build funding RPC providers: {e}"));
-
-    let funding_provider = funding_providers.primary;
+    let funding_provider = std::sync::Arc::new(
+        rpc_config
+            .build_provider(&private_key, chain_id)
+            .unwrap_or_else(|e| panic!("Failed to build funding RPC provider: {e}")),
+    );
 
     // Get funding wallet address
     let funding_wallet_address = services::rpc::RpcConfig::get_wallet_address(&private_key)
@@ -294,6 +293,13 @@ pub async fn create_rocket() -> Rocket<Build> {
     // Set chain_id from the already-determined chain_id
     wallet_config.chain_id = Some(chain_id);
 
+    // Clone Turnkey credentials and allowed wallet IDs before moving wallet_config into WalletManager
+    let turnkey_api_url = wallet_config.turnkey_api_url.clone();
+    let turnkey_organization_id = wallet_config.turnkey_organization_id.clone();
+    let turnkey_api_public_key = wallet_config.turnkey_api_public_key.clone();
+    let turnkey_api_private_key = wallet_config.turnkey_api_private_key.clone();
+    let allowed_wallet_ids = wallet_config.allowed_wallet_ids.clone();
+
     let wallet_manager = WalletManager::new(wallet_config).await.unwrap_or_else(|e| {
         panic!(
             "WalletManager failed to initialize: {e}. \
@@ -302,6 +308,48 @@ pub async fn create_rocket() -> Rocket<Build> {
     });
 
     tracing::info!("WalletManager initialized for contract operations");
+
+    // Sync wallets from Turnkey to Redis on startup
+    match TurnkeyWalletAPI::new(
+        turnkey_api_url,
+        turnkey_organization_id,
+        turnkey_api_public_key,
+        turnkey_api_private_key,
+    ) {
+        Ok(turnkey_api) => {
+            let sync_service = WalletSyncService::with_allowed_wallet_ids(
+                turnkey_api,
+                wallet_manager.pool(),
+                allowed_wallet_ids,
+            );
+            match sync_service.sync().await {
+                Ok(result) => {
+                    tracing::info!(
+                        "Wallet sync completed: {} added, {} unchanged, {} errors",
+                        result.added.len(),
+                        result.unchanged.len(),
+                        result.errors.len()
+                    );
+                    for addr in &result.added {
+                        tracing::info!("  + Added wallet: {addr}");
+                    }
+                    for error in &result.errors {
+                        tracing::warn!("  ! Sync error: {error}");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to sync wallets from Turnkey (continuing with existing pool): {e}"
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create Turnkey API client (continuing with existing pool): {e}"
+            );
+        }
+    }
 
     // Log wallet pool status
     match wallet_manager.list_wallets().await {
@@ -317,9 +365,8 @@ pub async fn create_rocket() -> Rocket<Build> {
     }
 
     let app_state = AppState {
-        // Providers
+        // Provider
         read_provider,
-        alternate_read_provider,
         funding_provider,
         funding_wallet_address,
         wallet_manager: std::sync::Arc::new(wallet_manager),
