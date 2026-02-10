@@ -183,7 +183,7 @@ pub struct AppState {
     pub funding_provider: Arc<AlloyProvider>,
     pub funding_wallet_address: Address,
 
-    // WalletManager for contract operations (Turnkey wallets)
+    // WalletManager for contract operations (local wallets)
     pub wallet_manager: Arc<WalletManager>,
 
     // RPC configuration for building providers from WalletHandle

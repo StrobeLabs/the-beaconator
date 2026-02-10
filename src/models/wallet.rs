@@ -26,8 +26,8 @@ pub struct WalletInfo {
     /// Ethereum address of the wallet
     #[schemars(with = "String")]
     pub address: Address,
-    /// Turnkey wallet ID or private key ID
-    pub turnkey_key_id: String,
+    /// Wallet identifier (checksummed address string)
+    pub key_id: String,
     /// Current status of the wallet
     pub status: WalletStatus,
     /// Beacons that require this specific wallet as their ECDSA signer
@@ -40,14 +40,6 @@ pub struct WalletInfo {
 pub struct WalletManagerConfig {
     /// Redis connection URL
     pub redis_url: String,
-    /// Turnkey API base URL
-    pub turnkey_api_url: String,
-    /// Turnkey organization ID
-    pub turnkey_organization_id: String,
-    /// Turnkey API public key
-    pub turnkey_api_public_key: String,
-    /// Turnkey API private key
-    pub turnkey_api_private_key: String,
     /// Lock TTL - how long a wallet lock is held before expiring
     pub lock_ttl: Duration,
     /// Number of retries when acquiring a lock
@@ -58,9 +50,6 @@ pub struct WalletManagerConfig {
     pub instance_id: Option<String>,
     /// Chain ID for EIP-155 signatures (e.g., 8453 for Base mainnet)
     pub chain_id: Option<u64>,
-    /// Allowed Turnkey wallet IDs - only wallets with these IDs will be synced
-    /// If empty, all wallets in the organization will be synced (not recommended for production)
-    pub allowed_wallet_ids: Vec<String>,
 }
 
 impl WalletManagerConfig {
@@ -70,33 +59,14 @@ impl WalletManagerConfig {
             .ok()
             .and_then(|s| s.parse::<u64>().ok());
 
-        // Parse allowed wallet IDs from comma-separated list
-        let allowed_wallet_ids = std::env::var("BEACONATOR_WALLET_IDS")
-            .map(|s| {
-                s.split(',')
-                    .map(|id| id.trim().to_string())
-                    .filter(|id| !id.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
-
         Ok(Self {
             redis_url: std::env::var("REDIS_URL")
                 .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string()),
-            turnkey_api_url: std::env::var("TURNKEY_API_URL")
-                .unwrap_or_else(|_| "https://api.turnkey.com".to_string()),
-            turnkey_organization_id: std::env::var("TURNKEY_ORGANIZATION_ID")
-                .map_err(|_| "TURNKEY_ORGANIZATION_ID environment variable not set")?,
-            turnkey_api_public_key: std::env::var("TURNKEY_API_PUBLIC_KEY")
-                .map_err(|_| "TURNKEY_API_PUBLIC_KEY environment variable not set")?,
-            turnkey_api_private_key: std::env::var("TURNKEY_API_PRIVATE_KEY")
-                .map_err(|_| "TURNKEY_API_PRIVATE_KEY environment variable not set")?,
             lock_ttl: Duration::from_secs(60),
             lock_retry_count: 10,
             lock_retry_delay: Duration::from_millis(500),
             instance_id: std::env::var("BEACONATOR_INSTANCE_ID").ok(),
             chain_id,
-            allowed_wallet_ids,
         })
     }
 }

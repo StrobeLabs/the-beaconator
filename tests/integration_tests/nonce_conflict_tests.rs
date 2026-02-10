@@ -457,7 +457,7 @@ async fn test_wallet_pool_operations() {
     for (i, addr) in wallets.iter().enumerate() {
         let info = WalletInfo {
             address: *addr,
-            turnkey_key_id: format!("key-{i}"),
+            key_id: format!("key-{i}"),
             status: WalletStatus::Available,
             designated_beacons: vec![],
         };
@@ -529,7 +529,7 @@ async fn test_beacon_wallet_mapping() {
     // Add wallet to pool first
     let info = WalletInfo {
         address: wallet_address,
-        turnkey_key_id: "key-beacon-test".to_string(),
+        key_id: "key-beacon-test".to_string(),
         status: WalletStatus::Available,
         designated_beacons: vec![],
     };
