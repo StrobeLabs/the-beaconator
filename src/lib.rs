@@ -17,7 +17,7 @@ pub mod services;
 
 use crate::models::AppState;
 use crate::models::wallet::WalletManagerConfig;
-use crate::services::wallet::{TurnkeyWalletAPI, WalletManager, WalletSyncService};
+use crate::services::wallet::{WalletManager, WalletSyncService};
 use rocket::{Request, catch, catchers};
 
 // Provider type with embedded wallet for signing transactions
@@ -282,72 +282,59 @@ pub async fn create_rocket() -> Rocket<Build> {
         }
     }
 
+    // Parse wallet private keys from WALLET_PRIVATE_KEYS env var
+    let wallet_keys_str =
+        env::var("WALLET_PRIVATE_KEYS").expect("WALLET_PRIVATE_KEYS environment variable not set");
+    let wallet_signers: Vec<PrivateKeySigner> = wallet_keys_str
+        .split(',')
+        .map(|k| {
+            k.trim()
+                .parse::<PrivateKeySigner>()
+                .unwrap_or_else(|e| panic!("Invalid private key in WALLET_PRIVATE_KEYS: {e}"))
+                .with_chain_id(Some(chain_id))
+        })
+        .collect();
+
+    tracing::info!(
+        "Loaded {} wallet signers from WALLET_PRIVATE_KEYS",
+        wallet_signers.len()
+    );
+
     // Initialize WalletManager (REQUIRED for contract operations)
     let mut wallet_config = WalletManagerConfig::from_env().unwrap_or_else(|e| {
-        panic!(
-            "WalletManager configuration is required: {e}. \
-             Required env vars: REDIS_URL, TURNKEY_API_URL, TURNKEY_ORGANIZATION_ID, TURNKEY_API_PUBLIC_KEY, TURNKEY_API_PRIVATE_KEY"
-        )
+        panic!("WalletManager configuration is required: {e}. Required env vars: REDIS_URL")
     });
 
     // Set chain_id from the already-determined chain_id
     wallet_config.chain_id = Some(chain_id);
 
-    // Clone Turnkey credentials and allowed wallet IDs before moving wallet_config into WalletManager
-    let turnkey_api_url = wallet_config.turnkey_api_url.clone();
-    let turnkey_organization_id = wallet_config.turnkey_organization_id.clone();
-    let turnkey_api_public_key = wallet_config.turnkey_api_public_key.clone();
-    let turnkey_api_private_key = wallet_config.turnkey_api_private_key.clone();
-    let allowed_wallet_ids = wallet_config.allowed_wallet_ids.clone();
-
-    let wallet_manager = WalletManager::new(wallet_config).await.unwrap_or_else(|e| {
-        panic!(
-            "WalletManager failed to initialize: {e}. \
-             Check Redis connectivity and Turnkey credentials."
-        )
-    });
+    let wallet_manager = WalletManager::new(wallet_config, wallet_signers.clone())
+        .await
+        .unwrap_or_else(|e| {
+            panic!("WalletManager failed to initialize: {e}. Check Redis connectivity.")
+        });
 
     tracing::info!("WalletManager initialized for contract operations");
 
-    // Sync wallets from Turnkey to Redis on startup
-    match TurnkeyWalletAPI::new(
-        turnkey_api_url,
-        turnkey_organization_id,
-        turnkey_api_public_key,
-        turnkey_api_private_key,
-    ) {
-        Ok(turnkey_api) => {
-            let sync_service = WalletSyncService::with_allowed_wallet_ids(
-                turnkey_api,
-                wallet_manager.pool(),
-                allowed_wallet_ids,
+    // Sync local wallet signers to Redis pool on startup
+    let sync_service = WalletSyncService::new(&wallet_signers, wallet_manager.pool());
+    match sync_service.sync().await {
+        Ok(result) => {
+            tracing::info!(
+                "Wallet sync completed: {} added, {} unchanged, {} errors",
+                result.added.len(),
+                result.unchanged.len(),
+                result.errors.len()
             );
-            match sync_service.sync().await {
-                Ok(result) => {
-                    tracing::info!(
-                        "Wallet sync completed: {} added, {} unchanged, {} errors",
-                        result.added.len(),
-                        result.unchanged.len(),
-                        result.errors.len()
-                    );
-                    for addr in &result.added {
-                        tracing::info!("  + Added wallet: {addr}");
-                    }
-                    for error in &result.errors {
-                        tracing::warn!("  ! Sync error: {error}");
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to sync wallets from Turnkey (continuing with existing pool): {e}"
-                    );
-                }
+            for addr in &result.added {
+                tracing::info!("  + Added wallet: {addr}");
+            }
+            for error in &result.errors {
+                tracing::warn!("  ! Sync error: {error}");
             }
         }
         Err(e) => {
-            tracing::warn!(
-                "Failed to create Turnkey API client (continuing with existing pool): {e}"
-            );
+            tracing::warn!("Failed to sync wallets to pool: {e}");
         }
     }
 

@@ -1,7 +1,7 @@
 //! Mock implementations for testing wallet services
 //!
 //! This module provides mock implementations of the wallet services
-//! for use in unit tests without requiring Redis or Turnkey connections.
+//! for use in unit tests without requiring Redis connections.
 
 use alloy::network::EthereumWallet;
 use alloy::primitives::Address;
@@ -178,7 +178,7 @@ impl MockWalletHandle {
     }
 }
 
-/// Mock WalletManager for testing without Redis or Turnkey
+/// Mock WalletManager for testing without Redis
 ///
 /// This provides the same interface as WalletManager but uses
 /// local PrivateKeySigners for simplicity in tests.
@@ -256,7 +256,7 @@ mod tests {
 
         let wallet = WalletInfo {
             address: addr,
-            turnkey_key_id: "test-key".to_string(),
+            key_id: "test-key".to_string(),
             status: WalletStatus::Available,
             designated_beacons: vec![],
         };

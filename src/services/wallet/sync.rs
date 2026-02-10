@@ -1,30 +1,32 @@
-//! Wallet sync service for syncing Turnkey wallets to Redis pool
+//! Wallet sync service for syncing local wallets to Redis pool
 //!
 //! This module provides [`WalletSyncService`] which synchronizes wallets from
-//! Turnkey to the Redis wallet pool. It handles adding new wallets while
-//! preserving existing wallet state (status and designated beacons).
+//! local private key signers to the Redis wallet pool. It handles adding new
+//! wallets while preserving existing wallet state (status and designated beacons).
 //!
 //! # Example
 //!
 //! ```rust,ignore
-//! use the_beaconator::services::wallet::{TurnkeyWalletAPI, WalletPool, WalletSyncService};
+//! use the_beaconator::services::wallet::{WalletPool, WalletSyncService};
+//! use alloy::signers::local::PrivateKeySigner;
 //!
-//! let turnkey_api = TurnkeyWalletAPI::new(...)?;
+//! let signers: Vec<PrivateKeySigner> = vec![/* ... */];
 //! let pool = WalletPool::new("redis://localhost:6379", "instance-1").await?;
-//! let sync_service = WalletSyncService::new(turnkey_api, pool);
+//! let sync_service = WalletSyncService::new(&signers, &pool);
 //!
 //! let result = sync_service.sync().await?;
 //! println!("Added {} wallets, {} unchanged", result.added.len(), result.unchanged.len());
 //! ```
 
 use alloy::primitives::Address;
+use alloy::signers::local::PrivateKeySigner;
 
 use crate::models::wallet::{WalletInfo, WalletStatus};
-use crate::services::wallet::{TurnkeyWalletAPI, WalletPool};
+use crate::services::wallet::WalletPool;
 
 /// Result of a wallet sync operation
 ///
-/// Tracks the outcome of syncing wallets from Turnkey to the Redis pool,
+/// Tracks the outcome of syncing wallets to the Redis pool,
 /// categorizing wallets as added, unchanged, or errored.
 ///
 /// # Examples
@@ -175,13 +177,10 @@ impl SyncResult {
     }
 }
 
-/// Service for syncing wallets from Turnkey to Redis pool
+/// Service for syncing local wallet signers to Redis pool
 pub struct WalletSyncService<'a> {
-    turnkey_api: TurnkeyWalletAPI,
+    signers: &'a [PrivateKeySigner],
     pool: &'a WalletPool,
-    /// Optional list of allowed wallet IDs to filter by
-    /// If empty, all wallets are synced (not recommended for production)
-    allowed_wallet_ids: Vec<String>,
 }
 
 impl<'a> WalletSyncService<'a> {
@@ -189,100 +188,33 @@ impl<'a> WalletSyncService<'a> {
     ///
     /// # Arguments
     ///
-    /// * `turnkey_api` - Turnkey API client for listing wallets
+    /// * `signers` - Local private key signers to sync to the pool
     /// * `pool` - Reference to Redis wallet pool for storage
-    pub fn new(turnkey_api: TurnkeyWalletAPI, pool: &'a WalletPool) -> Self {
-        Self {
-            turnkey_api,
-            pool,
-            allowed_wallet_ids: vec![],
-        }
+    pub fn new(signers: &'a [PrivateKeySigner], pool: &'a WalletPool) -> Self {
+        Self { signers, pool }
     }
 
-    /// Create a new WalletSyncService with wallet ID filtering
-    ///
-    /// Only wallets with IDs in `allowed_wallet_ids` will be synced.
-    /// This is the recommended approach for production to ensure only
-    /// beaconator-specific wallets are added to the pool.
-    ///
-    /// # Arguments
-    ///
-    /// * `turnkey_api` - Turnkey API client for listing wallets
-    /// * `pool` - Reference to Redis wallet pool for storage
-    /// * `allowed_wallet_ids` - List of Turnkey wallet IDs to sync
-    pub fn with_allowed_wallet_ids(
-        turnkey_api: TurnkeyWalletAPI,
-        pool: &'a WalletPool,
-        allowed_wallet_ids: Vec<String>,
-    ) -> Self {
-        Self {
-            turnkey_api,
-            pool,
-            allowed_wallet_ids,
-        }
-    }
-
-    /// Sync wallets from Turnkey to the Redis pool
+    /// Sync local wallet signers to the Redis pool
     ///
     /// This method:
-    /// 1. Fetches all Ethereum wallets from Turnkey
-    /// 2. Filters to only allowed wallet IDs (if configured)
-    /// 3. For each wallet, checks if it exists in Redis
-    /// 4. If not exists, adds it with Available status
-    /// 5. If exists, skips it to preserve existing status and designated_beacons
+    /// 1. Derives the address from each signer
+    /// 2. For each wallet, checks if it exists in Redis
+    /// 3. If not exists, adds it with Available status
+    /// 4. If exists, skips it to preserve existing status and designated_beacons
     ///
     /// # Returns
     ///
     /// A [`SyncResult`] containing counts of added, unchanged, and errored wallets.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if fetching wallets from Turnkey fails.
-    /// Individual wallet errors are collected in the result's `errors` field.
     pub async fn sync(&self) -> Result<SyncResult, String> {
-        tracing::info!("Starting wallet sync from Turnkey to Redis pool");
-
-        // Fetch all wallets from Turnkey
-        let turnkey_wallets = self
-            .turnkey_api
-            .list_wallet_accounts()
-            .await
-            .map_err(|e| format!("Failed to fetch wallets from Turnkey: {e}"))?;
-
-        tracing::info!(
-            wallet_count = turnkey_wallets.len(),
-            "Fetched wallets from Turnkey"
-        );
-
-        // Filter by allowed wallet IDs if configured
-        let wallets_to_sync: Vec<_> = if self.allowed_wallet_ids.is_empty() {
-            tracing::warn!(
-                "No allowed_wallet_ids configured - syncing ALL wallets from Turnkey. \
-                 This is not recommended for production. Set BEACONATOR_WALLET_IDS to restrict."
-            );
-            turnkey_wallets
-        } else {
-            let filtered: Vec<_> = turnkey_wallets
-                .into_iter()
-                .filter(|w| self.allowed_wallet_ids.contains(&w.wallet_id))
-                .collect();
-
-            tracing::info!(
-                filtered_count = filtered.len(),
-                allowed_ids = ?self.allowed_wallet_ids,
-                "Filtered to allowed wallet IDs"
-            );
-
-            filtered
-        };
+        tracing::info!("Starting wallet sync to Redis pool");
 
         let mut result = SyncResult::new();
 
-        for wallet in wallets_to_sync {
-            let address = wallet.address;
-            let sign_with = format!("{address}");
+        for signer in self.signers {
+            let address = signer.address();
+            let key_id = format!("{address}");
 
-            match self.sync_single_wallet(address, sign_with).await {
+            match self.sync_single_wallet(address, key_id).await {
                 Ok(was_added) => {
                     if was_added {
                         result.added.push(address);
@@ -314,27 +246,19 @@ impl<'a> WalletSyncService<'a> {
     /// Sync a single wallet to the pool
     ///
     /// Returns `Ok(true)` if the wallet was added, `Ok(false)` if it already existed.
-    async fn sync_single_wallet(
-        &self,
-        address: Address,
-        turnkey_key_id: String,
-    ) -> Result<bool, String> {
-        // Explicitly check if wallet exists using wallet_exists
-        // This properly distinguishes between "not found" and actual Redis errors
+    async fn sync_single_wallet(&self, address: Address, key_id: String) -> Result<bool, String> {
         let exists = self.pool.wallet_exists(&address).await?;
 
         if exists {
-            // Wallet exists, preserve existing state
             tracing::debug!(
                 address = %address,
                 "Wallet already exists in pool, skipping"
             );
             Ok(false)
         } else {
-            // Wallet doesn't exist, add it
             let info = WalletInfo {
                 address,
-                turnkey_key_id,
+                key_id,
                 status: WalletStatus::Available,
                 designated_beacons: vec![],
             };

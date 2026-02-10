@@ -1,6 +1,6 @@
 //! Redis-backed wallet pool management
 //!
-//! Manages a pool of Turnkey wallets stored in Redis, allowing multiple
+//! Manages a pool of wallets stored in Redis, allowing multiple
 //! beaconator instances to share wallets safely.
 
 use alloy::primitives::Address;
@@ -464,7 +464,7 @@ mod tests {
         let address = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
         let info = WalletInfo {
             address,
-            turnkey_key_id: "key-123".to_string(),
+            key_id: "key-123".to_string(),
             status: WalletStatus::Available,
             designated_beacons: vec![],
         };
@@ -480,7 +480,7 @@ mod tests {
         // Get info
         let retrieved = pool.get_wallet_info(&address).await.expect("Failed to get");
         assert_eq!(retrieved.address, address);
-        assert_eq!(retrieved.turnkey_key_id, "key-123");
+        assert_eq!(retrieved.key_id, "key-123");
 
         // Count
         let count = pool.wallet_count().await.expect("Failed to count");

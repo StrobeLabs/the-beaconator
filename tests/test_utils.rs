@@ -171,10 +171,10 @@ pub async fn create_test_wallet_manager() -> Arc<WalletManager> {
         {
             Ok(manager) => {
                 // Populate wallet pool with the mock signer addresses
-                for (i, addr) in manager.mock_signer_addresses().iter().enumerate() {
+                for (i, addr) in manager.signer_addresses().iter().enumerate() {
                     let wallet_info = WalletInfo {
                         address: *addr,
-                        turnkey_key_id: format!("test-key-{i}"),
+                        key_id: format!("test-key-{i}"),
                         status: WalletStatus::Available,
                         designated_beacons: vec![],
                     };
@@ -184,7 +184,7 @@ pub async fn create_test_wallet_manager() -> Arc<WalletManager> {
                 }
                 tracing::info!(
                     "Created WalletManager with {} mock signers for testing (prefix: {})",
-                    manager.mock_signer_addresses().len(),
+                    manager.signer_addresses().len(),
                     test_prefix
                 );
                 Arc::new(manager)

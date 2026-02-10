@@ -230,10 +230,7 @@ jobs:
             -e LOCKUP_PERIOD_MODULE_ADDRESS=0x6789012345678901234567890123456789012345 \
             -e SQRT_PRICE_IMPACT_LIMIT_MODULE_ADDRESS=0x7890123456789012345678901234567890123456 \
             -e REDIS_URL=redis://127.0.0.1:6379 \
-            -e TURNKEY_API_URL=https://api.turnkey.com \
-            -e TURNKEY_ORGANIZATION_ID=test-org-id \
-            -e TURNKEY_API_PUBLIC_KEY=test-public-key \
-            -e TURNKEY_API_PRIVATE_KEY=test-private-key \
+            -e WALLET_PRIVATE_KEYS=0000000000000000000000000000000000000000000000000000000000000002,0000000000000000000000000000000000000000000000000000000000000003 \
             the-beaconator:latest
           sleep 15
           curl -f http://localhost:8000/ || (docker logs test-beaconator && exit 1)

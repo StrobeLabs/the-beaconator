@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use super::{TurnkeySigner, WalletLock, WalletLockGuard, WalletPool};
+use super::{WalletLock, WalletLockGuard, WalletPool};
 use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, B256};
 use alloy::providers::ProviderBuilder;
@@ -15,30 +15,19 @@ use alloy::signers::{Error as SignerError, Signature, Signer};
 use crate::AlloyProvider;
 use crate::models::wallet::{WalletInfo, WalletManagerConfig};
 
-/// Signer type that supports both Turnkey and local private key signers
+/// Local private key signer wrapper
 #[derive(Clone)]
-pub enum WalletSigner {
-    /// Turnkey API-backed signer for production
-    Turnkey(TurnkeySigner),
-    /// Local private key signer for testing
-    Local(PrivateKeySigner),
-}
+pub struct WalletSigner(PrivateKeySigner);
 
 impl WalletSigner {
     /// Get the address of the signer
     pub fn address(&self) -> Address {
-        match self {
-            WalletSigner::Turnkey(s) => s.address(),
-            WalletSigner::Local(s) => s.address(),
-        }
+        self.0.address()
     }
 
     /// Sign a hash using the underlying signer
     pub async fn sign_hash(&self, hash: &B256) -> Result<Signature, SignerError> {
-        match self {
-            WalletSigner::Turnkey(s) => s.sign_hash(hash).await,
-            WalletSigner::Local(s) => s.sign_hash(hash).await,
-        }
+        self.0.sign_hash(hash).await
     }
 }
 
@@ -47,7 +36,7 @@ impl WalletSigner {
 /// This combines the signer with its lock guard, ensuring the wallet
 /// remains locked for the duration of operations.
 pub struct WalletHandle {
-    /// The signer for this wallet (Turnkey or local)
+    /// The signer for this wallet
     pub signer: WalletSigner,
     /// The lock guard - wallet is locked until this is dropped
     pub lock_guard: WalletLockGuard,
@@ -69,10 +58,7 @@ impl WalletHandle {
     /// # Returns
     /// An AlloyProvider configured with this wallet's signer
     pub fn build_provider(&self, rpc_url: &str) -> Result<AlloyProvider, String> {
-        let wallet = match &self.signer {
-            WalletSigner::Turnkey(s) => EthereumWallet::from(s.clone()),
-            WalletSigner::Local(s) => EthereumWallet::from(s.clone()),
-        };
+        let wallet = EthereumWallet::from(self.signer.0.clone());
 
         let provider = ProviderBuilder::new().wallet(wallet).connect_http(
             rpc_url
@@ -97,16 +83,20 @@ pub struct WalletManager {
     config: Option<WalletManagerConfig>,
     /// Whether this is a test stub that will panic on use
     is_test_stub: bool,
-    /// Mock signers for testing (bypasses Turnkey API)
-    mock_signers: Option<HashMap<Address, PrivateKeySigner>>,
+    /// Local private key signers keyed by address
+    signers: HashMap<Address, PrivateKeySigner>,
 }
 
 impl WalletManager {
-    /// Create a new WalletManager
+    /// Create a new WalletManager with local private key signers
     ///
     /// # Arguments
     /// * `config` - Configuration for the wallet manager
-    pub async fn new(config: WalletManagerConfig) -> Result<Self, String> {
+    /// * `signers` - Local private key signers for the wallet pool
+    pub async fn new(
+        config: WalletManagerConfig,
+        signers: Vec<PrivateKeySigner>,
+    ) -> Result<Self, String> {
         let instance_id = config
             .instance_id
             .clone()
@@ -114,11 +104,14 @@ impl WalletManager {
 
         let pool = WalletPool::new(&config.redis_url, instance_id).await?;
 
+        let signers_map: HashMap<Address, PrivateKeySigner> =
+            signers.into_iter().map(|s| (s.address(), s)).collect();
+
         Ok(Self {
             pool: Some(pool),
             config: Some(config),
             is_test_stub: false,
-            mock_signers: None,
+            signers: signers_map,
         })
     }
 
@@ -131,12 +124,11 @@ impl WalletManager {
             pool: None,
             config: None,
             is_test_stub: true,
-            mock_signers: None,
+            signers: HashMap::new(),
         }
     }
 
-    /// Create a WalletManager with mock local signers for testing
-    /// This allows wallet operations to work without real Turnkey credentials
+    /// Create a WalletManager with local signers for testing
     pub async fn test_with_mock_signers(
         redis_url: &str,
         signers: Vec<PrivateKeySigner>,
@@ -144,7 +136,7 @@ impl WalletManager {
         Self::test_with_mock_signers_and_prefix(redis_url, signers, "beaconator:").await
     }
 
-    /// Create a WalletManager with mock local signers and a custom prefix for testing
+    /// Create a WalletManager with local signers and a custom prefix for testing
     ///
     /// Using a unique prefix per test allows tests to run in parallel without
     /// conflicting over shared Redis state.
@@ -156,23 +148,27 @@ impl WalletManager {
         let instance_id = format!("test-{}", uuid::Uuid::new_v4());
         let pool = WalletPool::with_prefix(redis_url, instance_id, prefix).await?;
 
-        let mock_signers: HashMap<Address, PrivateKeySigner> =
+        let signers_map: HashMap<Address, PrivateKeySigner> =
             signers.into_iter().map(|s| (s.address(), s)).collect();
 
         Ok(Self {
             pool: Some(pool),
-            config: None,
+            config: Some(WalletManagerConfig {
+                redis_url: redis_url.to_string(),
+                lock_ttl: std::time::Duration::from_secs(30),
+                lock_retry_count: 3,
+                lock_retry_delay: std::time::Duration::from_millis(100),
+                instance_id: None,
+                chain_id: None,
+            }),
             is_test_stub: false,
-            mock_signers: Some(mock_signers),
+            signers: signers_map,
         })
     }
 
-    /// Get addresses of all mock signers (for populating wallet pool in tests)
-    pub fn mock_signer_addresses(&self) -> Vec<Address> {
-        self.mock_signers
-            .as_ref()
-            .map(|m| m.keys().copied().collect())
-            .unwrap_or_default()
+    /// Get addresses of all signers (for populating wallet pool)
+    pub fn signer_addresses(&self) -> Vec<Address> {
+        self.signers.keys().copied().collect()
     }
 
     fn require_pool(&self) -> &WalletPool {
@@ -218,42 +214,14 @@ impl WalletManager {
     /// # Arguments
     /// * `address` - The wallet address to acquire
     pub async fn acquire_specific_wallet(&self, address: &Address) -> Result<WalletHandle, String> {
-        // If we have mock signers, use them directly (for testing)
-        if let Some(mock_signers) = &self.mock_signers {
-            let pool = self.require_pool();
-
-            // Check if we have a mock signer for this address
-            if let Some(signer) = mock_signers.get(address) {
-                // Create lock for this wallet using pool's keys for prefix isolation
-                let lock = WalletLock::with_keys(
-                    pool.redis_client().clone(),
-                    *address,
-                    pool.instance_id().to_string(),
-                    std::time::Duration::from_secs(30), // Default TTL for tests
-                    pool.keys(),
-                );
-
-                let lock_guard = lock
-                    .acquire(3, std::time::Duration::from_millis(100))
-                    .await?;
-
-                return Ok(WalletHandle {
-                    signer: WalletSigner::Local(signer.clone()),
-                    lock_guard,
-                });
-            } else {
-                return Err(format!("No mock signer available for wallet {address}"));
-            }
-        }
-
-        // Otherwise use Turnkey (existing production logic)
         let pool = self.require_pool();
         let config = self.require_config();
 
-        // Get wallet info from pool
-        let wallet_info = pool.get_wallet_info(address).await?;
+        let signer = self
+            .signers
+            .get(address)
+            .ok_or_else(|| format!("No signer available for wallet {address}"))?;
 
-        // Create and acquire lock using pool's keys for prefix consistency
         let lock = WalletLock::with_keys(
             pool.redis_client().clone(),
             *address,
@@ -266,61 +234,14 @@ impl WalletManager {
             .acquire(config.lock_retry_count, config.lock_retry_delay)
             .await?;
 
-        // Create signer - use checksummed address as sign_with (not wallet UUID)
-        let turnkey_signer = TurnkeySigner::new(
-            config.turnkey_api_url.clone(),
-            config.turnkey_organization_id.clone(),
-            config.turnkey_api_public_key.clone(),
-            config.turnkey_api_private_key.clone(),
-            format!("{}", wallet_info.address),
-            wallet_info.address,
-            config.chain_id,
-        )
-        .map_err(|e| format!("Failed to create Turnkey signer: {e}"))?;
-
         Ok(WalletHandle {
-            signer: WalletSigner::Turnkey(turnkey_signer),
+            signer: WalletSigner(signer.clone()),
             lock_guard,
         })
     }
 
     /// Acquire any available wallet from the pool
     pub async fn acquire_any_wallet(&self) -> Result<WalletHandle, String> {
-        // If we have mock signers, use them directly (for testing)
-        if let Some(mock_signers) = &self.mock_signers {
-            let pool = self.require_pool();
-            let available = pool.list_available_wallets().await?;
-
-            if available.is_empty() {
-                return Err("No available wallets in the pool".to_string());
-            }
-
-            // Find a mock signer for an available wallet
-            for wallet_info in available {
-                if let Some(signer) = mock_signers.get(&wallet_info.address) {
-                    // Create lock for this wallet using pool's keys for prefix isolation
-                    let lock = WalletLock::with_keys(
-                        pool.redis_client().clone(),
-                        wallet_info.address,
-                        pool.instance_id().to_string(),
-                        std::time::Duration::from_secs(30), // Default TTL for tests
-                        pool.keys(),
-                    );
-
-                    if let Ok(lock_guard) =
-                        lock.acquire(3, std::time::Duration::from_millis(100)).await
-                    {
-                        return Ok(WalletHandle {
-                            signer: WalletSigner::Local(signer.clone()),
-                            lock_guard,
-                        });
-                    }
-                }
-            }
-            return Err("Failed to acquire any wallet from the pool".to_string());
-        }
-
-        // Otherwise use Turnkey (existing production logic)
         let pool = self.require_pool();
         let config = self.require_config();
 
@@ -330,56 +251,29 @@ impl WalletManager {
             return Err("No available wallets in the pool".to_string());
         }
 
-        // Try to acquire each available wallet until one succeeds
-        let mut last_error: Option<String> = None;
-
         for wallet_info in available {
-            let lock = WalletLock::with_keys(
-                pool.redis_client().clone(),
-                wallet_info.address,
-                pool.instance_id().to_string(),
-                config.lock_ttl,
-                pool.keys(),
-            );
+            if let Some(signer) = self.signers.get(&wallet_info.address) {
+                let lock = WalletLock::with_keys(
+                    pool.redis_client().clone(),
+                    wallet_info.address,
+                    pool.instance_id().to_string(),
+                    config.lock_ttl,
+                    pool.keys(),
+                );
 
-            match lock
-                .acquire(config.lock_retry_count, config.lock_retry_delay)
-                .await
-            {
-                Ok(lock_guard) => {
-                    match TurnkeySigner::new(
-                        config.turnkey_api_url.clone(),
-                        config.turnkey_organization_id.clone(),
-                        config.turnkey_api_public_key.clone(),
-                        config.turnkey_api_private_key.clone(),
-                        format!("{}", wallet_info.address),
-                        wallet_info.address,
-                        config.chain_id,
-                    ) {
-                        Ok(turnkey_signer) => {
-                            return Ok(WalletHandle {
-                                signer: WalletSigner::Turnkey(turnkey_signer),
-                                lock_guard,
-                            });
-                        }
-                        Err(e) => {
-                            // Log and continue trying other wallets
-                            let error_msg = format!(
-                                "Failed to create Turnkey signer for wallet {}: {e}",
-                                wallet_info.address
-                            );
-                            tracing::warn!("{}", error_msg);
-                            last_error = Some(error_msg);
-                            // lock_guard drops here, releasing the lock
-                            continue;
-                        }
-                    }
+                if let Ok(lock_guard) = lock
+                    .acquire(config.lock_retry_count, config.lock_retry_delay)
+                    .await
+                {
+                    return Ok(WalletHandle {
+                        signer: WalletSigner(signer.clone()),
+                        lock_guard,
+                    });
                 }
-                Err(_) => continue, // Try next wallet
             }
         }
 
-        Err(last_error.unwrap_or_else(|| "Failed to acquire any wallet from the pool".to_string()))
+        Err("Failed to acquire any wallet from the pool".to_string())
     }
 
     /// Get access to the wallet pool
