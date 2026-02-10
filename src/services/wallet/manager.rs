@@ -266,13 +266,13 @@ impl WalletManager {
             .acquire(config.lock_retry_count, config.lock_retry_delay)
             .await?;
 
-        // Create signer
+        // Create signer - use checksummed address as sign_with (not wallet UUID)
         let turnkey_signer = TurnkeySigner::new(
             config.turnkey_api_url.clone(),
             config.turnkey_organization_id.clone(),
             config.turnkey_api_public_key.clone(),
             config.turnkey_api_private_key.clone(),
-            wallet_info.turnkey_key_id.clone(),
+            format!("{}", wallet_info.address),
             wallet_info.address,
             config.chain_id,
         )
@@ -352,7 +352,7 @@ impl WalletManager {
                         config.turnkey_organization_id.clone(),
                         config.turnkey_api_public_key.clone(),
                         config.turnkey_api_private_key.clone(),
-                        wallet_info.turnkey_key_id.clone(),
+                        format!("{}", wallet_info.address),
                         wallet_info.address,
                         config.chain_id,
                     ) {

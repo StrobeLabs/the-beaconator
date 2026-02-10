@@ -280,9 +280,9 @@ impl<'a> WalletSyncService<'a> {
 
         for wallet in wallets_to_sync {
             let address = wallet.address;
-            let wallet_id = wallet.wallet_id.clone();
+            let sign_with = format!("{address}");
 
-            match self.sync_single_wallet(address, wallet_id).await {
+            match self.sync_single_wallet(address, sign_with).await {
                 Ok(was_added) => {
                     if was_added {
                         result.added.push(address);
