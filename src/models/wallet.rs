@@ -27,7 +27,6 @@ pub struct WalletInfo {
     #[schemars(with = "String")]
     pub address: Address,
     /// Wallet identifier (checksummed address string)
-    #[serde(alias = "turnkey_key_id")]
     pub key_id: String,
     /// Current status of the wallet
     pub status: WalletStatus,
