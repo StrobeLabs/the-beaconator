@@ -137,6 +137,20 @@ pub async fn fund_guest_wallet(
 
     // Check if we have enough ETH
     if eth_balance < U256::from(eth_amount) {
+        tracing::warn!(
+            "Insufficient ETH balance in funding wallet {}. Have: {} ETH, Need: {} ETH",
+            state.funding_wallet_address,
+            alloy::primitives::utils::format_ether(eth_balance),
+            alloy::primitives::utils::format_ether(U256::from(eth_amount))
+        );
+        sentry::capture_message(
+            &format!(
+                "Insufficient ETH balance in funding wallet. Have: {} ETH, Need: {} ETH",
+                alloy::primitives::utils::format_ether(eth_balance),
+                alloy::primitives::utils::format_ether(U256::from(eth_amount))
+            ),
+            sentry::Level::Warning,
+        );
         return Err((
             Status::InternalServerError,
             Json(ApiResponse {
@@ -178,6 +192,20 @@ pub async fn fund_guest_wallet(
 
     // Check if we have enough USDC
     if usdc_balance < U256::from(usdc_amount) {
+        tracing::warn!(
+            "Insufficient USDC balance in funding wallet {}. Have: {} USDC, Need: {} USDC",
+            state.funding_wallet_address,
+            usdc_balance / U256::from(1_000_000),
+            usdc_amount / 1_000_000
+        );
+        sentry::capture_message(
+            &format!(
+                "Insufficient USDC balance in funding wallet. Have: {} USDC, Need: {} USDC",
+                usdc_balance / U256::from(1_000_000),
+                usdc_amount / 1_000_000
+            ),
+            sentry::Level::Warning,
+        );
         return Err((
             Status::InternalServerError,
             Json(ApiResponse {
