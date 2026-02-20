@@ -62,9 +62,24 @@ pub struct BatchDeployPerpsForBeaconsResponse {
     pub errors: Vec<String>,
 }
 
-/// Response from batch Perpcity beacon creation
+/// Response from creating a beacon via the unified endpoint
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct BatchCreatePerpcityBeaconResponse {
+pub struct CreateBeaconResponse {
+    /// Address of the created beacon
+    pub beacon_address: String,
+    /// Beacon type slug used
+    pub beacon_type: String,
+    /// Factory address used for creation
+    pub factory_address: String,
+    /// Whether the beacon was registered with a registry
+    pub registered: bool,
+}
+
+/// Response from batch beacon creation
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct BatchCreateBeaconResponse {
+    /// Beacon type slug used
+    pub beacon_type: String,
     /// Number of successfully created beacons
     pub created_count: u32,
     /// List of beacon addresses (hex strings with 0x prefix)
@@ -73,6 +88,26 @@ pub struct BatchCreatePerpcityBeaconResponse {
     pub failed_count: u32,
     /// Error messages for failed creations
     pub errors: Vec<String>,
+}
+
+/// Response from creating a beacon with ECDSA verifier deployment
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CreateBeaconWithEcdsaResponse {
+    /// Address of the created beacon
+    pub beacon_address: String,
+    /// Address of the deployed ECDSA verifier adapter
+    pub verifier_address: String,
+    /// Beacon type slug used
+    pub beacon_type: String,
+    /// Whether the beacon was registered with a registry
+    pub registered: bool,
+}
+
+/// Response listing beacon types
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct BeaconTypeListResponse {
+    /// Registered beacon type configurations
+    pub beacon_types: Vec<crate::models::beacon_type::BeaconTypeConfig>,
 }
 
 /// Response from depositing liquidity to a perpetual

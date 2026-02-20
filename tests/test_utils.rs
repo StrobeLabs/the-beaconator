@@ -129,7 +129,7 @@ use alloy::{
     json_abi::JsonAbi,
     network::EthereumWallet,
     node_bindings::{Anvil, AnvilInstance},
-    primitives::{Address, U256},
+    primitives::{Address, Bytes, U256},
     providers::{Provider, ProviderBuilder},
     signers::{Signer, local::PrivateKeySigner},
 };
@@ -138,6 +138,7 @@ use std::sync::Arc;
 use the_beaconator::ReadOnlyProvider;
 use the_beaconator::models::AppState;
 use the_beaconator::models::wallet::{WalletInfo, WalletStatus};
+use the_beaconator::services::beacon::BeaconTypeRegistry;
 use the_beaconator::services::wallet::WalletManager;
 use tokio::sync::OnceCell;
 
@@ -563,7 +564,6 @@ pub async fn create_test_app_state() -> AppState {
 
     AppState {
         read_provider,
-        funding_provider: deployment.provider,
         funding_wallet_address: deployment.deployer,
         rpc_url: anvil.rpc_url.clone(),
         chain_id: 31337,
@@ -604,6 +604,9 @@ pub async fn create_test_app_state() -> AppState {
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
         wallet_manager: Arc::new(WalletManager::test_stub()),
+        admin_token: "test_admin_token".to_string(),
+        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        ecdsa_verifier_adapter_bytecode: Bytes::new(),
     }
 }
 
@@ -635,7 +638,6 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
 
     let app_state = AppState {
         read_provider,
-        funding_provider: deployment.provider,
         funding_wallet_address: deployment.deployer,
         rpc_url: anvil.rpc_url().to_string(),
         chain_id: 31337,
@@ -676,6 +678,9 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
         wallet_manager: create_test_wallet_manager().await,
+        admin_token: "test_admin_token".to_string(),
+        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        ecdsa_verifier_adapter_bytecode: Bytes::new(),
     };
 
     (app_state, anvil)
@@ -732,7 +737,6 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
 
     let app_state = AppState {
         read_provider,
-        funding_provider: deployment.provider,
         funding_wallet_address: deployment.deployer,
         rpc_url: anvil.rpc_url().to_string(),
         chain_id: 31337,
@@ -773,6 +777,9 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ),
         wallet_manager,
+        admin_token: "test_admin_token".to_string(),
+        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        ecdsa_verifier_adapter_bytecode: Bytes::new(),
     };
 
     (app_state, anvil)
@@ -785,12 +792,6 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
     let anvil = AnvilManager::get_or_create().await;
 
     let signer = anvil.get_signer(account_index);
-    let wallet = EthereumWallet::from(signer.clone());
-    let provider = Arc::new(
-        ProviderBuilder::new()
-            .wallet(wallet)
-            .connect_http(anvil.rpc_url.parse().expect("Invalid RPC URL")),
-    );
 
     let deployment = TestDeployment::deploy(&anvil)
         .await
@@ -801,7 +802,6 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
 
     AppState {
         read_provider,
-        funding_provider: provider,
         funding_wallet_address: anvil.accounts[account_index],
         rpc_url: anvil.rpc_url.clone(),
         chain_id: 31337,
@@ -842,6 +842,9 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
         wallet_manager: Arc::new(WalletManager::test_stub()),
+        admin_token: "test_admin_token".to_string(),
+        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        ecdsa_verifier_adapter_bytecode: Bytes::new(),
     }
 }
 
@@ -902,15 +905,8 @@ pub async fn mock_contract_deployment(name: &str) -> ContractDeploymentResult {
 /// When REDIS_URL is not set, it uses a test stub that will panic if wallet operations
 /// are attempted.
 pub async fn create_simple_test_app_state() -> AppState {
-    // Create mock provider with wallet for testing - this won't work for real network calls
+    // Create mock signer for testing - this won't work for real network calls
     let signer = alloy::signers::local::PrivateKeySigner::random();
-    let wallet = alloy::network::EthereumWallet::from(signer.clone());
-    // Use modern Alloy provider builder pattern for tests
-    let provider = Arc::new(
-        alloy::providers::ProviderBuilder::new()
-            .wallet(wallet)
-            .connect_http("http://localhost:8545".parse().unwrap()),
-    );
 
     // Build read-only provider separately
     let read_provider = build_test_read_only_provider("http://localhost:8545");
@@ -920,7 +916,6 @@ pub async fn create_simple_test_app_state() -> AppState {
 
     AppState {
         read_provider,
-        funding_provider: provider,
         funding_wallet_address: Address::from_str("0x1111111111111111111111111111111111111111")
             .unwrap(),
         rpc_url: "http://localhost:8545".to_string(),
@@ -965,6 +960,9 @@ pub async fn create_simple_test_app_state() -> AppState {
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
         wallet_manager,
+        admin_token: "test_admin_token".to_string(),
+        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        ecdsa_verifier_adapter_bytecode: Bytes::new(),
     }
 }
 
@@ -972,7 +970,7 @@ pub async fn create_simple_test_app_state() -> AppState {
 ///
 /// This is async because it may create a real WalletManager when REDIS_URL is set.
 pub async fn create_test_app_state_with_provider(
-    provider: Arc<the_beaconator::AlloyProvider>,
+    _provider: Arc<the_beaconator::AlloyProvider>,
 ) -> AppState {
     // Create a random signer for ECDSA operations in tests
     let signer = PrivateKeySigner::random();
@@ -985,7 +983,6 @@ pub async fn create_test_app_state_with_provider(
 
     AppState {
         read_provider,
-        funding_provider: provider,
         funding_wallet_address: Address::from_str("0x1111111111111111111111111111111111111111")
             .unwrap(),
         rpc_url: "http://localhost:8545".to_string(),
@@ -1030,6 +1027,9 @@ pub async fn create_test_app_state_with_provider(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
         wallet_manager,
+        admin_token: "test_admin_token".to_string(),
+        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        ecdsa_verifier_adapter_bytecode: Bytes::new(),
     }
 }
 

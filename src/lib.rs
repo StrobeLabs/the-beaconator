@@ -1,6 +1,6 @@
 use alloy::{
     json_abi::JsonAbi,
-    primitives::{Address, utils::format_ether},
+    primitives::{Address, Bytes, utils::format_ether},
     providers::Provider,
     signers::{Signer, local::PrivateKeySigner},
 };
@@ -16,7 +16,9 @@ pub mod routes;
 pub mod services;
 
 use crate::models::AppState;
+use crate::models::beacon_type::{BeaconTypeConfig, FactoryType};
 use crate::models::wallet::WalletManagerConfig;
+use crate::services::beacon::BeaconTypeRegistry;
 use crate::services::wallet::{WalletManager, WalletSyncService};
 use rocket::{Request, catch, catchers};
 
@@ -249,13 +251,6 @@ pub async fn create_rocket() -> Rocket<Build> {
     // Parse the funding wallet private key (ONLY for fund_guest_wallet endpoint)
     let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY environment variable not set");
 
-    // Build funding provider with PRIVATE_KEY wallet (ONLY for fund_guest_wallet)
-    let funding_provider = std::sync::Arc::new(
-        rpc_config
-            .build_provider(&private_key, chain_id)
-            .unwrap_or_else(|e| panic!("Failed to build funding RPC provider: {e}")),
-    );
-
     // Get funding wallet address
     let funding_wallet_address = services::rpc::RpcConfig::get_wallet_address(&private_key)
         .expect("Failed to get funding wallet address");
@@ -304,6 +299,7 @@ pub async fn create_rocket() -> Rocket<Build> {
     let mut wallet_config = WalletManagerConfig::from_env().unwrap_or_else(|e| {
         panic!("WalletManager configuration is required: {e}. Required env vars: REDIS_URL")
     });
+    let redis_url = wallet_config.redis_url.clone();
 
     // Set chain_id from the already-determined chain_id
     wallet_config.chain_id = Some(chain_id);
@@ -351,10 +347,101 @@ pub async fn create_rocket() -> Rocket<Build> {
         }
     }
 
+    // Load admin token
+    let admin_token = env::var("BEACONATOR_ADMIN_TOKEN")
+        .expect("BEACONATOR_ADMIN_TOKEN environment variable not set");
+
+    // Load ECDSA verifier adapter bytecode for on-chain deployment
+    let ecdsa_verifier_adapter_bytecode = {
+        let bytecode_hex = std::fs::read_to_string("abis/ECDSAVerifierAdapter.bytecode")
+            .expect("Failed to read abis/ECDSAVerifierAdapter.bytecode");
+        let bytecode_hex = bytecode_hex
+            .trim()
+            .strip_prefix("0x")
+            .unwrap_or(bytecode_hex.trim());
+        let bytes =
+            hex::decode(bytecode_hex).expect("Failed to decode ECDSAVerifierAdapter bytecode hex");
+        Bytes::from(bytes)
+    };
+    tracing::info!(
+        "Loaded ECDSAVerifierAdapter bytecode ({} bytes)",
+        ecdsa_verifier_adapter_bytecode.len()
+    );
+
+    // Initialize BeaconTypeRegistry (Redis-backed)
+    let beacon_type_registry = BeaconTypeRegistry::new(&redis_url)
+        .await
+        .unwrap_or_else(|e| {
+            panic!("BeaconTypeRegistry failed to initialize: {e}. Check Redis connectivity.")
+        });
+
+    // Seed default beacon types from env vars (only writes if slug doesn't exist)
+    let now_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut seed_configs = vec![BeaconTypeConfig {
+        slug: "perpcity".to_string(),
+        name: "PerpCity Beacon".to_string(),
+        description: Some("Simple beacon for PerpCity perpetuals".to_string()),
+        factory_address: beacon_factory_address,
+        factory_type: FactoryType::Simple,
+        registry_address: Some(perpcity_registry_address),
+        enabled: true,
+        created_at: now_ts,
+        updated_at: now_ts,
+    }];
+
+    if let Some(dich_addr) = dichotomous_beacon_factory_address {
+        seed_configs.push(BeaconTypeConfig {
+            slug: "verifiable-twap".to_string(),
+            name: "Verifiable TWAP Beacon".to_string(),
+            description: Some("Dichotomous beacon with verification and TWAP support".to_string()),
+            factory_address: dich_addr,
+            factory_type: FactoryType::Dichotomous,
+            registry_address: None,
+            enabled: true,
+            created_at: now_ts,
+            updated_at: now_ts,
+        });
+    }
+
+    match beacon_type_registry.seed_defaults(&seed_configs).await {
+        Ok(result) => {
+            tracing::info!(
+                "Beacon type seed: {} seeded, {} already existed",
+                result.seeded,
+                result.skipped
+            );
+        }
+        Err(e) => {
+            tracing::warn!("Failed to seed beacon types: {e}");
+        }
+    }
+
+    // Log registered beacon types
+    match beacon_type_registry.list_types().await {
+        Ok(types) => {
+            tracing::info!("Beacon type registry contains {} types", types.len());
+            for bt in &types {
+                tracing::info!(
+                    "  - {} ({:?}) factory={} enabled={}",
+                    bt.slug,
+                    bt.factory_type,
+                    bt.factory_address,
+                    bt.enabled
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to list beacon types: {}", e);
+        }
+    }
+
     let app_state = AppState {
         // Provider
         read_provider,
-        funding_provider,
         funding_wallet_address,
         wallet_manager: std::sync::Arc::new(wallet_manager),
         rpc_url,
@@ -385,6 +472,13 @@ pub async fn create_rocket() -> Rocket<Build> {
 
         // Auth
         access_token,
+        admin_token,
+
+        // Beacon type registry
+        beacon_type_registry: std::sync::Arc::new(beacon_type_registry),
+
+        // ECDSA verifier bytecode
+        ecdsa_verifier_adapter_bytecode,
 
         // Perp modules
         fees_module_address,
@@ -399,25 +493,27 @@ pub async fn create_rocket() -> Rocket<Build> {
     let openapi_settings = OpenApiSettings::new();
 
     // Generate routes and OpenAPI specification
-    // Note: All routes are included, including verifiable beacon route
-    // The verifiable beacon route will return an error at runtime if factory address is not configured
     let (routes, openapi_spec) = openapi_get_routes_spec![
         openapi_settings:
         routes::info::index,
         routes::info::all_beacons,
         routes::beacon::create_beacon,
+        routes::beacon::batch_create_beacon,
+        routes::beacon::create_beacon_with_ecdsa,
         routes::beacon::register_beacon,
-        routes::beacon::create_perpcity_beacon,
-        routes::beacon::batch_create_perpcity_beacon,
+        routes::beacon::update_beacon,
+        routes::beacon::batch_update_beacon,
+        routes::beacon::update_beacon_with_ecdsa_adapter,
         routes::perp::deploy_perp_for_beacon_endpoint,
         routes::perp::batch_deploy_perps_for_beacons,
         routes::perp::deposit_liquidity_for_perp_endpoint,
         routes::perp::batch_deposit_liquidity_for_perps,
-        routes::beacon::update_beacon,
-        routes::beacon::batch_update_beacon,
         routes::wallet::fund_guest_wallet,
-        routes::beacon::create_verifiable_beacon,
-        routes::beacon::update_beacon_with_ecdsa_adapter,
+        routes::beacon_type::list_beacon_types,
+        routes::beacon_type::get_beacon_type,
+        routes::beacon_type::register_beacon_type,
+        routes::beacon_type::update_beacon_type,
+        routes::beacon_type::delete_beacon_type,
     ];
 
     // Serve the OpenAPI spec at /openapi.json

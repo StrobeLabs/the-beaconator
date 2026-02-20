@@ -1,5 +1,6 @@
+use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, U256};
-use alloy::providers::Provider;
+use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::TransactionRequest;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
@@ -220,12 +221,18 @@ pub async fn fund_guest_wallet(
         ));
     }
 
+    // Build a fresh provider per-request to avoid stale nonce caching
+    let funding_wallet = EthereumWallet::from(state.signer.clone());
+    let funding_provider = ProviderBuilder::new()
+        .wallet(funding_wallet)
+        .connect_http(state.rpc_url.parse().expect("Invalid RPC URL in AppState"));
+
     // Send ETH using funding provider
     let tx_request = TransactionRequest::default()
         .to(wallet_address)
         .value(U256::from(eth_amount));
 
-    let eth_tx_hash = match state.funding_provider.send_transaction(tx_request).await {
+    let eth_tx_hash = match funding_provider.send_transaction(tx_request).await {
         Ok(pending) => match pending.get_receipt().await {
             Ok(receipt) => receipt.transaction_hash,
             Err(e) => {
@@ -261,7 +268,7 @@ pub async fn fund_guest_wallet(
     tracing::info!("ETH transfer hash: {:?}", eth_tx_hash);
 
     // Send USDC using funding provider
-    let usdc_send_contract = IERC20::new(state.usdc_address, &*state.funding_provider);
+    let usdc_send_contract = IERC20::new(state.usdc_address, &funding_provider);
     let usdc_receipt = match usdc_send_contract
         .transfer(wallet_address, U256::from(usdc_amount))
         .send()

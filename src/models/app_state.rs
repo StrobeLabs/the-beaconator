@@ -1,10 +1,15 @@
-use alloy::{json_abi::JsonAbi, primitives::Address, signers::local::PrivateKeySigner};
+use alloy::{
+    json_abi::JsonAbi,
+    primitives::{Address, Bytes},
+    signers::local::PrivateKeySigner,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::ReadOnlyProvider;
+use crate::services::beacon::BeaconTypeRegistry;
 use crate::services::wallet::WalletManager;
-use crate::{AlloyProvider, ReadOnlyProvider};
 
 /// API endpoint information for documentation
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -46,28 +51,28 @@ impl ApiEndpoints {
             EndpointInfo {
                 method: "POST".to_string(),
                 path: "/create_beacon".to_string(),
-                description: "Create a new beacon".to_string(),
-                requires_auth: true,
-                status: EndpointStatus::NotImplemented,
-            },
-            EndpointInfo {
-                method: "POST".to_string(),
-                path: "/register_beacon".to_string(),
-                description: "Register an existing beacon".to_string(),
-                requires_auth: true,
-                status: EndpointStatus::NotImplemented,
-            },
-            EndpointInfo {
-                method: "POST".to_string(),
-                path: "/create_perpcity_beacon".to_string(),
-                description: "Create and register a new Perpcity beacon".to_string(),
+                description: "Create a beacon by type slug (unified endpoint)".to_string(),
                 requires_auth: true,
                 status: EndpointStatus::Working,
             },
             EndpointInfo {
                 method: "POST".to_string(),
-                path: "/batch_create_perpcity_beacon".to_string(),
-                description: "Batch create multiple Perpcity beacons".to_string(),
+                path: "/batch_create_beacon".to_string(),
+                description: "Batch create beacons by type slug".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/create_beacon_with_ecdsa".to_string(),
+                description: "Create a beacon with auto-deployed ECDSA verifier".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/register_beacon".to_string(),
+                description: "Register an existing beacon with a registry".to_string(),
                 requires_auth: true,
                 status: EndpointStatus::Working,
             },
@@ -122,9 +127,37 @@ impl ApiEndpoints {
                 status: EndpointStatus::Working,
             },
             EndpointInfo {
+                method: "GET".to_string(),
+                path: "/beacon_types".to_string(),
+                description: "List all registered beacon types (admin)".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "GET".to_string(),
+                path: "/beacon_type/<slug>".to_string(),
+                description: "Get a beacon type by slug (admin)".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
                 method: "POST".to_string(),
-                path: "/create_verifiable_beacon".to_string(),
-                description: "Create a verifiable beacon with ZK proof support and TWAP".to_string(),
+                path: "/beacon_types".to_string(),
+                description: "Register a new beacon type (admin)".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "PUT".to_string(),
+                path: "/beacon_type/<slug>".to_string(),
+                description: "Update a beacon type (admin)".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "DELETE".to_string(),
+                path: "/beacon_type/<slug>".to_string(),
+                description: "Delete a beacon type (admin)".to_string(),
                 requires_auth: true,
                 status: EndpointStatus::Working,
             },
@@ -179,8 +212,7 @@ pub struct AppState {
     // Read-only provider for queries (no wallet)
     pub read_provider: Arc<ReadOnlyProvider>,
 
-    // Funding provider (PRIVATE_KEY wallet) - ONLY for fund_guest_wallet
-    pub funding_provider: Arc<AlloyProvider>,
+    // Funding wallet address (PRIVATE_KEY) - ONLY for fund_guest_wallet
     pub funding_wallet_address: Address,
 
     // WalletManager for contract operations (local wallets)
@@ -219,6 +251,13 @@ pub struct AppState {
 
     // Authentication
     pub access_token: String,
+    pub admin_token: String,
+
+    // Beacon type registry (Redis-backed)
+    pub beacon_type_registry: Arc<BeaconTypeRegistry>,
+
+    // ECDSA verifier adapter deployment bytecode
+    pub ecdsa_verifier_adapter_bytecode: Bytes,
 
     // Perp module addresses
     pub fees_module_address: Address,

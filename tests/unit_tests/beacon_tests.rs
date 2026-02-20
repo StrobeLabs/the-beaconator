@@ -6,13 +6,11 @@ use rocket::serde::json::Json;
 use std::str::FromStr;
 use the_beaconator::guards::ApiToken;
 use the_beaconator::models::{
-    BatchCreatePerpcityBeaconRequest, BatchCreatePerpcityBeaconResponse, BatchUpdateBeaconRequest,
-    BeaconUpdateData, CreateBeaconRequest,
+    BatchCreateBeaconResponse, BatchUpdateBeaconRequest, BeaconUpdateData,
+    CreateBeaconByTypeRequest, CreateBeaconResponse,
 };
 use the_beaconator::routes::IMulticall3;
-use the_beaconator::routes::beacon::{
-    batch_create_perpcity_beacon, batch_update_beacon, create_beacon,
-};
+use the_beaconator::routes::beacon::batch_update_beacon;
 use the_beaconator::services::beacon::core::{
     create_beacon_via_factory, is_beacon_registered, is_transaction_confirmed,
     register_beacon_with_registry,
@@ -101,34 +99,6 @@ async fn test_batch_update_beacon_without_multicall3() {
     );
 }
 
-#[tokio::test]
-#[ignore = "requires WalletManager with Redis"]
-async fn test_batch_create_beacons_with_multicall3() {
-    let token = ApiToken("test_token".to_string());
-    let mut app_state = crate::test_utils::create_simple_test_app_state().await;
-
-    // Set multicall3 address for the test
-    app_state.multicall3_address =
-        Some(Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap());
-
-    let state = State::from(&app_state);
-
-    let request = Json(BatchCreatePerpcityBeaconRequest { count: 3 });
-
-    let result = batch_create_perpcity_beacon(request, token, state).await;
-
-    // Should return an error response due to multicall not implemented yet
-    assert!(result.is_ok());
-    let response = result.unwrap().into_inner();
-
-    assert!(!response.success);
-    assert!(response.data.is_some());
-    let batch_data = response.data.unwrap();
-    assert_eq!(batch_data.created_count, 0);
-    assert_eq!(batch_data.failed_count, 3);
-    assert!(!batch_data.errors.is_empty());
-}
-
 #[test]
 fn test_multicall3_atomic_behavior() {
     // Test that multicall3 calls are atomic (allowFailure: false)
@@ -159,26 +129,6 @@ fn test_multicall3_atomic_behavior() {
 }
 
 #[tokio::test]
-#[ignore = "requires WalletManager with Redis"]
-async fn test_create_beacon_functionality() {
-    use rocket::State;
-
-    let token = ApiToken("test_token".to_string());
-    let app_state = crate::test_utils::create_simple_test_app_state().await;
-    let state = State::from(&app_state);
-
-    let request = Json(CreateBeaconRequest {
-        placeholder: "test".to_string(),
-    });
-
-    // The function will fail with network error in test environment, which is expected
-    let result = create_beacon(request, token, state).await;
-
-    // In test environment, this should fail with InternalServerError due to no network
-    assert!(result.is_err());
-}
-
-#[tokio::test]
 async fn test_app_state_has_required_contract_info() {
     let app_state = crate::test_utils::create_simple_test_app_state().await;
 
@@ -197,7 +147,8 @@ async fn test_app_state_has_required_contract_info() {
 #[test]
 fn test_batch_create_response_serialization() {
     // Test response serialization/deserialization
-    let response = BatchCreatePerpcityBeaconResponse {
+    let response = BatchCreateBeaconResponse {
+        beacon_type: "perpcity".to_string(),
         created_count: 2,
         beacon_addresses: vec![
             "0x1234567890123456789012345678901234567890".to_string(),
@@ -208,13 +159,13 @@ fn test_batch_create_response_serialization() {
     };
 
     let serialized = serde_json::to_string(&response).unwrap();
-    let deserialized: BatchCreatePerpcityBeaconResponse =
-        serde_json::from_str(&serialized).unwrap();
+    let deserialized: BatchCreateBeaconResponse = serde_json::from_str(&serialized).unwrap();
 
     assert_eq!(deserialized.created_count, 2);
     assert_eq!(deserialized.failed_count, 1);
     assert_eq!(deserialized.beacon_addresses.len(), 2);
     assert_eq!(deserialized.errors.len(), 1);
+    assert_eq!(deserialized.beacon_type, "perpcity");
 }
 
 // Additional beacon helper function tests
@@ -266,4 +217,35 @@ async fn test_beacon_registration_check() {
     assert!(result.is_ok());
     // Should return false since beacon doesn't exist on test network
     assert!(!result.unwrap());
+}
+
+#[test]
+fn test_create_beacon_by_type_request_serialization() {
+    let request = CreateBeaconByTypeRequest {
+        beacon_type: "perpcity".to_string(),
+        params: None,
+    };
+
+    let serialized = serde_json::to_string(&request).unwrap();
+    let deserialized: CreateBeaconByTypeRequest = serde_json::from_str(&serialized).unwrap();
+
+    assert_eq!(deserialized.beacon_type, "perpcity");
+    assert!(deserialized.params.is_none());
+}
+
+#[test]
+fn test_create_beacon_response_serialization() {
+    let response = CreateBeaconResponse {
+        beacon_address: "0x1234567890123456789012345678901234567890".to_string(),
+        beacon_type: "perpcity".to_string(),
+        factory_address: "0x9876543210987654321098765432109876543210".to_string(),
+        registered: true,
+    };
+
+    let serialized = serde_json::to_string(&response).unwrap();
+    let deserialized: CreateBeaconResponse = serde_json::from_str(&serialized).unwrap();
+
+    assert_eq!(deserialized.beacon_address, response.beacon_address);
+    assert_eq!(deserialized.beacon_type, "perpcity");
+    assert!(deserialized.registered);
 }

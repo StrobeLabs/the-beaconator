@@ -1,6 +1,7 @@
 use alloy::sol;
 
 pub mod beacon;
+pub mod beacon_type;
 pub mod info;
 pub mod perp;
 pub mod wallet;
@@ -9,6 +10,7 @@ pub mod wallet;
 // test_utils moved to tests/test_utils.rs
 // Re-export all route functions for easy access
 pub use beacon::*;
+pub use beacon_type::*;
 pub use info::*;
 pub use perp::*;
 pub use wallet::*;

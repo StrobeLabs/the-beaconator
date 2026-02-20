@@ -104,3 +104,101 @@ impl<'r> OpenApiFromRequest<'r> for ApiToken {
         ))
     }
 }
+
+/// Admin token guard for admin-only endpoints.
+///
+/// Validates that requests include a valid Bearer token matching BEACONATOR_ADMIN_TOKEN.
+/// Used for beacon type registry CRUD endpoints.
+pub struct AdminToken(pub String);
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for AdminToken {
+    type Error = String;
+
+    async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+        let endpoint = request.uri().to_string();
+
+        let state = request.guard::<&State<AppState>>().await;
+        match state {
+            Outcome::Success(state) => {
+                let auth_header = request.headers().get_one("Authorization");
+                match auth_header {
+                    Some(header) if header.starts_with("Bearer ") => {
+                        let token = &header[7..];
+                        if token == state.admin_token {
+                            Outcome::Success(AdminToken(token.to_string()))
+                        } else {
+                            tracing::warn!("Invalid admin token provided for: {}", endpoint);
+                            sentry::capture_message(
+                                &format!("Invalid admin token attempt for: {endpoint}"),
+                                sentry::Level::Warning,
+                            );
+                            Outcome::Error((
+                                Status::Unauthorized,
+                                "Invalid admin token".to_string(),
+                            ))
+                        }
+                    }
+                    Some(_header) => {
+                        tracing::warn!(
+                            "Authorization header doesn't start with 'Bearer ' for: {}",
+                            endpoint
+                        );
+                        Outcome::Error((
+                            Status::Unauthorized,
+                            "Authorization header must start with 'Bearer '".to_string(),
+                        ))
+                    }
+                    None => {
+                        tracing::warn!("Missing Authorization header for: {}", endpoint);
+                        Outcome::Error((
+                            Status::Unauthorized,
+                            "Missing Authorization header".to_string(),
+                        ))
+                    }
+                }
+            }
+            _ => {
+                tracing::error!("Application state not available for: {}", endpoint);
+                sentry::capture_message(
+                    "Application state not available in AdminToken guard",
+                    sentry::Level::Error,
+                );
+                Outcome::Error((
+                    Status::InternalServerError,
+                    "Application state not available".to_string(),
+                ))
+            }
+        }
+    }
+}
+
+impl<'r> OpenApiFromRequest<'r> for AdminToken {
+    fn from_request_input(
+        _gen: &mut OpenApiGenerator,
+        _name: String,
+        _required: bool,
+    ) -> rocket_okapi::Result<RequestHeaderInput> {
+        let security_scheme = SecurityScheme {
+            description: Some(
+                "Admin bearer token authentication. Include your admin token in the Authorization \
+                 header as: `Authorization: Bearer YOUR_ADMIN_TOKEN`"
+                    .to_string(),
+            ),
+            data: SecuritySchemeData::Http {
+                scheme: "bearer".to_string(),
+                bearer_format: Some("Admin token".to_string()),
+            },
+            extensions: Object::default(),
+        };
+
+        let mut security_req = SecurityRequirement::new();
+        security_req.insert("adminBearerAuth".to_string(), Vec::new());
+
+        Ok(RequestHeaderInput::Security(
+            "adminBearerAuth".to_string(),
+            security_scheme,
+            security_req,
+        ))
+    }
+}

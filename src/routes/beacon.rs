@@ -7,55 +7,96 @@ use tracing;
 
 use crate::guards::ApiToken;
 use crate::models::{
-    ApiResponse, AppState, BatchCreatePerpcityBeaconRequest, BatchCreatePerpcityBeaconResponse,
-    BatchUpdateBeaconRequest, BatchUpdateBeaconResponse, CreateBeaconRequest,
-    CreateVerifiableBeaconRequest, RegisterBeaconRequest, UpdateBeaconRequest,
-    UpdateBeaconWithEcdsaRequest,
+    ApiResponse, AppState, BatchCreateBeaconByTypeRequest, BatchCreateBeaconResponse,
+    BatchUpdateBeaconRequest, BatchUpdateBeaconResponse, CreateBeaconByTypeRequest,
+    CreateBeaconResponse, CreateBeaconWithEcdsaRequest, CreateBeaconWithEcdsaResponse,
+    RegisterBeaconRequest, UpdateBeaconRequest, UpdateBeaconWithEcdsaRequest,
 };
-use crate::services::beacon::verifiable::create_verifiable_beacon as service_create_verifiable_beacon;
+use crate::services::beacon::verifiable::create_verifiable_beacon_with_factory;
 use crate::services::beacon::{
-    batch_create_perpcity_beacon as service_batch_create_perpcity_beacon,
-    batch_update_beacon as service_batch_update_beacon, create_beacon_via_factory,
-    register_beacon_with_registry, update_beacon as service_update_beacon,
+    batch_create_beacons as service_batch_create_beacons,
+    batch_update_beacon as service_batch_update_beacon, create_and_register_beacon_by_type,
+    deploy_ecdsa_verifier_adapter, register_beacon_with_registry,
+    update_beacon as service_update_beacon,
     update_beacon_with_ecdsa as service_update_beacon_with_ecdsa,
 };
 
-/// Creates a new beacon via the beacon factory.
+/// Creates a new beacon using a registered beacon type.
 ///
-/// Creates a beacon using the beacon factory contract for the authenticated wallet address.
+/// Looks up the beacon type by slug from the registry, then dispatches creation
+/// to the correct factory. Optionally registers the beacon if the type has a registry configured.
 #[openapi(tag = "Beacon")]
-#[post("/create_beacon", data = "<_request>")]
+#[post("/create_beacon", data = "<request>")]
 pub async fn create_beacon(
-    _request: Json<CreateBeaconRequest>,
+    request: Json<CreateBeaconByTypeRequest>,
     _token: ApiToken,
     state: &State<AppState>,
-) -> Result<Json<ApiResponse<String>>, Status> {
-    tracing::info!("Received request: POST /create_beacon");
+) -> Result<Json<ApiResponse<CreateBeaconResponse>>, Status> {
+    tracing::info!(
+        "Received request: POST /create_beacon (type={})",
+        request.beacon_type
+    );
     let _guard = sentry::Hub::current().push_scope();
     sentry::configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_beacon");
-        scope.set_extra("wallet_source", "WalletManager pool".into());
+        scope.set_extra("beacon_type", request.beacon_type.clone().into());
     });
 
-    tracing::info!("Creating beacon via WalletManager pool");
+    // Look up beacon type config from registry
+    let config = match state
+        .beacon_type_registry
+        .get_type(&request.beacon_type)
+        .await
+    {
+        Ok(Some(config)) => config,
+        Ok(None) => {
+            let msg = format!("Unknown beacon type: '{}'", request.beacon_type);
+            tracing::warn!("{}", msg);
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: msg,
+            }));
+        }
+        Err(e) => {
+            tracing::error!("Failed to look up beacon type: {}", e);
+            return Err(Status::InternalServerError);
+        }
+    };
 
-    match create_beacon_via_factory(state.inner(), state.beacon_factory_address).await {
-        Ok(beacon_address) => {
-            tracing::info!("Successfully created beacon at address: {}", beacon_address);
+    if !config.enabled {
+        return Ok(Json(ApiResponse {
+            success: false,
+            data: None,
+            message: format!("Beacon type '{}' is disabled", request.beacon_type),
+        }));
+    }
+
+    match create_and_register_beacon_by_type(state.inner(), &config, request.params.as_ref()).await
+    {
+        Ok(response) => {
+            tracing::info!(
+                "Created '{}' beacon at {}",
+                config.slug,
+                response.beacon_address
+            );
             sentry::capture_message(
-                &format!("Beacon created successfully at: {beacon_address}"),
+                &format!(
+                    "Beacon created: {} (type={})",
+                    response.beacon_address, config.slug
+                ),
                 sentry::Level::Info,
             );
             Ok(Json(ApiResponse {
                 success: true,
-                data: Some(beacon_address.to_string()),
+                data: Some(response),
                 message: "Beacon created successfully".to_string(),
             }))
         }
         Err(e) => {
-            tracing::error!("Failed to create beacon: {}", e);
+            tracing::error!("Failed to create '{}' beacon: {}", config.slug, e);
             sentry::capture_message(
-                &format!("Failed to create beacon: {e}"),
+                &format!("Failed to create beacon (type={}): {e}", config.slug),
                 sentry::Level::Error,
             );
             Err(Status::InternalServerError)
@@ -63,9 +104,273 @@ pub async fn create_beacon(
     }
 }
 
-/// Registers an existing beacon with the registry.
+/// Batch creates beacons using a registered beacon type.
 ///
-/// Registers a previously created beacon with the PerpCity registry contract.
+/// Creates the specified number of beacons (1-100) and optionally registers them.
+/// Currently only supports Simple factory types via multicall3.
+#[openapi(tag = "Beacon")]
+#[post("/batch_create_beacon", data = "<request>")]
+pub async fn batch_create_beacon(
+    request: Json<BatchCreateBeaconByTypeRequest>,
+    _token: ApiToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<BatchCreateBeaconResponse>>, Status> {
+    tracing::info!(
+        "Received request: POST /batch_create_beacon (type={}, count={})",
+        request.beacon_type,
+        request.count
+    );
+    let _guard = sentry::Hub::current().push_scope();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("endpoint", "/batch_create_beacon");
+        scope.set_extra("beacon_type", request.beacon_type.clone().into());
+        scope.set_extra("requested_count", request.count.into());
+    });
+
+    let count = request.count;
+    if count == 0 || count > 100 {
+        tracing::warn!("Invalid beacon count: {}", count);
+        return Err(Status::BadRequest);
+    }
+
+    // Look up beacon type config
+    let config = match state
+        .beacon_type_registry
+        .get_type(&request.beacon_type)
+        .await
+    {
+        Ok(Some(config)) => config,
+        Ok(None) => {
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: format!("Unknown beacon type: '{}'", request.beacon_type),
+            }));
+        }
+        Err(e) => {
+            tracing::error!("Failed to look up beacon type: {}", e);
+            return Err(Status::InternalServerError);
+        }
+    };
+
+    if !config.enabled {
+        return Ok(Json(ApiResponse {
+            success: false,
+            data: None,
+            message: format!("Beacon type '{}' is disabled", request.beacon_type),
+        }));
+    }
+
+    match service_batch_create_beacons(state.inner(), &config, count).await {
+        Ok(response) => {
+            let created = response.created_count;
+            let failed = response.failed_count;
+
+            let message = if failed == 0 {
+                format!(
+                    "Successfully created all {created} '{}' beacons",
+                    config.slug
+                )
+            } else if created == 0 {
+                "Failed to create any beacons".to_string()
+            } else {
+                format!("Partially successful: {created} created, {failed} failed")
+            };
+
+            tracing::info!("{}", message);
+
+            Ok(Json(ApiResponse {
+                success: created > 0,
+                data: Some(response),
+                message,
+            }))
+        }
+        Err(e) => {
+            tracing::error!("Batch create beacon failed: {}", e);
+            Err(Status::BadRequest)
+        }
+    }
+}
+
+/// Creates a beacon with an auto-deployed ECDSA verifier adapter.
+///
+/// Deploys an ECDSAVerifierAdapter contract with the beaconator's PRIVATE_KEY signer,
+/// then creates a beacon via the Dichotomous factory using the deployed verifier.
+/// Optionally registers the beacon if the type has a registry configured.
+#[openapi(tag = "Beacon")]
+#[post("/create_beacon_with_ecdsa", data = "<request>")]
+pub async fn create_beacon_with_ecdsa(
+    request: Json<CreateBeaconWithEcdsaRequest>,
+    _token: ApiToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<CreateBeaconWithEcdsaResponse>>, Status> {
+    tracing::info!(
+        "Received request: POST /create_beacon_with_ecdsa (type={})",
+        request.beacon_type
+    );
+    let _guard = sentry::Hub::current().push_scope();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("endpoint", "/create_beacon_with_ecdsa");
+        scope.set_extra("beacon_type", request.beacon_type.clone().into());
+        scope.set_extra("initial_data", request.initial_data.to_string().into());
+        scope.set_extra("initial_cardinality", request.initial_cardinality.into());
+    });
+
+    // Look up beacon type config
+    let config = match state
+        .beacon_type_registry
+        .get_type(&request.beacon_type)
+        .await
+    {
+        Ok(Some(config)) => config,
+        Ok(None) => {
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: format!("Unknown beacon type: '{}'", request.beacon_type),
+            }));
+        }
+        Err(e) => {
+            tracing::error!("Failed to look up beacon type: {}", e);
+            return Err(Status::InternalServerError);
+        }
+    };
+
+    if !config.enabled {
+        return Ok(Json(ApiResponse {
+            success: false,
+            data: None,
+            message: format!("Beacon type '{}' is disabled", request.beacon_type),
+        }));
+    }
+
+    // Validate factory type is Dichotomous
+    if config.factory_type != crate::models::beacon_type::FactoryType::Dichotomous {
+        return Ok(Json(ApiResponse {
+            success: false,
+            data: None,
+            message: format!(
+                "Beacon type '{}' uses a Simple factory; ECDSA verifier requires a Dichotomous factory",
+                request.beacon_type
+            ),
+        }));
+    }
+
+    // Acquire wallet from pool (held for entire deploy+create flow)
+    let wallet_handle = match state.wallet_manager.acquire_any_wallet().await {
+        Ok(handle) => handle,
+        Err(e) => {
+            tracing::error!("Failed to acquire wallet: {}", e);
+            sentry::capture_message(
+                &format!("Failed to acquire wallet for ECDSA beacon creation: {e}"),
+                sentry::Level::Error,
+            );
+            return Err(Status::InternalServerError);
+        }
+    };
+
+    tracing::info!(
+        "Acquired wallet {} for ECDSA beacon creation",
+        wallet_handle.address()
+    );
+
+    // Step 1: Deploy ECDSA verifier adapter
+    let verifier_address = match deploy_ecdsa_verifier_adapter(state.inner(), &wallet_handle).await
+    {
+        Ok(addr) => addr,
+        Err(e) => {
+            tracing::error!("Failed to deploy ECDSA verifier adapter: {}", e);
+            sentry::capture_message(
+                &format!("ECDSA verifier deployment failed: {e}"),
+                sentry::Level::Error,
+            );
+            return Err(Status::InternalServerError);
+        }
+    };
+
+    tracing::info!("ECDSA verifier deployed at {}", verifier_address);
+
+    // Release wallet lock before Step 2 so create_verifiable_beacon_with_factory
+    // can acquire a wallet from the pool without contention/deadlock.
+    drop(wallet_handle);
+
+    // Step 2: Create beacon using the deployed verifier
+    let beacon_address = match create_verifiable_beacon_with_factory(
+        state.inner(),
+        config.factory_address,
+        verifier_address,
+        request.initial_data,
+        request.initial_cardinality,
+    )
+    .await
+    {
+        Ok(addr) => addr,
+        Err(e) => {
+            tracing::error!("Failed to create beacon after verifier deployment: {}", e);
+            sentry::capture_message(
+                &format!("Beacon creation failed after ECDSA verifier deployment: {e}"),
+                sentry::Level::Error,
+            );
+            return Err(Status::InternalServerError);
+        }
+    };
+
+    // Step 3: Optionally register with registry
+    let registered = if let Some(registry_address) = config.registry_address {
+        match register_beacon_with_registry(state.inner(), beacon_address, registry_address).await {
+            Ok(_) => {
+                tracing::info!(
+                    "Beacon {} registered with registry {}",
+                    beacon_address,
+                    registry_address
+                );
+                true
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Beacon {} created but registration failed: {}",
+                    beacon_address,
+                    e
+                );
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    let response = CreateBeaconWithEcdsaResponse {
+        beacon_address: format!("{beacon_address:#x}"),
+        verifier_address: format!("{verifier_address:#x}"),
+        beacon_type: config.slug.clone(),
+        registered,
+    };
+
+    tracing::info!(
+        "ECDSA beacon created: beacon={}, verifier={}, registered={}",
+        response.beacon_address,
+        response.verifier_address,
+        registered,
+    );
+
+    sentry::capture_message(
+        &format!(
+            "ECDSA beacon created: {} with verifier {} (type={})",
+            response.beacon_address, response.verifier_address, config.slug
+        ),
+        sentry::Level::Info,
+    );
+
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some(response),
+        message: "Beacon created with ECDSA verifier successfully".to_string(),
+    }))
+}
+
+/// Registers an existing beacon with a registry contract.
+///
+/// Registers a previously created beacon with the specified registry contract.
 #[openapi(tag = "Beacon")]
 #[post("/register_beacon", data = "<request>")]
 pub async fn register_beacon(
@@ -161,184 +466,6 @@ pub async fn register_beacon(
     }
 }
 
-/// Creates a single PerpCity beacon.
-///
-/// Creates a new beacon via the beacon factory and registers it with the PerpCity registry.
-/// Returns the address of the created beacon on success.
-#[openapi(tag = "Beacon")]
-#[post("/create_perpcity_beacon")]
-pub async fn create_perpcity_beacon(
-    _token: ApiToken,
-    state: &State<AppState>,
-) -> Result<Json<ApiResponse<String>>, Status> {
-    tracing::info!("Received request: POST /create_perpcity_beacon");
-
-    // Log configuration details for debugging
-    tracing::debug!("Configuration:");
-    tracing::debug!("  - Wallet source: WalletManager pool");
-    tracing::debug!(
-        "  - Beacon factory address: {}",
-        state.beacon_factory_address
-    );
-    tracing::debug!(
-        "  - Perpcity registry address: {}",
-        state.perpcity_registry_address
-    );
-
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
-        scope.set_tag("endpoint", "/create_perpcity_beacon");
-        scope.set_extra("wallet_source", "WalletManager pool".into());
-        scope.set_extra(
-            "beacon_factory_address",
-            state.beacon_factory_address.to_string().into(),
-        );
-        scope.set_extra(
-            "perpcity_registry_address",
-            state.perpcity_registry_address.to_string().into(),
-        );
-    });
-
-    // Create a beacon using the factory (wallet acquired internally by service)
-    tracing::info!("Starting beacon creation via WalletManager pool");
-
-    let beacon_address = match create_beacon_via_factory(state, state.beacon_factory_address).await
-    {
-        Ok(address) => {
-            tracing::info!("Successfully created beacon at address: {}", address);
-            sentry::capture_message(
-                &format!("Beacon created successfully at: {address}"),
-                sentry::Level::Info,
-            );
-            address
-        }
-        Err(e) => {
-            tracing::error!("Failed to create beacon: {}", e);
-            tracing::error!("Error details: {:?}", e);
-            sentry::capture_message(
-                &format!("Failed to create beacon: {e}"),
-                sentry::Level::Error,
-            );
-            return Err(Status::InternalServerError);
-        }
-    };
-
-    // The beacon creation transaction is now fully confirmed, so we can safely proceed with registration
-    tracing::info!("Beacon creation completed successfully, proceeding with registration...");
-
-    // Register the beacon with the perpcity registry
-    tracing::info!(
-        "Starting beacon registration for beacon: {}",
-        beacon_address
-    );
-
-    match register_beacon_with_registry(state, beacon_address, state.perpcity_registry_address)
-        .await
-    {
-        Ok(tx_hash) => {
-            let message = if tx_hash == B256::ZERO {
-                "Perpcity beacon created successfully (already registered)"
-            } else {
-                "Perpcity beacon created and registered successfully"
-            };
-
-            if tx_hash == B256::ZERO {
-                tracing::info!(
-                    "{} - Beacon: {} was already registered",
-                    message,
-                    beacon_address
-                );
-            } else {
-                tracing::info!(
-                    "{} - Beacon: {}, TX: {:?}",
-                    message,
-                    beacon_address,
-                    tx_hash
-                );
-            }
-
-            sentry::capture_message(
-                &format!("Beacon successfully created: {beacon_address}"),
-                sentry::Level::Info,
-            );
-            Ok(Json(ApiResponse {
-                success: true,
-                data: Some(format!("Beacon address: {beacon_address}")),
-                message: message.to_string(),
-            }))
-        }
-        Err(e) => {
-            tracing::error!(
-                "Failed to register beacon {} with registry: {}",
-                beacon_address,
-                e
-            );
-            tracing::error!("Error details: {:?}", e);
-            sentry::capture_message(
-                &format!("Failed to register beacon {beacon_address}: {e}"),
-                sentry::Level::Error,
-            );
-            Err(Status::InternalServerError)
-        }
-    }
-}
-
-/// Creates multiple PerpCity beacons in a batch operation.
-///
-/// Creates the specified number of beacons (1-100) via the beacon factory and registers
-/// them with the PerpCity registry. Returns details about successful and failed creations.
-#[openapi(tag = "Beacon")]
-#[post("/batch_create_perpcity_beacon", data = "<request>")]
-pub async fn batch_create_perpcity_beacon(
-    request: Json<BatchCreatePerpcityBeaconRequest>,
-    _token: ApiToken,
-    state: &State<AppState>,
-) -> Result<Json<ApiResponse<BatchCreatePerpcityBeaconResponse>>, Status> {
-    tracing::info!("Received request: POST /batch_create_perpcity_beacon");
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
-        scope.set_tag("endpoint", "/batch_create_perpcity_beacon");
-        scope.set_extra("requested_count", request.count.into());
-    });
-
-    let count = request.count;
-
-    // Validate the count
-    if count == 0 || count > 100 {
-        tracing::warn!("Invalid beacon count: {}", count);
-        return Err(Status::BadRequest);
-    }
-
-    // Use the extracted service function (wallet acquired internally by service)
-    match service_batch_create_perpcity_beacon(state.inner(), count).await {
-        Ok(response_data) => {
-            let created_count = response_data.created_count;
-            let failed_count = response_data.failed_count;
-
-            let message = if failed_count == 0 {
-                format!("Successfully created and registered all {created_count} Perpcity beacons")
-            } else if created_count == 0 {
-                "Failed to create any beacons".to_string()
-            } else {
-                format!("Partially successful: {created_count} created, {failed_count} failed")
-            };
-
-            tracing::info!("{}", message);
-
-            // Return success even with partial failures, let client handle the response
-            Ok(Json(ApiResponse {
-                success: created_count > 0,
-                data: Some(response_data),
-                message,
-            }))
-        }
-        Err(error) => {
-            tracing::error!("Batch create perpcity beacon failed: {}", error);
-            Err(Status::BadRequest)
-        }
-    }
-}
-
 /// Updates a beacon with new data using a zero-knowledge proof.
 ///
 /// Validates the provided proof and public signals, then updates the beacon's data.
@@ -429,53 +556,6 @@ pub async fn batch_update_beacon(
         Err(error) => {
             tracing::error!("Batch update beacon failed: {}", error);
             Err(Status::BadRequest)
-        }
-    }
-}
-
-/// Creates a verifiable beacon with Halo2 proof verification.
-///
-/// Creates a new verifiable beacon using the DichotomousBeaconFactory with the specified
-/// verifier contract address, initial data value, and TWAP cardinality.
-#[openapi(tag = "Beacon")]
-#[post("/create_verifiable_beacon", data = "<request>")]
-pub async fn create_verifiable_beacon(
-    request: Json<CreateVerifiableBeaconRequest>,
-    _token: ApiToken,
-    state: &State<AppState>,
-) -> Result<Json<ApiResponse<String>>, Status> {
-    tracing::info!("Received request: POST /create_verifiable_beacon");
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
-        scope.set_tag("endpoint", "/create_verifiable_beacon");
-        scope.set_extra("verifier_address", request.verifier_address.clone().into());
-        scope.set_extra("initial_data", request.initial_data.to_string().into());
-        scope.set_extra("initial_cardinality", request.initial_cardinality.into());
-    });
-
-    match service_create_verifiable_beacon(state.inner(), request.into_inner()).await {
-        Ok(beacon_address) => {
-            tracing::info!(
-                "Successfully created verifiable beacon at: {}",
-                beacon_address
-            );
-            sentry::capture_message(
-                &format!("Verifiable beacon created successfully at: {beacon_address}"),
-                sentry::Level::Info,
-            );
-            Ok(Json(ApiResponse {
-                success: true,
-                data: Some(beacon_address),
-                message: "Verifiable beacon created successfully".to_string(),
-            }))
-        }
-        Err(e) => {
-            tracing::error!("Failed to create verifiable beacon: {}", e);
-            sentry::capture_message(
-                &format!("Failed to create verifiable beacon: {e}"),
-                sentry::Level::Error,
-            );
-            Err(Status::InternalServerError)
         }
     }
 }
