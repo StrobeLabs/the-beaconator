@@ -35,11 +35,48 @@ pub struct BatchUpdateBeaconRequest {
     pub updates: Vec<BeaconUpdateData>,
 }
 
-/// Create a new beacon (not yet implemented)
+/// Create a beacon by type slug (unified endpoint)
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct CreateBeaconRequest {
-    /// Placeholder field until implementation is complete
-    pub placeholder: String,
+pub struct CreateBeaconByTypeRequest {
+    /// Beacon type slug (e.g., "perpcity", "verifiable-twap")
+    pub beacon_type: String,
+    /// Type-specific creation parameters (required for Dichotomous factory types)
+    pub params: Option<BeaconCreationParams>,
+}
+
+/// Type-specific parameters for beacon creation
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct BeaconCreationParams {
+    /// Verifier contract address (required for Dichotomous factory type)
+    pub verifier_address: Option<String>,
+    /// Initial data value (required for Dichotomous factory type)
+    #[schemars(with = "Option<String>")]
+    pub initial_data: Option<u128>,
+    /// Initial TWAP observation slots (required for Dichotomous factory type)
+    pub initial_cardinality: Option<u32>,
+}
+
+/// Batch create beacons by type slug
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct BatchCreateBeaconByTypeRequest {
+    /// Beacon type slug
+    pub beacon_type: String,
+    /// Number of beacons to create (1-100)
+    pub count: u32,
+    /// Type-specific creation parameters (shared across all beacons in batch)
+    pub params: Option<BeaconCreationParams>,
+}
+
+/// Create a beacon with an auto-deployed ECDSA verifier adapter
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CreateBeaconWithEcdsaRequest {
+    /// Beacon type slug (must reference a Dichotomous factory type)
+    pub beacon_type: String,
+    /// Initial data value (MUST be pre-scaled by 2^96 if representing a decimal)
+    #[schemars(with = "String")]
+    pub initial_data: u128,
+    /// Initial TWAP observation slots (typically 100-1000)
+    pub initial_cardinality: u32,
 }
 
 /// Register an existing beacon with the registry
@@ -51,16 +88,40 @@ pub struct RegisterBeaconRequest {
     pub registry_address: String,
 }
 
-/// Create a verifiable beacon with zero-knowledge proof support and TWAP
+/// Register a new beacon type in the registry
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct CreateVerifiableBeaconRequest {
-    /// Halo2 verifier contract address
-    pub verifier_address: String,
-    /// Initial data value (MUST be pre-scaled by 2^96 if representing a decimal)
-    #[schemars(with = "String")]
-    pub initial_data: u128,
-    /// Initial TWAP observation slots (typically 100-1000)
-    pub initial_cardinality: u32,
+pub struct RegisterBeaconTypeRequest {
+    /// Unique slug identifier
+    pub slug: String,
+    /// Human-readable name
+    pub name: String,
+    /// Optional description
+    pub description: Option<String>,
+    /// Factory contract address (hex with 0x prefix)
+    pub factory_address: String,
+    /// Factory interface type
+    pub factory_type: crate::models::beacon_type::FactoryType,
+    /// Optional registry address for auto-registration (hex with 0x prefix)
+    pub registry_address: Option<String>,
+    /// Whether this type is enabled (defaults to true)
+    pub enabled: Option<bool>,
+}
+
+/// Update an existing beacon type configuration
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct UpdateBeaconTypeRequest {
+    /// Updated human-readable name
+    pub name: Option<String>,
+    /// Updated description
+    pub description: Option<String>,
+    /// Updated factory contract address
+    pub factory_address: Option<String>,
+    /// Updated factory interface type
+    pub factory_type: Option<crate::models::beacon_type::FactoryType>,
+    /// Updated registry address
+    pub registry_address: Option<String>,
+    /// Updated enabled status
+    pub enabled: Option<bool>,
 }
 
 /// Deploy a perpetual contract for a specific beacon
@@ -97,13 +158,6 @@ pub struct BatchDeployPerpsForBeaconsRequest {
     /// Starting sqrt price in Q96 format as string
     #[schemars(with = "String")]
     pub starting_sqrt_price_x96: String,
-}
-
-/// Batch create multiple Perpcity beacons
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct BatchCreatePerpcityBeaconRequest {
-    /// Number of beacons to create (1-100)
-    pub count: u32,
 }
 
 /// Deposit liquidity for a perpetual contract

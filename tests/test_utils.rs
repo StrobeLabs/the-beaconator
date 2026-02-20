@@ -129,7 +129,7 @@ use alloy::{
     json_abi::JsonAbi,
     network::EthereumWallet,
     node_bindings::{Anvil, AnvilInstance},
-    primitives::{Address, U256},
+    primitives::{Address, Bytes, U256},
     providers::{Provider, ProviderBuilder},
     signers::{Signer, local::PrivateKeySigner},
 };
@@ -138,6 +138,7 @@ use std::sync::Arc;
 use the_beaconator::ReadOnlyProvider;
 use the_beaconator::models::AppState;
 use the_beaconator::models::wallet::{WalletInfo, WalletStatus};
+use the_beaconator::services::beacon::BeaconTypeRegistry;
 use the_beaconator::services::wallet::WalletManager;
 use tokio::sync::OnceCell;
 
@@ -604,6 +605,9 @@ pub async fn create_test_app_state() -> AppState {
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
         wallet_manager: Arc::new(WalletManager::test_stub()),
+        admin_token: "test_admin_token".to_string(),
+        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        ecdsa_verifier_adapter_bytecode: Bytes::new(),
     }
 }
 
@@ -676,6 +680,9 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
         wallet_manager: create_test_wallet_manager().await,
+        admin_token: "test_admin_token".to_string(),
+        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        ecdsa_verifier_adapter_bytecode: Bytes::new(),
     };
 
     (app_state, anvil)
@@ -773,6 +780,9 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ),
         wallet_manager,
+        admin_token: "test_admin_token".to_string(),
+        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        ecdsa_verifier_adapter_bytecode: Bytes::new(),
     };
 
     (app_state, anvil)
@@ -842,6 +852,9 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
         wallet_manager: Arc::new(WalletManager::test_stub()),
+        admin_token: "test_admin_token".to_string(),
+        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        ecdsa_verifier_adapter_bytecode: Bytes::new(),
     }
 }
 
@@ -965,6 +978,9 @@ pub async fn create_simple_test_app_state() -> AppState {
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
         wallet_manager,
+        admin_token: "test_admin_token".to_string(),
+        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        ecdsa_verifier_adapter_bytecode: Bytes::new(),
     }
 }
 
@@ -1030,6 +1046,9 @@ pub async fn create_test_app_state_with_provider(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
         wallet_manager,
+        admin_token: "test_admin_token".to_string(),
+        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        ecdsa_verifier_adapter_bytecode: Bytes::new(),
     }
 }
 

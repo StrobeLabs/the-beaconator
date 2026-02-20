@@ -4,8 +4,12 @@ use std::{str::FromStr, time::Duration};
 use tokio::time::timeout;
 use tracing;
 
+use crate::models::beacon_type::{BeaconTypeConfig, FactoryType};
+use crate::models::requests::BeaconCreationParams;
+use crate::models::responses::CreateBeaconResponse;
 use crate::models::{AppState, UpdateBeaconRequest};
 use crate::routes::{IBeacon, IBeaconFactory, IBeaconRegistry};
+use crate::services::beacon::verifiable::create_verifiable_beacon_with_factory;
 use crate::services::transaction::events::{parse_beacon_created_event, parse_data_updated_event};
 use crate::services::transaction::execution::is_nonce_error;
 
@@ -707,4 +711,83 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
             Err(error_msg)
         }
     }
+}
+
+/// Dispatch beacon creation to the correct factory based on FactoryType.
+///
+/// For Simple factories, calls create_beacon_via_factory().
+/// For Dichotomous factories, validates required params and calls create_verifiable_beacon_with_factory().
+pub async fn create_beacon_by_type(
+    state: &AppState,
+    config: &BeaconTypeConfig,
+    params: Option<&BeaconCreationParams>,
+) -> Result<Address, String> {
+    match config.factory_type {
+        FactoryType::Simple => create_beacon_via_factory(state, config.factory_address).await,
+        FactoryType::Dichotomous => {
+            let params = params.ok_or(
+                "Dichotomous factory type requires params (verifier_address, initial_data, initial_cardinality)"
+            )?;
+            let verifier_str = params
+                .verifier_address
+                .as_ref()
+                .ok_or("verifier_address is required for Dichotomous factory type")?;
+            let verifier_address = Address::from_str(verifier_str)
+                .map_err(|e| format!("Invalid verifier_address: {e}"))?;
+            let initial_data = params
+                .initial_data
+                .ok_or("initial_data is required for Dichotomous factory type")?;
+            let initial_cardinality = params
+                .initial_cardinality
+                .ok_or("initial_cardinality is required for Dichotomous factory type")?;
+
+            create_verifiable_beacon_with_factory(
+                state,
+                config.factory_address,
+                verifier_address,
+                initial_data,
+                initial_cardinality,
+            )
+            .await
+        }
+    }
+}
+
+/// Create a beacon by type and optionally register it with the configured registry.
+pub async fn create_and_register_beacon_by_type(
+    state: &AppState,
+    config: &BeaconTypeConfig,
+    params: Option<&BeaconCreationParams>,
+) -> Result<CreateBeaconResponse, String> {
+    let beacon_address = create_beacon_by_type(state, config, params).await?;
+
+    let registered = if let Some(registry_address) = config.registry_address {
+        match register_beacon_with_registry(state, beacon_address, registry_address).await {
+            Ok(_) => {
+                tracing::info!(
+                    "Beacon {} registered with registry {}",
+                    beacon_address,
+                    registry_address
+                );
+                true
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Beacon {} created but registration failed: {}",
+                    beacon_address,
+                    e
+                );
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    Ok(CreateBeaconResponse {
+        beacon_address: format!("{beacon_address:#x}"),
+        beacon_type: config.slug.clone(),
+        factory_address: format!("{:#x}", config.factory_address),
+        registered,
+    })
 }

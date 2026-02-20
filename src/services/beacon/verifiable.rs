@@ -1,45 +1,29 @@
 use alloy::primitives::{Address, U256};
-use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing;
 
-use crate::models::{AppState, CreateVerifiableBeaconRequest};
+use crate::models::AppState;
 use crate::routes::IDichotomousBeaconFactory;
 use crate::services::transaction::events::parse_beacon_created_event;
 use crate::services::transaction::execution::is_nonce_error;
 
-/// Creates a verifiable beacon using the DichotomousBeaconFactory.
+/// Creates a verifiable beacon using a DichotomousBeaconFactory at the given address.
 ///
-/// Creates a new verifiable beacon with the specified verifier address,
-/// initial data value, and TWAP observation cardinality.
-pub async fn create_verifiable_beacon(
+/// This is the core function that takes all parameters explicitly, including
+/// the factory address. Used by the unified beacon creation dispatch.
+pub async fn create_verifiable_beacon_with_factory(
     state: &AppState,
-    request: CreateVerifiableBeaconRequest,
-) -> Result<String, String> {
-    // Check if dichotomous factory is configured
-    let factory_address = match state.dichotomous_beacon_factory_address {
-        Some(addr) => addr,
-        None => {
-            tracing::error!("Dichotomous beacon factory address not configured");
-            return Err("Verifiable beacon factory not configured".to_string());
-        }
-    };
-
-    // Parse verifier address
-    let verifier_address = match Address::from_str(&request.verifier_address) {
-        Ok(addr) => addr,
-        Err(e) => {
-            tracing::error!("Invalid verifier address: {}", e);
-            return Err("Invalid verifier address".to_string());
-        }
-    };
-
+    factory_address: Address,
+    verifier_address: Address,
+    initial_data: u128,
+    initial_cardinality: u32,
+) -> Result<Address, String> {
     tracing::info!("Creating verifiable beacon with:");
     tracing::info!("  Factory: {}", factory_address);
     tracing::info!("  Verifier: {}", verifier_address);
-    tracing::info!("  Initial data: {}", request.initial_data);
-    tracing::info!("  Initial cardinality: {}", request.initial_cardinality);
+    tracing::info!("  Initial data: {}", initial_data);
+    tracing::info!("  Initial cardinality: {}", initial_cardinality);
 
     // Acquire a wallet from the pool
     let wallet_handle = state
@@ -67,8 +51,8 @@ pub async fn create_verifiable_beacon(
     let pending_tx = match contract
         .createBeacon(
             verifier_address,
-            U256::from(request.initial_data),
-            request.initial_cardinality,
+            U256::from(initial_data),
+            initial_cardinality,
         )
         .send()
         .await
@@ -78,7 +62,6 @@ pub async fn create_verifiable_beacon(
             let error_msg = format!("Failed to send createBeacon transaction: {e}");
             tracing::error!("{}", error_msg);
 
-            // Check if nonce error
             if is_nonce_error(&error_msg) {
                 tracing::warn!("Nonce error detected, transaction failed");
             }
@@ -124,17 +107,11 @@ pub async fn create_verifiable_beacon(
         tx_hash
     );
 
-    // Check transaction status - only proceed if successful
+    // Check transaction status
     if !receipt.status() {
         let error_msg =
             format!("Verifiable beacon creation transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
-        tracing::error!(
-            "Factory: {}, Verifier: {}, Initial data: {}",
-            factory_address,
-            verifier_address,
-            request.initial_data
-        );
         sentry::capture_message(
             &format!(
                 "Verifiable beacon creation transaction reverted: {tx_hash} (factory: {factory_address})"
@@ -160,10 +137,6 @@ pub async fn create_verifiable_beacon(
         "Verifiable beacon created successfully - Beacon: {}",
         beacon_address
     );
-    sentry::capture_message(
-        &format!("Verifiable beacon created: {beacon_address}"),
-        sentry::Level::Info,
-    );
 
-    Ok(format!("Beacon address: {beacon_address}"))
+    Ok(beacon_address)
 }

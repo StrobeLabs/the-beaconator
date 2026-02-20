@@ -117,6 +117,16 @@ impl PrefixedRedisKeys {
     pub fn wallet_beacons(&self, wallet: &Address) -> String {
         format!("{}wallet_beacons:{wallet}", self.prefix)
     }
+
+    /// Set of all beacon type slugs: beacon_types
+    pub fn beacon_types_set(&self) -> String {
+        format!("{}beacon_types", self.prefix)
+    }
+
+    /// Beacon type config: beacon_type:{slug} -> BeaconTypeConfig JSON
+    pub fn beacon_type_config(&self, slug: &str) -> String {
+        format!("{}beacon_type:{slug}", self.prefix)
+    }
 }
 
 impl Default for PrefixedRedisKeys {
