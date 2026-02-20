@@ -251,13 +251,6 @@ pub async fn create_rocket() -> Rocket<Build> {
     // Parse the funding wallet private key (ONLY for fund_guest_wallet endpoint)
     let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY environment variable not set");
 
-    // Build funding provider with PRIVATE_KEY wallet (ONLY for fund_guest_wallet)
-    let funding_provider = std::sync::Arc::new(
-        rpc_config
-            .build_provider(&private_key, chain_id)
-            .unwrap_or_else(|e| panic!("Failed to build funding RPC provider: {e}")),
-    );
-
     // Get funding wallet address
     let funding_wallet_address = services::rpc::RpcConfig::get_wallet_address(&private_key)
         .expect("Failed to get funding wallet address");
@@ -449,7 +442,6 @@ pub async fn create_rocket() -> Rocket<Build> {
     let app_state = AppState {
         // Provider
         read_provider,
-        funding_provider,
         funding_wallet_address,
         wallet_manager: std::sync::Arc::new(wallet_manager),
         rpc_url,

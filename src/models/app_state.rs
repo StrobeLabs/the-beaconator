@@ -7,9 +7,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::ReadOnlyProvider;
 use crate::services::beacon::BeaconTypeRegistry;
 use crate::services::wallet::WalletManager;
-use crate::{AlloyProvider, ReadOnlyProvider};
 
 /// API endpoint information for documentation
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -212,8 +212,7 @@ pub struct AppState {
     // Read-only provider for queries (no wallet)
     pub read_provider: Arc<ReadOnlyProvider>,
 
-    // Funding provider (PRIVATE_KEY wallet) - ONLY for fund_guest_wallet
-    pub funding_provider: Arc<AlloyProvider>,
+    // Funding wallet address (PRIVATE_KEY) - ONLY for fund_guest_wallet
     pub funding_wallet_address: Address,
 
     // WalletManager for contract operations (local wallets)
