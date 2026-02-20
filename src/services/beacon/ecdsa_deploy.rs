@@ -32,6 +32,13 @@ pub async fn deploy_ecdsa_verifier_adapter(
         .build_provider(&state.rpc_url)
         .map_err(|e| format!("Failed to build provider for verifier deployment: {e}"))?;
 
+    if state.ecdsa_verifier_adapter_bytecode.is_empty() {
+        return Err(
+            "ECDSAVerifierAdapter bytecode is empty - check abis/ECDSAVerifierAdapter.bytecode"
+                .to_string(),
+        );
+    }
+
     // ABI-encode constructor arg: address _signer
     let constructor_args = signer_address.abi_encode();
 

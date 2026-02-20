@@ -82,9 +82,15 @@ impl BeaconTypeRegistry {
             .map_err(|e| format!("Failed to list beacon types: {e}"))?;
 
         let mut configs = Vec::new();
-        for slug in slugs {
-            if let Ok(Some(config)) = self.get_type(&slug).await {
-                configs.push(config);
+        for slug in &slugs {
+            match self.get_type(slug).await {
+                Ok(Some(config)) => configs.push(config),
+                Ok(None) => {
+                    tracing::warn!("Beacon type slug '{}' in set but config key missing", slug);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load beacon type '{}': {}", slug, e);
+                }
             }
         }
 

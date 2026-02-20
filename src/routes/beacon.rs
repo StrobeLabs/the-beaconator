@@ -290,6 +290,10 @@ pub async fn create_beacon_with_ecdsa(
 
     tracing::info!("ECDSA verifier deployed at {}", verifier_address);
 
+    // Release wallet lock before Step 2 so create_verifiable_beacon_with_factory
+    // can acquire a wallet from the pool without contention/deadlock.
+    drop(wallet_handle);
+
     // Step 2: Create beacon using the deployed verifier
     let beacon_address = match create_verifiable_beacon_with_factory(
         state.inner(),
