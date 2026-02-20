@@ -84,26 +84,28 @@ pub async fn batch_create_beacons(
 
     // Register beacons if registry_address is configured
     if let Some(registry_address) = config.registry_address {
-        if !beacon_addresses.is_empty() && state.multicall3_address.is_some() {
-            tracing::info!(
-                "Registering {} beacons with registry {}",
-                beacon_addresses.len(),
-                registry_address
-            );
-            match register_beacons_with_multicall3(
-                state,
-                &provider,
-                state.multicall3_address.unwrap(),
-                registry_address,
-                &beacon_addresses,
-            )
-            .await
-            {
-                Ok(_) => {
-                    tracing::info!("Batch beacon registration completed");
-                }
-                Err(e) => {
-                    tracing::warn!("Batch beacon registration failed: {}", e);
+        if let Some(multicall3_address) = state.multicall3_address {
+            if !beacon_addresses.is_empty() {
+                tracing::info!(
+                    "Registering {} beacons with registry {}",
+                    beacon_addresses.len(),
+                    registry_address
+                );
+                match register_beacons_with_multicall3(
+                    state,
+                    &provider,
+                    multicall3_address,
+                    registry_address,
+                    &beacon_addresses,
+                )
+                .await
+                {
+                    Ok(_) => {
+                        tracing::info!("Batch beacon registration completed");
+                    }
+                    Err(e) => {
+                        tracing::warn!("Batch beacon registration failed: {}", e);
+                    }
                 }
             }
         }
