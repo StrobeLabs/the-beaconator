@@ -286,6 +286,18 @@ impl WalletManager {
         self.require_pool().instance_id()
     }
 
+    /// Acquire a distributed lock for a specific wallet address
+    ///
+    /// Unlike `acquire_specific_wallet`, this does not require the address
+    /// to be in the signers map. Useful for locking wallets that are managed
+    /// outside the pool (e.g., the funding wallet).
+    pub async fn acquire_lock(&self, address: &Address) -> Result<WalletLockGuard, String> {
+        let lock = self.create_lock(address);
+        let config = self.require_config();
+        lock.acquire(config.lock_retry_count, config.lock_retry_delay)
+            .await
+    }
+
     /// Create a lock for a specific wallet
     ///
     /// This is useful when you need to manage the lock separately from

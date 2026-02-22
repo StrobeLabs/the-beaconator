@@ -221,6 +221,28 @@ pub async fn fund_guest_wallet(
         ));
     }
 
+    // Acquire distributed lock on funding wallet to prevent nonce conflicts
+    // across concurrent requests and multiple beaconator instances
+    let _funding_lock = state
+        .wallet_manager
+        .acquire_lock(&state.funding_wallet_address)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to acquire funding wallet lock: {}", e);
+            sentry::capture_message(
+                &format!("Failed to acquire funding wallet lock: {e}"),
+                sentry::Level::Error,
+            );
+            (
+                Status::ServiceUnavailable,
+                Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: format!("Funding wallet temporarily unavailable: {e}"),
+                }),
+            )
+        })?;
+
     // Build a fresh provider per-request to avoid stale nonce caching
     let funding_wallet = EthereumWallet::from(state.signer.clone());
     let funding_provider = ProviderBuilder::new()
