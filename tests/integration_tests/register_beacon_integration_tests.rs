@@ -103,7 +103,9 @@ async fn test_register_beacon_with_different_registries() {
     assert!(is_registered1.is_ok());
     assert!(is_registered1.unwrap());
 
-    // Try to register with a different registry address (ecdsa verifier factory as stand-in)
+    // Use ecdsa_verifier_factory_address as a non-registry contract stand-in.
+    // register_beacon_with_registry should fail because registry2 is not a
+    // BeaconRegistry and won't have the registerBeacon(address) method.
     let registry2 = app_state.ecdsa_verifier_factory_address;
     let register2_result =
         register_beacon_with_registry(&app_state, beacon_address, registry2).await;
