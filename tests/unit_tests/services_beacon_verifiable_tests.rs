@@ -1,38 +1,14 @@
 use alloy::primitives::Address;
 use std::str::FromStr;
 use the_beaconator::models::CreateBeaconWithEcdsaRequest;
-use the_beaconator::services::beacon::verifiable::create_verifiable_beacon_with_factory;
-
-#[tokio::test]
-#[ignore = "requires WalletManager with Redis"]
-async fn test_create_verifiable_beacon_with_factory_network_failure() {
-    let app_state = crate::test_utils::create_simple_test_app_state().await;
-    let factory_address = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let verifier_address = Address::from_str("0x9876543210987654321098765432109876543210").unwrap();
-
-    // This will fail in test environment due to no network, which is expected
-    let result = create_verifiable_beacon_with_factory(
-        &app_state,
-        factory_address,
-        verifier_address,
-        100,
-        100,
-    )
-    .await;
-    assert!(result.is_err());
-}
 
 #[test]
 fn test_create_beacon_with_ecdsa_request_validation() {
     let request = CreateBeaconWithEcdsaRequest {
-        beacon_type: "verifiable-twap".to_string(),
-        initial_data: 12345,
-        initial_cardinality: 500,
+        initial_index: 12345,
     };
 
-    assert_eq!(request.beacon_type, "verifiable-twap");
-    assert_eq!(request.initial_data, 12345);
-    assert_eq!(request.initial_cardinality, 500);
+    assert_eq!(request.initial_index, 12345);
 }
 
 #[test]
@@ -64,38 +40,26 @@ fn test_address_parsing_edge_cases() {
 
 #[test]
 fn test_ecdsa_request_data_bounds() {
-    // Test edge cases for initial_data and initial_cardinality
+    // Test edge cases for initial_index
     let request = CreateBeaconWithEcdsaRequest {
-        beacon_type: "verifiable-twap".to_string(),
-        initial_data: u128::MAX,
-        initial_cardinality: u32::MAX,
+        initial_index: u128::MAX,
     };
 
-    assert_eq!(request.initial_data, u128::MAX);
-    assert_eq!(request.initial_cardinality, u32::MAX);
+    assert_eq!(request.initial_index, u128::MAX);
 
-    let request_min = CreateBeaconWithEcdsaRequest {
-        beacon_type: "verifiable-twap".to_string(),
-        initial_data: 0,
-        initial_cardinality: 0,
-    };
+    let request_min = CreateBeaconWithEcdsaRequest { initial_index: 0 };
 
-    assert_eq!(request_min.initial_data, 0);
-    assert_eq!(request_min.initial_cardinality, 0);
+    assert_eq!(request_min.initial_index, 0);
 }
 
 #[test]
 fn test_ecdsa_request_serialization() {
     let request = CreateBeaconWithEcdsaRequest {
-        beacon_type: "verifiable-twap".to_string(),
-        initial_data: 1000000,
-        initial_cardinality: 100,
+        initial_index: 1000000,
     };
 
     let serialized = serde_json::to_string(&request).unwrap();
     let deserialized: CreateBeaconWithEcdsaRequest = serde_json::from_str(&serialized).unwrap();
 
-    assert_eq!(deserialized.beacon_type, "verifiable-twap");
-    assert_eq!(deserialized.initial_data, 1000000);
-    assert_eq!(deserialized.initial_cardinality, 100);
+    assert_eq!(deserialized.initial_index, 1000000);
 }

@@ -18,40 +18,44 @@ pub use wallet::*;
 // Define contract interfaces using Alloy's sol! macro - shared across all route modules
 sol! {
     #[sol(rpc)]
-    interface IBeaconFactory {
-        function createBeacon(address owner) external returns (address);
-        event BeaconCreated(address beacon);
+    interface IBeacon {
+        function index() external view returns (uint256);
+        function update(bytes calldata proof, bytes calldata inputs) external;
+        function twAvg(uint32 secondsAgo) external view returns (uint256);
+        function increaseCardinalityCap(uint16 newCap) external;
+        function verifier() external view returns (address);
+        event IndexUpdated(uint256 index);
+    }
+
+    #[sol(rpc)]
+    interface ICompositeBeacon {
+        function index() external view returns (uint256);
+        function update() external;
+        function twAvg(uint32 secondsAgo) external view returns (uint256);
+        function increaseCardinalityCap(uint16 newCap) external;
+        event IndexUpdated(uint256 index);
     }
 
     #[sol(rpc)]
     interface IBeaconRegistry {
         function registerBeacon(address beacon) external;
         function unregisterBeacon(address beacon) external;
-        function beacons(address beacon) external view returns (bool);
+        function isBeaconRegistered(address beacon) external view returns (bool);
     }
 
     #[sol(rpc)]
-    interface IBeacon {
-        function getData() external view returns (uint256 data, uint256 timestamp);
-        function updateData(bytes calldata proof, bytes calldata publicSignals) external;
-        event DataUpdated(uint256 data);
+    interface IEcdsaVerifier {
+        function digest(uint256[] calldata measurement, uint256 nonce) external view returns (bytes32);
+        function domainSeparator() external view returns (bytes32);
+        function SIGNER() external view returns (address);
+        function MEASUREMENT_TYPEHASH() external view returns (bytes32);
+        function verify(bytes calldata proof, bytes calldata inputs) external returns (uint256[] memory);
+        function usedProofs(bytes32 proofHash) external view returns (bool);
     }
 
     #[sol(rpc)]
-    interface IDichotomousBeaconFactory {
-        function createBeacon(address verifier, uint256 initialData, uint32 initialCardinalityNext) external returns (address);
-        event BeaconCreated(address beacon, address verifier);
-    }
-
-    #[sol(rpc)]
-    interface IStepBeacon {
-        function getData() external view returns (uint256 data, uint256 timestamp);
-        function updateData(bytes calldata proof, bytes calldata publicSignals) external;
-        function getTwap(uint32 twapSecondsAgo) external view returns (uint256 twapPrice);
-        function increaseCardinalityNext(uint32 cardinalityNext) external returns (uint32 cardinalityNextOld, uint32 cardinalityNextNew);
-        event DataUpdated(uint256 data);
-        error ProofAlreadyUsed(bytes proof, bytes publicSignals);
-        error InvalidProof(bytes proof, bytes publicSignals);
+    interface IEcdsaVerifierFactory {
+        function createVerifier(address signer) external returns (address);
     }
 
     #[sol(rpc)]
@@ -83,25 +87,6 @@ sol! {
         function aggregate(Call[] calldata calls) external payable returns (uint256 blockNumber, bytes[] memory returnData);
         function aggregate3(Call3[] calldata calls) external payable returns (Result[] memory returnData);
         function tryAggregate(bool requireSuccess, Call[] calldata calls) external payable returns (Result[] memory returnData);
-    }
-
-    #[sol(rpc)]
-    interface IEcdsaBeacon {
-        function updateIndex(bytes calldata proof, bytes calldata inputs) external;
-        function verifierAdapter() external view returns (address);
-        function index() external view returns (uint256);
-        event IndexUpdated(uint256 index);
-    }
-
-    #[sol(rpc)]
-    interface IEcdsaVerifierAdapter {
-        function digest(uint256 measurement, uint256 nonce) external view returns (bytes32);
-        function domainSeparator() external view returns (bytes32);
-        function SIGNER() external view returns (address);
-        function MEASUREMENT_TYPEHASH() external view returns (bytes32);
-        function verify(bytes calldata proof, bytes calldata inputs) external returns (uint256);
-        function verifier() external view returns (address);
-        function usedProofs(bytes32 proofHash) external view returns (bool);
     }
 
     #[sol(rpc)]

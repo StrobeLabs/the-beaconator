@@ -2,8 +2,7 @@ use alloy::primitives::{Address, B256};
 use std::str::FromStr;
 use the_beaconator::models::UpdateBeaconRequest;
 use the_beaconator::services::beacon::core::{
-    create_beacon_via_factory, is_beacon_registered, is_transaction_confirmed,
-    register_beacon_with_registry, update_beacon,
+    is_beacon_registered, is_transaction_confirmed, register_beacon_with_registry, update_beacon,
 };
 
 #[tokio::test]
@@ -45,18 +44,6 @@ async fn test_is_transaction_confirmed_with_mock_state() {
 
     // Should fail deterministically due to mock provider
     let result = is_transaction_confirmed(&app_state, tx_hash).await;
-    assert!(result.is_err());
-}
-
-#[tokio::test]
-#[ignore = "requires WalletManager with Redis"]
-async fn test_create_beacon_via_factory_network_failure() {
-    let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
-    let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
-    let factory_address = Address::from_str("0x0987654321098765432109876543210987654321").unwrap();
-
-    // Should fail deterministically due to mock provider
-    let result = create_beacon_via_factory(&app_state, factory_address).await;
     assert!(result.is_err());
 }
 
@@ -185,36 +172,6 @@ async fn test_update_beacon_various_public_signals() {
         // Should fail deterministically at network level, not due to public signals value
         assert!(result.is_err());
     }
-}
-
-#[tokio::test]
-#[ignore = "requires WalletManager with Redis"]
-async fn test_create_beacon_via_factory_zero_factory() {
-    let app_state = crate::test_utils::create_simple_test_app_state().await;
-    let factory_address = Address::from_str("0x0000000000000000000000000000000000000000").unwrap();
-
-    let result = create_beacon_via_factory(&app_state, factory_address).await;
-    assert!(result.is_err());
-}
-
-#[tokio::test]
-#[ignore = "requires WalletManager with Redis"]
-async fn test_create_beacon_via_factory_nonzero_factory() {
-    let app_state = crate::test_utils::create_simple_test_app_state().await;
-    let factory_address = Address::from_str("0x0987654321098765432109876543210987654321").unwrap();
-
-    let result = create_beacon_via_factory(&app_state, factory_address).await;
-    assert!(result.is_err());
-}
-
-#[tokio::test]
-#[ignore = "requires WalletManager with Redis"]
-async fn test_create_beacon_via_factory_valid_address() {
-    let app_state = crate::test_utils::create_simple_test_app_state().await;
-    let factory_address = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-
-    let result = create_beacon_via_factory(&app_state, factory_address).await;
-    assert!(result.is_err());
 }
 
 #[tokio::test]

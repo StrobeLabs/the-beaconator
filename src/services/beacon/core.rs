@@ -8,24 +8,24 @@ use crate::models::beacon_type::{BeaconTypeConfig, FactoryType};
 use crate::models::requests::BeaconCreationParams;
 use crate::models::responses::CreateBeaconResponse;
 use crate::models::{AppState, UpdateBeaconRequest};
-use crate::routes::{IBeacon, IBeaconFactory, IBeaconRegistry};
-use crate::services::beacon::verifiable::create_verifiable_beacon_with_factory;
-use crate::services::transaction::events::{parse_beacon_created_event, parse_data_updated_event};
+use crate::routes::{IBeacon, IBeaconRegistry};
+use crate::services::beacon::ecdsa_deploy::create_ecdsa_verifier;
+use crate::services::beacon::verifiable::deploy_identity_beacon;
+use crate::services::transaction::events::parse_index_updated_event;
 use crate::services::transaction::execution::is_nonce_error;
 
-/// Create a beacon via the factory contract
+/// Create an IdentityBeacon with an ECDSA verifier.
 ///
 /// This function handles:
 /// - Wallet acquisition from WalletManager
-/// - Transaction execution with error handling
-/// - Transaction confirmation with progressive timeouts
-/// - Event parsing to extract beacon address
+/// - ECDSA verifier creation via factory
+/// - IdentityBeacon deployment via bytecode
 ///
-/// The beacon owner will be set to the acquired wallet's address.
-pub async fn create_beacon_via_factory(
+/// Returns (beacon_address, verifier_address).
+pub async fn create_identity_beacon(
     state: &AppState,
-    factory_address: Address,
-) -> Result<Address, String> {
+    initial_index: u128,
+) -> Result<(Address, Address), String> {
     // Acquire a wallet from the pool
     let wallet_handle = state
         .wallet_manager
@@ -34,210 +34,23 @@ pub async fn create_beacon_via_factory(
         .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
 
     let wallet_address = wallet_handle.address();
-    // The beacon owner will be the wallet that creates it
-    let owner_address = wallet_address;
-
-    tracing::info!(
-        "Creating beacon via factory {} for owner {}",
-        factory_address,
-        owner_address
-    );
     tracing::info!("Acquired wallet {} for beacon creation", wallet_address);
 
-    // Build provider with the acquired wallet
-    let provider = wallet_handle
-        .build_provider(&state.rpc_url)
-        .map_err(|e| format!("Failed to build provider: {e}"))?;
+    // Step 1: Create ECDSA verifier via factory
+    let verifier_address = create_ecdsa_verifier(state, &wallet_handle).await?;
+    tracing::info!("ECDSA verifier created at {}", verifier_address);
 
-    // Create contract instance using the wallet's provider
-    let contract = IBeaconFactory::new(factory_address, &provider);
+    // Step 2: Deploy IdentityBeacon with the verifier
+    let beacon_address =
+        deploy_identity_beacon(state, &wallet_handle, verifier_address, initial_index).await?;
+    tracing::info!("IdentityBeacon deployed at {}", beacon_address);
 
-    // Send the beacon creation transaction
-    tracing::info!("Creating beacon with wallet {}", wallet_address);
-    let pending_tx = match contract.createBeacon(owner_address).send().await {
-        Ok(pending) => Ok(pending),
-        Err(e) => {
-            let error_msg = format!("Failed to send createBeacon transaction: {e}");
-            tracing::error!("{}", error_msg);
-
-            // Check if nonce error
-            if is_nonce_error(&error_msg) {
-                tracing::warn!("Nonce error detected, transaction failed");
-            }
-
-            sentry::capture_message(&error_msg, sentry::Level::Error);
-            Err(error_msg)
-        }
-    }?;
-
-    tracing::info!("Transaction sent, waiting for receipt...");
-
-    // Get the transaction hash before calling get_receipt() (which takes ownership)
-    let tx_hash = *pending_tx.tx_hash();
-    tracing::info!("Transaction hash: {:?}", tx_hash);
-
-    // Use get_receipt() with timeout and fallback to on-chain check
-    let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
-        Ok(Ok(receipt)) => {
-            tracing::info!("Transaction confirmed via get_receipt()");
-            receipt
-        }
-        Ok(Err(e)) => {
-            tracing::warn!("get_receipt() failed: {}", e);
-            tracing::info!("Falling back to on-chain transaction check...");
-
-            tracing::info!("Checking transaction {} on-chain...", tx_hash);
-
-            // Try to get the receipt directly from the read provider with timeout
-            match timeout(
-                Duration::from_secs(30),
-                state.read_provider.get_transaction_receipt(tx_hash),
-            )
-            .await
-            {
-                Ok(Ok(Some(receipt))) => {
-                    tracing::info!("Transaction found on-chain via direct receipt lookup");
-                    receipt
-                }
-                Ok(Ok(None)) => {
-                    let error_msg =
-                        format!("Transaction {tx_hash} not found on-chain after timeout");
-                    tracing::error!("{}", error_msg);
-                    tracing::error!("This could indicate:");
-                    tracing::error!("  - Transaction was dropped/replaced");
-                    tracing::error!("  - Network issues prevented confirmation");
-                    tracing::error!("  - Transaction is still pending");
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
-                    return Err(error_msg);
-                }
-                Ok(Err(e)) => {
-                    let error_msg = format!("Failed to check transaction {tx_hash} on-chain: {e}");
-                    tracing::error!("{}", error_msg);
-                    tracing::error!("Original get_receipt() error: {}", e);
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
-                    return Err(error_msg);
-                }
-                Err(_) => {
-                    let error_msg = format!("Timeout checking transaction {tx_hash} on-chain");
-                    tracing::error!("{}", error_msg);
-                    tracing::error!("Network may be slow or unresponsive");
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
-                    return Err(error_msg);
-                }
-            }
-        }
-        Err(_) => {
-            tracing::warn!(
-                "Initial get_receipt() timed out for beacon transaction, trying extended fallback..."
-            );
-            tracing::info!(
-                "Checking beacon transaction {} on-chain with progressive timeouts...",
-                tx_hash
-            );
-
-            // Extended fallback: retry with progressive timeouts (15s, 30s, 60s) for Base network
-            let mut retry_count = 0;
-            let max_retries = 3;
-            let timeout_seconds = [15u64, 30u64, 60u64]; // Progressive timeout pattern
-
-            loop {
-                retry_count += 1;
-                let current_timeout = timeout_seconds[retry_count - 1];
-                tracing::info!(
-                    "Beacon transaction receipt attempt {}/{} ({}s timeout)",
-                    retry_count,
-                    max_retries,
-                    current_timeout
-                );
-
-                match timeout(
-                    Duration::from_secs(current_timeout),
-                    is_transaction_confirmed(state, tx_hash),
-                )
-                .await
-                {
-                    Ok(Ok(Some(receipt))) => {
-                        tracing::info!(
-                            "Beacon transaction found on-chain via extended fallback (attempt {})",
-                            retry_count
-                        );
-                        break receipt;
-                    }
-                    Ok(Ok(None)) => {
-                        if retry_count >= max_retries {
-                            let error_msg = format!(
-                                "Beacon transaction {tx_hash} not found on-chain after {max_retries} attempts"
-                            );
-                            tracing::error!("{}", error_msg);
-                            tracing::error!("This could indicate:");
-                            tracing::error!("  - Beacon transaction was dropped/replaced");
-                            tracing::error!("  - Network issues prevented confirmation");
-                            tracing::error!("  - Transaction is still pending (check gas price)");
-                            tracing::error!("  - Base network congestion causing delays");
-                            return Err(error_msg);
-                        }
-                        tracing::warn!(
-                            "Beacon transaction not found on attempt {}, retrying...",
-                            retry_count
-                        );
-                        tokio::time::sleep(Duration::from_secs(3)).await; // Brief pause between retries
-                    }
-                    Ok(Err(e)) => {
-                        let error_msg =
-                            format!("Failed to check beacon transaction {tx_hash} on-chain: {e}");
-                        tracing::error!("{}", error_msg);
-                        return Err(error_msg);
-                    }
-                    Err(_) => {
-                        if retry_count >= max_retries {
-                            let error_msg = format!(
-                                "Final timeout waiting for beacon transaction receipt {tx_hash} after {max_retries} attempts"
-                            );
-                            tracing::error!("{}", error_msg);
-                            tracing::error!(
-                                "All fallback methods exhausted for beacon transaction"
-                            );
-                            return Err(error_msg);
-                        }
-                        tracing::warn!("Timeout on attempt {}, retrying...", retry_count);
-                        tokio::time::sleep(Duration::from_secs(3)).await; // Brief pause between retries
-                    }
-                }
-            }
-        }
-    };
-
-    let tx_hash = receipt.transaction_hash;
-    tracing::info!("Transaction confirmed with hash: {:?}", tx_hash);
-
-    tracing::info!(
-        "Beacon creation confirmed in block {:?}",
-        receipt.block_number
+    sentry::capture_message(
+        &format!("IdentityBeacon created: {beacon_address} (verifier: {verifier_address})"),
+        sentry::Level::Info,
     );
 
-    // Validate transaction status before parsing events
-    if receipt.status() {
-        tracing::info!("Beacon creation transaction succeeded (status: true)");
-
-        // Parse the beacon address from the event logs
-        let beacon_address = parse_beacon_created_event(&receipt, factory_address)?;
-
-        tracing::info!("Beacon created at address: {}", beacon_address);
-        sentry::capture_message(
-            &format!("Beacon created via factory: {beacon_address}"),
-            sentry::Level::Info,
-        );
-        Ok(beacon_address)
-    } else {
-        let error_msg = format!(
-            "Beacon creation transaction {tx_hash} reverted (status: false) in block {:?}",
-            receipt.block_number
-        );
-        tracing::error!("{}", error_msg);
-        tracing::error!("Factory: {}, Owner: {}", factory_address, owner_address);
-        sentry::capture_message(&error_msg, sentry::Level::Error);
-        Err(error_msg)
-    }
+    Ok((beacon_address, verifier_address))
 }
 
 /// Check if a transaction is already confirmed on-chain
@@ -285,10 +98,10 @@ pub async fn is_beacon_registered(
         beacon_address
     );
 
-    // Create contract instance and call beacons(address) directly using read provider
+    // Create contract instance and call isBeaconRegistered(address) using read provider
     let contract = IBeaconRegistry::new(registry_address, &*state.read_provider);
 
-    match contract.beacons(beacon_address).call().await {
+    match contract.isBeaconRegistered(beacon_address).call().await {
         Ok(is_registered) => {
             if is_registered {
                 tracing::info!("Beacon {} is already registered", beacon_address);
@@ -580,9 +393,9 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
 
     tracing::info!("Updating beacon {} with proof data", beacon_address);
 
-    // proof and public_signals are already Bytes (from 0x-hex JSON)
+    // proof and inputs are already Bytes (from 0x-hex JSON)
     let proof_bytes = request.proof;
-    let public_signals_bytes = request.public_signals;
+    let inputs_bytes = request.public_signals;
 
     // Acquire a wallet from the pool (prefer wallet designated for this beacon)
     let wallet_handle = state
@@ -605,13 +418,13 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
     // Send the update transaction
     tracing::info!("Updating beacon with wallet {}", wallet_address);
     let pending_tx = match contract
-        .updateData(proof_bytes.clone(), public_signals_bytes.clone())
+        .update(proof_bytes.clone(), inputs_bytes.clone())
         .send()
         .await
     {
         Ok(pending) => Ok(pending),
         Err(e) => {
-            let error_msg = format!("Failed to send updateData transaction: {e}");
+            let error_msg = format!("Failed to send update transaction: {e}");
             tracing::error!("{}", error_msg);
 
             // Check if nonce error
@@ -692,19 +505,19 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
         return Err(error_msg);
     }
 
-    // Parse and validate DataUpdated event was emitted
-    match parse_data_updated_event(&receipt, beacon_address) {
-        Ok(new_data) => {
+    // Parse and validate IndexUpdated event was emitted
+    match parse_index_updated_event(&receipt, beacon_address) {
+        Ok(new_index) => {
             tracing::info!(
-                "Update transaction succeeded - beacon {} updated to data: {}",
+                "Update transaction succeeded - beacon {} updated to index: {}",
                 beacon_address,
-                new_data
+                new_index
             );
             Ok(tx_hash)
         }
         Err(e) => {
             let error_msg = format!(
-                "Transaction succeeded but DataUpdated event not found: {e}. This indicates the update may not have been applied."
+                "Transaction succeeded but IndexUpdated event not found: {e}. This indicates the update may not have been applied."
             );
             tracing::error!("{}", error_msg);
             sentry::capture_message(&error_msg, sentry::Level::Error);
@@ -713,42 +526,21 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
     }
 }
 
-/// Dispatch beacon creation to the correct factory based on FactoryType.
+/// Dispatch beacon creation based on FactoryType.
 ///
-/// For Simple factories, calls create_beacon_via_factory().
-/// For Dichotomous factories, validates required params and calls create_verifiable_beacon_with_factory().
+/// For Identity type, creates an ECDSA verifier + deploys IdentityBeacon.
 pub async fn create_beacon_by_type(
     state: &AppState,
     config: &BeaconTypeConfig,
     params: Option<&BeaconCreationParams>,
-) -> Result<Address, String> {
+) -> Result<(Address, Address), String> {
     match config.factory_type {
-        FactoryType::Simple => create_beacon_via_factory(state, config.factory_address).await,
-        FactoryType::Dichotomous => {
-            let params = params.ok_or(
-                "Dichotomous factory type requires params (verifier_address, initial_data, initial_cardinality)"
-            )?;
-            let verifier_str = params
-                .verifier_address
-                .as_ref()
-                .ok_or("verifier_address is required for Dichotomous factory type")?;
-            let verifier_address = Address::from_str(verifier_str)
-                .map_err(|e| format!("Invalid verifier_address: {e}"))?;
-            let initial_data = params
-                .initial_data
-                .ok_or("initial_data is required for Dichotomous factory type")?;
-            let initial_cardinality = params
-                .initial_cardinality
-                .ok_or("initial_cardinality is required for Dichotomous factory type")?;
+        FactoryType::Identity => {
+            let initial_index = params
+                .and_then(|p| p.initial_index)
+                .unwrap_or(1_000_000_000_000_000_000); // Default 1e18 (WAD)
 
-            create_verifiable_beacon_with_factory(
-                state,
-                config.factory_address,
-                verifier_address,
-                initial_data,
-                initial_cardinality,
-            )
-            .await
+            create_identity_beacon(state, initial_index).await
         }
     }
 }
@@ -759,7 +551,7 @@ pub async fn create_and_register_beacon_by_type(
     config: &BeaconTypeConfig,
     params: Option<&BeaconCreationParams>,
 ) -> Result<CreateBeaconResponse, String> {
-    let beacon_address = create_beacon_by_type(state, config, params).await?;
+    let (beacon_address, _verifier_address) = create_beacon_by_type(state, config, params).await?;
 
     let registered = if let Some(registry_address) = config.registry_address {
         match register_beacon_with_registry(state, beacon_address, registry_address).await {

@@ -7,17 +7,14 @@ use tracing;
 
 use crate::guards::ApiToken;
 use crate::models::{
-    ApiResponse, AppState, BatchCreateBeaconByTypeRequest, BatchCreateBeaconResponse,
-    BatchUpdateBeaconRequest, BatchUpdateBeaconResponse, CreateBeaconByTypeRequest,
-    CreateBeaconResponse, CreateBeaconWithEcdsaRequest, CreateBeaconWithEcdsaResponse,
-    RegisterBeaconRequest, UpdateBeaconRequest, UpdateBeaconWithEcdsaRequest,
+    ApiResponse, AppState, BatchUpdateBeaconRequest, BatchUpdateBeaconResponse,
+    CreateBeaconByTypeRequest, CreateBeaconResponse, CreateBeaconWithEcdsaRequest,
+    CreateBeaconWithEcdsaResponse, RegisterBeaconRequest, UpdateBeaconRequest,
+    UpdateBeaconWithEcdsaRequest,
 };
-use crate::services::beacon::verifiable::create_verifiable_beacon_with_factory;
 use crate::services::beacon::{
-    batch_create_beacons as service_batch_create_beacons,
     batch_update_beacon as service_batch_update_beacon, create_and_register_beacon_by_type,
-    deploy_ecdsa_verifier_adapter, register_beacon_with_registry,
-    update_beacon as service_update_beacon,
+    create_identity_beacon, register_beacon_with_registry, update_beacon as service_update_beacon,
     update_beacon_with_ecdsa as service_update_beacon_with_ecdsa,
 };
 
@@ -104,99 +101,10 @@ pub async fn create_beacon(
     }
 }
 
-/// Batch creates beacons using a registered beacon type.
+/// Creates an IdentityBeacon with an auto-deployed ECDSA verifier.
 ///
-/// Creates the specified number of beacons (1-100) and optionally registers them.
-/// Currently only supports Simple factory types via multicall3.
-#[openapi(tag = "Beacon")]
-#[post("/batch_create_beacon", data = "<request>")]
-pub async fn batch_create_beacon(
-    request: Json<BatchCreateBeaconByTypeRequest>,
-    _token: ApiToken,
-    state: &State<AppState>,
-) -> Result<Json<ApiResponse<BatchCreateBeaconResponse>>, Status> {
-    tracing::info!(
-        "Received request: POST /batch_create_beacon (type={}, count={})",
-        request.beacon_type,
-        request.count
-    );
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
-        scope.set_tag("endpoint", "/batch_create_beacon");
-        scope.set_extra("beacon_type", request.beacon_type.clone().into());
-        scope.set_extra("requested_count", request.count.into());
-    });
-
-    let count = request.count;
-    if count == 0 || count > 100 {
-        tracing::warn!("Invalid beacon count: {}", count);
-        return Err(Status::BadRequest);
-    }
-
-    // Look up beacon type config
-    let config = match state
-        .beacon_type_registry
-        .get_type(&request.beacon_type)
-        .await
-    {
-        Ok(Some(config)) => config,
-        Ok(None) => {
-            return Ok(Json(ApiResponse {
-                success: false,
-                data: None,
-                message: format!("Unknown beacon type: '{}'", request.beacon_type),
-            }));
-        }
-        Err(e) => {
-            tracing::error!("Failed to look up beacon type: {}", e);
-            return Err(Status::InternalServerError);
-        }
-    };
-
-    if !config.enabled {
-        return Ok(Json(ApiResponse {
-            success: false,
-            data: None,
-            message: format!("Beacon type '{}' is disabled", request.beacon_type),
-        }));
-    }
-
-    match service_batch_create_beacons(state.inner(), &config, count).await {
-        Ok(response) => {
-            let created = response.created_count;
-            let failed = response.failed_count;
-
-            let message = if failed == 0 {
-                format!(
-                    "Successfully created all {created} '{}' beacons",
-                    config.slug
-                )
-            } else if created == 0 {
-                "Failed to create any beacons".to_string()
-            } else {
-                format!("Partially successful: {created} created, {failed} failed")
-            };
-
-            tracing::info!("{}", message);
-
-            Ok(Json(ApiResponse {
-                success: created > 0,
-                data: Some(response),
-                message,
-            }))
-        }
-        Err(e) => {
-            tracing::error!("Batch create beacon failed: {}", e);
-            Err(Status::BadRequest)
-        }
-    }
-}
-
-/// Creates a beacon with an auto-deployed ECDSA verifier adapter.
-///
-/// Deploys an ECDSAVerifierAdapter contract with the beaconator's PRIVATE_KEY signer,
-/// then creates a beacon via the Dichotomous factory using the deployed verifier.
-/// Optionally registers the beacon if the type has a registry configured.
+/// Creates an ECDSAVerifier via the factory contract with the beaconator's PRIVATE_KEY signer,
+/// then deploys an IdentityBeacon using the verifier. Optionally registers with the default registry.
 #[openapi(tag = "Beacon")]
 #[post("/create_beacon_with_ecdsa", data = "<request>")]
 pub async fn create_beacon_with_ecdsa(
@@ -205,144 +113,60 @@ pub async fn create_beacon_with_ecdsa(
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<CreateBeaconWithEcdsaResponse>>, Status> {
     tracing::info!(
-        "Received request: POST /create_beacon_with_ecdsa (type={})",
-        request.beacon_type
+        "Received request: POST /create_beacon_with_ecdsa (initial_index={})",
+        request.initial_index
     );
     let _guard = sentry::Hub::current().push_scope();
     sentry::configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_beacon_with_ecdsa");
-        scope.set_extra("beacon_type", request.beacon_type.clone().into());
-        scope.set_extra("initial_data", request.initial_data.to_string().into());
-        scope.set_extra("initial_cardinality", request.initial_cardinality.into());
+        scope.set_extra("initial_index", request.initial_index.to_string().into());
     });
 
-    // Look up beacon type config
-    let config = match state
-        .beacon_type_registry
-        .get_type(&request.beacon_type)
-        .await
-    {
-        Ok(Some(config)) => config,
-        Ok(None) => {
-            return Ok(Json(ApiResponse {
-                success: false,
-                data: None,
-                message: format!("Unknown beacon type: '{}'", request.beacon_type),
-            }));
-        }
-        Err(e) => {
-            tracing::error!("Failed to look up beacon type: {}", e);
-            return Err(Status::InternalServerError);
-        }
-    };
+    // Create IdentityBeacon with ECDSA verifier (handles verifier creation + beacon deployment)
+    let (beacon_address, verifier_address) =
+        match create_identity_beacon(state.inner(), request.initial_index).await {
+            Ok(result) => result,
+            Err(e) => {
+                let error_msg = format!("ECDSA beacon creation failed: {e}");
+                tracing::error!("{}", error_msg);
+                sentry::capture_message(&error_msg, sentry::Level::Error);
+                return Ok(Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: error_msg,
+                }));
+            }
+        };
 
-    if !config.enabled {
-        return Ok(Json(ApiResponse {
-            success: false,
-            data: None,
-            message: format!("Beacon type '{}' is disabled", request.beacon_type),
-        }));
-    }
-
-    // Validate factory type is Dichotomous
-    if config.factory_type != crate::models::beacon_type::FactoryType::Dichotomous {
-        return Ok(Json(ApiResponse {
-            success: false,
-            data: None,
-            message: format!(
-                "Beacon type '{}' uses a Simple factory; ECDSA verifier requires a Dichotomous factory",
-                request.beacon_type
-            ),
-        }));
-    }
-
-    // Acquire wallet from pool (held for entire deploy+create flow)
-    let wallet_handle = match state.wallet_manager.acquire_any_wallet().await {
-        Ok(handle) => handle,
-        Err(e) => {
-            tracing::error!("Failed to acquire wallet: {}", e);
-            sentry::capture_message(
-                &format!("Failed to acquire wallet for ECDSA beacon creation: {e}"),
-                sentry::Level::Error,
-            );
-            return Err(Status::InternalServerError);
-        }
-    };
-
-    tracing::info!(
-        "Acquired wallet {} for ECDSA beacon creation",
-        wallet_handle.address()
-    );
-
-    // Step 1: Deploy ECDSA verifier adapter
-    let verifier_address = match deploy_ecdsa_verifier_adapter(state.inner(), &wallet_handle).await
-    {
-        Ok(addr) => addr,
-        Err(e) => {
-            tracing::error!("Failed to deploy ECDSA verifier adapter: {}", e);
-            sentry::capture_message(
-                &format!("ECDSA verifier deployment failed: {e}"),
-                sentry::Level::Error,
-            );
-            return Err(Status::InternalServerError);
-        }
-    };
-
-    tracing::info!("ECDSA verifier deployed at {}", verifier_address);
-
-    // Release wallet lock before Step 2 so create_verifiable_beacon_with_factory
-    // can acquire a wallet from the pool without contention/deadlock.
-    drop(wallet_handle);
-
-    // Step 2: Create beacon using the deployed verifier
-    let beacon_address = match create_verifiable_beacon_with_factory(
+    // Register with the perpcity registry
+    let registry_address = state.perpcity_registry_address;
+    let registered = match register_beacon_with_registry(
         state.inner(),
-        config.factory_address,
-        verifier_address,
-        request.initial_data,
-        request.initial_cardinality,
+        beacon_address,
+        registry_address,
     )
     .await
     {
-        Ok(addr) => addr,
-        Err(e) => {
-            tracing::error!("Failed to create beacon after verifier deployment: {}", e);
-            sentry::capture_message(
-                &format!("Beacon creation failed after ECDSA verifier deployment: {e}"),
-                sentry::Level::Error,
+        Ok(_) => {
+            tracing::info!(
+                "Beacon {} registered with registry {}",
+                beacon_address,
+                registry_address
             );
-            return Err(Status::InternalServerError);
+            true
         }
-    };
-
-    // Step 3: Optionally register with registry
-    let registered = if let Some(registry_address) = config.registry_address {
-        match register_beacon_with_registry(state.inner(), beacon_address, registry_address).await {
-            Ok(_) => {
-                tracing::info!(
-                    "Beacon {} registered with registry {}",
-                    beacon_address,
-                    registry_address
-                );
-                true
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Beacon {} created but registration failed: {}",
-                    beacon_address,
-                    e
-                );
-                false
-            }
+        Err(e) => {
+            let warn_msg = format!("Beacon {beacon_address} created but registration failed: {e}");
+            tracing::warn!("{}", warn_msg);
+            sentry::capture_message(&warn_msg, sentry::Level::Warning);
+            false
         }
-    } else {
-        false
     };
 
     let response = CreateBeaconWithEcdsaResponse {
         beacon_address: format!("{beacon_address:#x}"),
         verifier_address: format!("{verifier_address:#x}"),
-        beacon_type: config.slug.clone(),
+        beacon_type: "identity".to_string(),
         registered,
     };
 
@@ -355,8 +179,8 @@ pub async fn create_beacon_with_ecdsa(
 
     sentry::capture_message(
         &format!(
-            "ECDSA beacon created: {} with verifier {} (type={})",
-            response.beacon_address, response.verifier_address, config.slug
+            "ECDSA beacon created: {} with verifier {}",
+            response.beacon_address, response.verifier_address
         ),
         sentry::Level::Info,
     );

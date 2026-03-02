@@ -57,15 +57,8 @@ impl ApiEndpoints {
             },
             EndpointInfo {
                 method: "POST".to_string(),
-                path: "/batch_create_beacon".to_string(),
-                description: "Batch create beacons by type slug".to_string(),
-                requires_auth: true,
-                status: EndpointStatus::Working,
-            },
-            EndpointInfo {
-                method: "POST".to_string(),
                 path: "/create_beacon_with_ecdsa".to_string(),
-                description: "Create a beacon with auto-deployed ECDSA verifier".to_string(),
+                description: "Create an IdentityBeacon with auto-deployed ECDSA verifier".to_string(),
                 requires_auth: true,
                 status: EndpointStatus::Working,
             },
@@ -228,22 +221,15 @@ pub struct AppState {
     pub signer: PrivateKeySigner,
 
     // Contract ABIs
-    pub beacon_abi: JsonAbi,
-    pub beacon_factory_abi: JsonAbi,
     pub beacon_registry_abi: JsonAbi,
     pub perp_manager_abi: JsonAbi,
     pub multicall3_abi: JsonAbi,
-    pub dichotomous_beacon_factory_abi: JsonAbi,
-    pub step_beacon_abi: JsonAbi,
-    pub ecdsa_beacon_abi: JsonAbi,
-    pub ecdsa_verifier_adapter_abi: JsonAbi,
 
     // Contract addresses
-    pub beacon_factory_address: Address,
     pub perpcity_registry_address: Address,
     pub perp_manager_address: Address,
     pub usdc_address: Address,
-    pub dichotomous_beacon_factory_address: Option<Address>,
+    pub ecdsa_verifier_factory_address: Address,
 
     // Transfer limits
     pub usdc_transfer_limit: u128,
@@ -256,8 +242,8 @@ pub struct AppState {
     // Beacon type registry (Redis-backed)
     pub beacon_type_registry: Arc<BeaconTypeRegistry>,
 
-    // ECDSA verifier adapter deployment bytecode
-    pub ecdsa_verifier_adapter_bytecode: Bytes,
+    // IdentityBeacon deployment bytecode
+    pub identity_beacon_bytecode: Bytes,
 
     // Perp module addresses
     pub fees_module_address: Address,

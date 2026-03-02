@@ -9,25 +9,16 @@ mod tests {
         use the_beaconator::models::CreateBeaconWithEcdsaRequest;
 
         let request = CreateBeaconWithEcdsaRequest {
-            beacon_type: "verifiable-twap".to_string(),
-            initial_data: 50_u128 << 96, // 50 scaled by 2^96
-            initial_cardinality: 100,
+            initial_index: 50_u128 << 96, // 50 scaled by 2^96
         };
 
         // Test JSON serialization
         let json = serde_json::to_string(&request).unwrap();
-        assert!(json.contains("beacon_type"));
-        assert!(json.contains("initial_data"));
-        assert!(json.contains("initial_cardinality"));
+        assert!(json.contains("initial_index"));
 
         // Test JSON deserialization
         let deserialized: CreateBeaconWithEcdsaRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.beacon_type, request.beacon_type);
-        assert_eq!(deserialized.initial_data, request.initial_data);
-        assert_eq!(
-            deserialized.initial_cardinality,
-            request.initial_cardinality
-        );
+        assert_eq!(deserialized.initial_index, request.initial_index);
     }
 
     #[test]
@@ -36,19 +27,15 @@ mod tests {
 
         // Test valid request
         let valid_request = CreateBeaconWithEcdsaRequest {
-            beacon_type: "verifiable-twap".to_string(),
-            initial_data: 0,        // Minimum value
-            initial_cardinality: 1, // Minimum value
+            initial_index: 0, // Minimum value
         };
 
         let json = serde_json::to_string(&valid_request).unwrap();
         let _: CreateBeaconWithEcdsaRequest = serde_json::from_str(&json).unwrap();
 
-        // Test with maximum initial_data value
+        // Test with maximum initial_index value
         let max_request = CreateBeaconWithEcdsaRequest {
-            beacon_type: "verifiable-twap".to_string(),
-            initial_data: u128::MAX,
-            initial_cardinality: u32::MAX,
+            initial_index: u128::MAX,
         };
 
         let json = serde_json::to_string(&max_request).unwrap();
@@ -74,34 +61,27 @@ mod tests {
         use the_beaconator::models::CreateBeaconByTypeRequest;
 
         let create_json = r#"{
-            "beacon_type": "verifiable-twap",
+            "beacon_type": "identity",
             "params": {
-                "verifier_address": "0x1234567890123456789012345678901234567890",
-                "initial_data": 7922816251426433759354395033600,
-                "initial_cardinality": 100
+                "initial_index": 7922816251426433759354395033600
             }
         }"#;
 
         let request: CreateBeaconByTypeRequest = serde_json::from_str(create_json).unwrap();
-        assert_eq!(request.beacon_type, "verifiable-twap");
+        assert_eq!(request.beacon_type, "identity");
         assert!(request.params.is_some());
         let params = request.params.unwrap();
         assert_eq!(
-            params.verifier_address.unwrap(),
-            "0x1234567890123456789012345678901234567890"
-        );
-        assert_eq!(
-            params.initial_data.unwrap(),
+            params.initial_index.unwrap(),
             7922816251426433759354395033600
         );
-        assert_eq!(params.initial_cardinality.unwrap(), 100);
     }
 
     #[test]
     fn test_ecdsa_request_data_scaling() {
         use the_beaconator::models::CreateBeaconWithEcdsaRequest;
 
-        // Test various initial_data values and their scaling
+        // Test various initial_index values and their scaling
         let test_values = vec![
             (0, 0_u128),           // Zero
             (1, 1_u128 << 96),     // 1 scaled by 2^96
@@ -111,43 +91,39 @@ mod tests {
 
         for (raw_value, expected_scaled) in test_values {
             let request = CreateBeaconWithEcdsaRequest {
-                beacon_type: "verifiable-twap".to_string(),
-                initial_data: expected_scaled,
-                initial_cardinality: 100,
+                initial_index: expected_scaled,
             };
 
             // Verify the scaled value is correctly stored
-            assert_eq!(request.initial_data, expected_scaled);
+            assert_eq!(request.initial_index, expected_scaled);
 
             // Verify we can unscale it back to the original value
-            let unscaled = request.initial_data >> 96;
+            let unscaled = request.initial_index >> 96;
             assert_eq!(unscaled, raw_value);
         }
     }
 
     #[test]
-    fn test_ecdsa_request_cardinality_bounds() {
+    fn test_ecdsa_request_index_bounds() {
         use the_beaconator::models::CreateBeaconWithEcdsaRequest;
 
-        // Test boundary values for initial_cardinality
+        // Test boundary values for initial_index
         let boundary_values = vec![
-            1,        // Minimum practical value
-            100,      // Typical value
-            1000,     // High value
-            u32::MAX, // Maximum possible value
+            0_u128,    // Minimum value
+            1,         // Smallest positive
+            100,       // Typical value
+            u128::MAX, // Maximum possible value
         ];
 
-        for cardinality in boundary_values {
+        for index_value in boundary_values {
             let request = CreateBeaconWithEcdsaRequest {
-                beacon_type: "verifiable-twap".to_string(),
-                initial_data: 50_u128 << 96,
-                initial_cardinality: cardinality,
+                initial_index: index_value,
             };
 
             // Should serialize/deserialize without issues
             let json = serde_json::to_string(&request).unwrap();
             let deserialized: CreateBeaconWithEcdsaRequest = serde_json::from_str(&json).unwrap();
-            assert_eq!(deserialized.initial_cardinality, cardinality);
+            assert_eq!(deserialized.initial_index, index_value);
         }
     }
 
@@ -158,12 +134,12 @@ mod tests {
         use the_beaconator::models::beacon_type::{BeaconTypeConfig, FactoryType};
 
         let config = BeaconTypeConfig {
-            slug: "perpcity".to_string(),
-            name: "PerpCity".to_string(),
-            description: Some("PerpCity beacon factory".to_string()),
+            slug: "identity".to_string(),
+            name: "Identity".to_string(),
+            description: Some("Identity beacon with ECDSA verifier".to_string()),
             factory_address: Address::from_str("0x1234567890123456789012345678901234567890")
                 .unwrap(),
-            factory_type: FactoryType::Simple,
+            factory_type: FactoryType::Identity,
             registry_address: Some(
                 Address::from_str("0x9876543210987654321098765432109876543210").unwrap(),
             ),
@@ -175,8 +151,8 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: BeaconTypeConfig = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(deserialized.slug, "perpcity");
-        assert_eq!(deserialized.factory_type, FactoryType::Simple);
+        assert_eq!(deserialized.slug, "identity");
+        assert_eq!(deserialized.factory_type, FactoryType::Identity);
         assert!(deserialized.enabled);
         assert!(deserialized.registry_address.is_some());
     }

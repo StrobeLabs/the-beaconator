@@ -1,131 +1,47 @@
 use alloy::primitives::{Address, FixedBytes, U256};
 use tracing;
 
-use crate::routes::{IBeacon, IBeaconFactory, IPerpManager};
+use crate::routes::{IBeacon, IPerpManager};
 
-/// Parse the BeaconCreated event from transaction receipt to get beacon address
-///
-/// # Arguments
-/// * `receipt` - The transaction receipt containing event logs
-/// * `factory_address` - The address of the beacon factory contract
-///
-/// # Returns
-/// * `Ok(Address)` - The address of the newly created beacon
-/// * `Err(String)` - Error message if event not found or parsing failed
-pub fn parse_beacon_created_event(
-    receipt: &alloy::rpc::types::TransactionReceipt,
-    factory_address: Address,
-) -> Result<Address, String> {
-    // Look for the BeaconCreated event in the logs
-    for log in receipt.logs().iter() {
-        // Check if this log is from our factory contract
-        if log.address() == factory_address {
-            // Try to decode as BeaconCreated event
-            match log.log_decode::<IBeaconFactory::BeaconCreated>() {
-                Ok(decoded_log) => {
-                    let beacon = decoded_log.inner.data.beacon;
-                    tracing::info!(
-                        "Successfully parsed BeaconCreated event - beacon address: {}",
-                        beacon
-                    );
-                    return Ok(beacon);
-                }
-                Err(_) => {
-                    // Log is from factory but not BeaconCreated event, continue
-                }
-            }
-        }
-    }
-
-    let error_msg = "BeaconCreated event not found in transaction receipt";
-    tracing::error!("{}", error_msg);
-    tracing::error!("Total logs in receipt: {}", receipt.logs().len());
-    sentry::capture_message(error_msg, sentry::Level::Error);
-    Err(error_msg.to_string())
-}
-
-/// Parse the DataUpdated event from transaction receipt
+/// Parse the IndexUpdated event from transaction receipt
 ///
 /// # Arguments
 /// * `receipt` - The transaction receipt containing event logs
 /// * `beacon_address` - The address of the beacon contract
 ///
 /// # Returns
-/// * `Ok(U256)` - The new data value from the DataUpdated event
+/// * `Ok(U256)` - The new index value from the IndexUpdated event
 /// * `Err(String)` - Error message if event not found or parsing failed
-pub fn parse_data_updated_event(
+pub fn parse_index_updated_event(
     receipt: &alloy::rpc::types::TransactionReceipt,
     beacon_address: Address,
 ) -> Result<U256, String> {
-    // Look for the DataUpdated event in the logs
+    // Look for the IndexUpdated event in the logs
     for log in receipt.logs().iter() {
         // Check if this log is from our beacon contract
         if log.address() == beacon_address {
-            // Try to decode as DataUpdated event
-            match log.log_decode::<IBeacon::DataUpdated>() {
+            // Try to decode as IndexUpdated event
+            match log.log_decode::<IBeacon::IndexUpdated>() {
                 Ok(decoded_log) => {
-                    let data = decoded_log.inner.data.data;
-                    tracing::info!("Successfully parsed DataUpdated event - new data: {}", data);
-                    return Ok(data);
+                    let index = decoded_log.inner.data.index;
+                    tracing::info!(
+                        "Successfully parsed IndexUpdated event - new index: {}",
+                        index
+                    );
+                    return Ok(index);
                 }
                 Err(_) => {
-                    // Log is from beacon but not DataUpdated event, continue
+                    // Log is from beacon but not IndexUpdated event, continue
                 }
             }
         }
     }
 
-    let error_msg = "DataUpdated event not found in transaction receipt";
+    let error_msg = "IndexUpdated event not found in transaction receipt";
     tracing::error!("{}", error_msg);
     tracing::error!("Total logs in receipt: {}", receipt.logs().len());
     sentry::capture_message(error_msg, sentry::Level::Error);
     Err(error_msg.to_string())
-}
-
-/// Parse multiple BeaconCreated events from a multicall transaction receipt
-///
-/// # Arguments
-/// * `receipt` - The transaction receipt containing event logs
-/// * `factory_address` - The address of the beacon factory contract
-/// * `expected_count` - The expected number of BeaconCreated events
-///
-/// # Returns
-/// * `Ok(Vec<String>)` - Vector of beacon addresses as strings
-/// * `Err(String)` - Error message if expected count doesn't match or parsing failed
-pub fn parse_beacon_created_events_from_multicall(
-    receipt: &alloy::rpc::types::TransactionReceipt,
-    factory_address: Address,
-    expected_count: u32,
-) -> Result<Vec<String>, String> {
-    let mut beacon_addresses = Vec::new();
-
-    // Look for BeaconCreated events in the logs
-    for log in receipt.logs().iter() {
-        // Check if this log is from our factory contract
-        if log.address() == factory_address {
-            // Try to decode as BeaconCreated event
-            match log.log_decode::<IBeaconFactory::BeaconCreated>() {
-                Ok(decoded_log) => {
-                    let beacon = decoded_log.inner.data.beacon;
-                    beacon_addresses.push(beacon.to_string());
-                    tracing::info!("Parsed BeaconCreated event - beacon address: {}", beacon);
-                }
-                Err(_) => {
-                    // Log is from factory but not BeaconCreated event, continue
-                }
-            }
-        }
-    }
-
-    if beacon_addresses.len() as u32 != expected_count {
-        return Err(format!(
-            "Expected {} BeaconCreated events, but found {}",
-            expected_count,
-            beacon_addresses.len()
-        ));
-    }
-
-    Ok(beacon_addresses)
 }
 
 /// Parse the PerpCreated event from transaction receipt to get perp ID
