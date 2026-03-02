@@ -28,25 +28,23 @@ async fn test_create_identity_beacon_integration() {
     }
 }
 
-/// Test identity beacon creation with edge case values
+/// Test identity beacon creation with boundary values (0, u128::MAX)
 #[tokio::test]
 #[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
-async fn test_create_identity_beacon_edge_cases() {
+async fn test_create_identity_beacon_boundary_values() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
-    // Test with zero initial index
-    let result = create_identity_beacon(&app_state, 0).await;
-    match result {
-        Ok(_) => println!("Zero initial index succeeded"),
-        Err(e) => println!("Zero initial index failed: {e}"),
-    }
-
-    // Test with max value
-    let result = create_identity_beacon(&app_state, u128::MAX).await;
-    match result {
-        Ok(_) => println!("Max initial index succeeded"),
-        Err(e) => println!("Max initial index failed: {e}"),
+    for value in [0u128, u128::MAX] {
+        let result = create_identity_beacon(&app_state, value).await;
+        match result {
+            Ok((beacon, verifier)) => {
+                println!("initial_index={value} succeeded: beacon={beacon}, verifier={verifier}");
+                assert_ne!(beacon, Address::ZERO);
+                assert_ne!(verifier, Address::ZERO);
+            }
+            Err(e) => println!("initial_index={value} failed (may be expected): {e}"),
+        }
     }
 }
 
@@ -85,26 +83,4 @@ async fn test_concurrent_identity_beacon_operations() {
     }
 
     println!("Concurrent identity beacon operations: {success_count} successes");
-}
-
-/// Test identity beacon operations with extreme values
-#[tokio::test]
-#[ignore] // Temporarily disabled - hangs due to real network calls
-#[serial]
-async fn test_identity_beacon_extreme_values() {
-    let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
-
-    // Test with minimum values
-    let min_result = create_identity_beacon(&app_state, 0).await;
-    match min_result {
-        Ok(_) => println!("Minimum values succeeded"),
-        Err(e) => println!("Minimum values failed: {e}"),
-    }
-
-    // Test with maximum values
-    let max_result = create_identity_beacon(&app_state, u128::MAX).await;
-    match max_result {
-        Ok(_) => println!("Maximum values succeeded"),
-        Err(e) => println!("Maximum values failed: {e}"),
-    }
 }

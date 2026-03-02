@@ -174,7 +174,7 @@ pub async fn update_beacon_with_ecdsa(
 
     // 12. Validate transaction status
     if !receipt.status() {
-        let error_msg = format!("UpdateIndex transaction {tx_hash} reverted (status: false)");
+        let error_msg = format!("update() transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
         tracing::error!("Receipt: {:?}", receipt);
         sentry::capture_message(&error_msg, sentry::Level::Error);

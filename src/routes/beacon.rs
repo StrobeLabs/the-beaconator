@@ -127,12 +127,14 @@ pub async fn create_beacon_with_ecdsa(
         match create_identity_beacon(state.inner(), request.initial_index).await {
             Ok(result) => result,
             Err(e) => {
-                tracing::error!("Failed to create ECDSA beacon: {}", e);
-                sentry::capture_message(
-                    &format!("ECDSA beacon creation failed: {e}"),
-                    sentry::Level::Error,
-                );
-                return Err(Status::InternalServerError);
+                let error_msg = format!("ECDSA beacon creation failed: {e}");
+                tracing::error!("{}", error_msg);
+                sentry::capture_message(&error_msg, sentry::Level::Error);
+                return Ok(Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: error_msg,
+                }));
             }
         };
 
@@ -154,11 +156,9 @@ pub async fn create_beacon_with_ecdsa(
             true
         }
         Err(e) => {
-            tracing::warn!(
-                "Beacon {} created but registration failed: {}",
-                beacon_address,
-                e
-            );
+            let warn_msg = format!("Beacon {beacon_address} created but registration failed: {e}");
+            tracing::warn!("{}", warn_msg);
+            sentry::capture_message(&warn_msg, sentry::Level::Warning);
             false
         }
     };
