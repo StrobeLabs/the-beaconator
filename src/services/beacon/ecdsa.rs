@@ -12,16 +12,16 @@ use crate::routes::{IBeacon, IEcdsaVerifier};
 /// Updates a beacon using ECDSA signature from the PRIVATE_KEY wallet.
 ///
 /// This function:
-/// 1. Gets the verifier adapter address from the beacon
-/// 2. Gets the designated signer from the verifier adapter
+/// 1. Gets the verifier address from the beacon via `verifier()`
+/// 2. Gets the designated signer from the ECDSAVerifier via `SIGNER()`
 /// 3. Verifies PRIVATE_KEY signer matches designated signer
 /// 4. Acquires any available wallet from pool for transaction sending
 /// 5. Generates a nonce from the current timestamp
-/// 6. Gets the EIP-712 digest from the verifier
+/// 6. Gets the EIP-712 digest from the verifier via `digest(uint256[], uint256)`
 /// 7. Signs the digest with PRIVATE_KEY signer
 /// 8. Packs the signature as r || s || v (65 bytes)
-/// 9. ABI-encodes the inputs as (measurement, nonce)
-/// 10. Calls beacon.updateIndex(signature, inputs)
+/// 9. ABI-encodes the inputs as (uint256[] measurement, uint256 nonce)
+/// 10. Calls beacon.update(signature, inputs)
 pub async fn update_beacon_with_ecdsa(
     state: &AppState,
     request: UpdateBeaconWithEcdsaRequest,
@@ -66,7 +66,7 @@ pub async fn update_beacon_with_ecdsa(
     if signer_address != designated_signer {
         return Err(format!(
             "PRIVATE_KEY wallet {signer_address} does not match designated signer {designated_signer} for beacon {beacon_address}. \
-             Update PRIVATE_KEY or reconfigure the beacon's verifier adapter."
+             Update PRIVATE_KEY or reconfigure the beacon's verifier."
         ));
     }
 

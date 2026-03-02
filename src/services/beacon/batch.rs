@@ -1,4 +1,4 @@
-use alloy::primitives::Address;
+use alloy::primitives::{Address, keccak256};
 use std::str::FromStr;
 
 use crate::AlloyProvider;
@@ -267,15 +267,29 @@ async fn batch_update_with_multicall3(
                         return results;
                     }
 
-                    // Transaction succeeded - return Ok for all beacons
-                    // With allowFailure: true, individual calls may have failed but
-                    // the overall transaction succeeded. We report success based on
-                    // the transaction confirmation rather than attempting to replay
-                    // the call (which would simulate against current state, not the
-                    // state at execution time).
+                    // Transaction succeeded. With allowFailure=true, individual
+                    // calls may have failed silently. Check receipt logs for each
+                    // beacon's IndexUpdated event to determine per-call success.
+                    let index_updated_topic = keccak256("IndexUpdated(uint256)");
                     let mut results = Vec::new();
-                    for beacon_address in &beacon_addresses {
-                        results.push((beacon_address.clone(), Ok(tx_hash.clone())));
+                    for beacon_addr_str in &beacon_addresses {
+                        let beacon_addr =
+                            Address::from_str(beacon_addr_str).expect("already validated");
+                        let emitted = receipt.inner.logs().iter().any(|log| {
+                            log.address() == beacon_addr
+                                && !log.topics().is_empty()
+                                && log.topics()[0] == index_updated_topic
+                        });
+                        if emitted {
+                            results.push((beacon_addr_str.clone(), Ok(tx_hash.clone())));
+                        } else {
+                            results.push((
+                                beacon_addr_str.clone(),
+                                Err(format!(
+                                    "No IndexUpdated event emitted (call may have reverted in multicall tx {tx_hash})"
+                                )),
+                            ));
+                        }
                     }
 
                     // Add results for invalid addresses
