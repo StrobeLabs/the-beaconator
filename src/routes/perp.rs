@@ -327,41 +327,6 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
             tracing::error!("  - Wallet source: WalletManager pool");
 
-            // Check for the specific unknown error 0xfb8f41b2 and provide detailed analysis
-            if e.contains("0xfb8f41b2") {
-                tracing::error!("Unknown contract error 0xfb8f41b2 detected");
-                tracing::error!("   This error is NOT related to pool initialization");
-                tracing::error!("   Error parameters suggest:");
-                tracing::error!(
-                    "     - Contract: {} (PerpManager)",
-                    state.perp_manager_address
-                );
-                tracing::error!("     - Position/ID: 0 (may indicate new position)");
-                tracing::error!("     - Amount: {} USDC", margin_amount as f64 / 1_000_000.0);
-                tracing::error!("   Possible causes:");
-                tracing::error!("     - Insufficient USDC balance or allowance");
-                tracing::error!("     - Invalid perp configuration or state");
-                tracing::error!("     - Contract access control or validation failure");
-                tracing::error!("     - Custom business logic restriction in PerpManager");
-
-                // Add specific troubleshooting for this error
-                tracing::error!("   Troubleshooting steps:");
-                tracing::error!("     1. Verify USDC balance for wallet from pool");
-                tracing::error!(
-                    "     2. Check USDC allowance for PerpManager: {}",
-                    state.perp_manager_address
-                );
-                tracing::error!(
-                    "     3. Verify perp {} exists and is active",
-                    request.perp_id
-                );
-                tracing::error!(
-                    "     4. Check if margin amount {} USDC is within perp limits",
-                    margin_amount as f64 / 1_000_000.0
-                );
-                tracing::error!("     5. Contact protocol team to identify this custom error");
-            }
-
             // Provide actionable next steps
             tracing::error!("Recommended next steps:");
             if e.contains("execution reverted") {

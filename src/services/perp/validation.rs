@@ -1,22 +1,39 @@
 use alloy::primitives::Address;
 use alloy::providers::Provider;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::ReadOnlyProvider;
 
 /// Contract error decoding utilities for PerpManager errors
+///
+/// All new PerpManager errors are parameterless, making decoding straightforward.
 pub struct ContractErrorDecoder;
 
 impl ContractErrorDecoder {
-    // Known PerpManager error signatures
-    const OPENING_LEVERAGE_OUT_OF_BOUNDS: &'static str = "0x239b350f";
-    const OPENING_MARGIN_OUT_OF_BOUNDS: &'static str = "0xcd4916f9";
-    const INVALID_LIQUIDITY: &'static str = "0x7e05cd27";
-    const LIVE_POSITION_DETAILS: &'static str = "0xd2aa461f";
-    const INVALID_CLOSE: &'static str = "0x2c328f64";
+    // Known PerpManager error selectors (all parameterless)
+    const ZERO_LIQUIDITY: &'static str = "0x10074548";
+    const ZERO_NOTIONAL: &'static str = "0x96bafbfd";
+    const TICKS_OUT_OF_BOUNDS: &'static str = "0xd6acf910";
+    const INVALID_MARGIN: &'static str = "0x3a29e65e";
+    const INVALID_MARGIN_DELTA: &'static str = "0x8acc6d7f";
+    const INVALID_CALLER: &'static str = "0x48f5c3ed";
+    const POSITION_LOCKED: &'static str = "0xc7d26d72";
+    const ZERO_DELTA: &'static str = "0x6f0f5899";
+    const INVALID_MARGIN_RATIO: &'static str = "0xbcffc83f";
+    const FEES_NOT_REGISTERED: &'static str = "0x2872ed04";
+    const MARGIN_RATIOS_NOT_REGISTERED: &'static str = "0x3eea589d";
+    const LOCKUP_PERIOD_NOT_REGISTERED: &'static str = "0xd9f0aeaf";
+    const SQRT_PRICE_IMPACT_LIMIT_NOT_REGISTERED: &'static str = "0x5140209c";
+    const FEE_TOO_LARGE: &'static str = "0xfc5bee12";
+    const MAKER_NOT_ALLOWED: &'static str = "0xc3f6bb4e";
+    const BEACON_NOT_REGISTERED: &'static str = "0x7884e2a9";
+    const PERP_DOES_NOT_EXIST: &'static str = "0x232ad152";
+    const STARTING_SQRT_PRICE_TOO_LOW: &'static str = "0x1d8648bc";
+    const STARTING_SQRT_PRICE_TOO_HIGH: &'static str = "0x0947cb52";
+    const COULD_NOT_FULLY_FILL: &'static str = "0x67cf2eaa";
+
+    // Solady SafeCast error (still relevant, has parameters)
     const SAFECAST_OVERFLOW: &'static str = "0x24775e06";
-    const UNKNOWN_CUSTOM_ERROR: &'static str = "0xfb8f41b2";
 
     pub fn decode_error_data(error_data: &str) -> Option<String> {
         if error_data.len() < 10 {
@@ -27,102 +44,29 @@ impl ContractErrorDecoder {
         let params_data = &error_data[10..];
 
         match selector {
-            Self::OPENING_LEVERAGE_OUT_OF_BOUNDS => {
-                Self::decode_opening_leverage_out_of_bounds(params_data)
-            }
-            Self::OPENING_MARGIN_OUT_OF_BOUNDS => {
-                Self::decode_opening_margin_out_of_bounds(params_data)
-            }
-            Self::INVALID_LIQUIDITY => Self::decode_invalid_liquidity(params_data),
-            Self::LIVE_POSITION_DETAILS => Self::decode_live_position_details(params_data),
-            Self::INVALID_CLOSE => Self::decode_invalid_close(params_data),
+            Self::ZERO_LIQUIDITY => Some("ZeroLiquidity: liquidity must be greater than zero".to_string()),
+            Self::ZERO_NOTIONAL => Some("ZeroNotional: notional value must be greater than zero".to_string()),
+            Self::TICKS_OUT_OF_BOUNDS => Some("TicksOutOfBounds: tick range is outside valid bounds".to_string()),
+            Self::INVALID_MARGIN => Some("InvalidMargin: margin amount is invalid".to_string()),
+            Self::INVALID_MARGIN_DELTA => Some("InvalidMarginDelta: margin delta is invalid".to_string()),
+            Self::INVALID_CALLER => Some("InvalidCaller: caller is not authorized".to_string()),
+            Self::POSITION_LOCKED => Some("PositionLocked: position is still within lockup period".to_string()),
+            Self::ZERO_DELTA => Some("ZeroDelta: delta must be non-zero".to_string()),
+            Self::INVALID_MARGIN_RATIO => Some("InvalidMarginRatio: margin ratio is invalid".to_string()),
+            Self::FEES_NOT_REGISTERED => Some("FeesNotRegistered: fees module is not registered with PerpManager".to_string()),
+            Self::MARGIN_RATIOS_NOT_REGISTERED => Some("MarginRatiosNotRegistered: margin ratios module is not registered with PerpManager".to_string()),
+            Self::LOCKUP_PERIOD_NOT_REGISTERED => Some("LockupPeriodNotRegistered: lockup period module is not registered with PerpManager".to_string()),
+            Self::SQRT_PRICE_IMPACT_LIMIT_NOT_REGISTERED => Some("SqrtPriceImpactLimitNotRegistered: sqrt price impact limit module is not registered with PerpManager".to_string()),
+            Self::FEE_TOO_LARGE => Some("FeeTooLarge: fee exceeds maximum allowed value".to_string()),
+            Self::MAKER_NOT_ALLOWED => Some("MakerNotAllowed: maker positions are not allowed for this perp".to_string()),
+            Self::BEACON_NOT_REGISTERED => Some("BeaconNotRegistered: beacon is not registered with the registry".to_string()),
+            Self::PERP_DOES_NOT_EXIST => Some("PerpDoesNotExist: the specified perp ID does not exist".to_string()),
+            Self::STARTING_SQRT_PRICE_TOO_LOW => Some("StartingSqrtPriceTooLow: starting sqrt price is below minimum".to_string()),
+            Self::STARTING_SQRT_PRICE_TOO_HIGH => Some("StartingSqrtPriceTooHigh: starting sqrt price exceeds maximum".to_string()),
+            Self::COULD_NOT_FULLY_FILL => Some("CouldNotFullyFill: order could not be fully filled".to_string()),
             Self::SAFECAST_OVERFLOW => Self::decode_safecast_overflow(params_data),
-            Self::UNKNOWN_CUSTOM_ERROR => Self::decode_unknown_custom_error(params_data),
             _ => Some(format!("Unknown contract error: {selector}")),
         }
-    }
-
-    fn decode_opening_leverage_out_of_bounds(params_data: &str) -> Option<String> {
-        if params_data.len() < 192 {
-            // 3 * 64 hex chars
-            return None;
-        }
-
-        // Parse the three uint parameters
-        let leverage_x96_hex = &params_data[0..64];
-        let min_leverage_x96_hex = &params_data[64..128];
-        let max_leverage_x96_hex = &params_data[128..192];
-
-        let leverage_x96 = u128::from_str_radix(leverage_x96_hex, 16).ok()?;
-        let min_leverage_x96 = u128::from_str_radix(min_leverage_x96_hex, 16).ok()?;
-        let max_leverage_x96 = u128::from_str_radix(max_leverage_x96_hex, 16).ok()?;
-
-        // Convert X96 values to human readable
-        let x96_factor = 2_u128.pow(96);
-        let leverage = leverage_x96 as f64 / x96_factor as f64;
-        let min_leverage = min_leverage_x96 as f64 / x96_factor as f64;
-        let max_leverage = max_leverage_x96 as f64 / x96_factor as f64;
-
-        Some(format!(
-            "OpeningLeverageOutOfBounds: attempted {leverage:.2}x leverage, but must be between {min_leverage:.2}x and {max_leverage:.2}x"
-        ))
-    }
-
-    fn decode_opening_margin_out_of_bounds(params_data: &str) -> Option<String> {
-        if params_data.len() < 192 {
-            // 3 * 64 hex chars
-            return None;
-        }
-
-        let margin_hex = &params_data[0..64];
-        let min_margin_hex = &params_data[64..128];
-        let max_margin_hex = &params_data[128..192];
-
-        let margin = u128::from_str_radix(margin_hex, 16).ok()?;
-        let min_margin = u128::from_str_radix(min_margin_hex, 16).ok()?;
-        let max_margin = u128::from_str_radix(max_margin_hex, 16).ok()?;
-
-        // Convert to USDC (6 decimals)
-        let margin_usdc = margin as f64 / 1_000_000.0;
-        let min_margin_usdc = min_margin as f64 / 1_000_000.0;
-        let max_margin_usdc = max_margin as f64 / 1_000_000.0;
-
-        Some(format!(
-            "OpeningMarginOutOfBounds: attempted {margin_usdc:.2} USDC margin, but must be between {min_margin_usdc:.2} and {max_margin_usdc:.2} USDC"
-        ))
-    }
-
-    fn decode_invalid_liquidity(params_data: &str) -> Option<String> {
-        if params_data.len() < 64 {
-            return None;
-        }
-
-        let liquidity_hex = &params_data[0..64];
-        let liquidity = u128::from_str_radix(liquidity_hex, 16).ok()?;
-
-        Some(format!(
-            "InvalidLiquidity: liquidity amount {liquidity} is invalid (must be > 0)"
-        ))
-    }
-
-    fn decode_live_position_details(params_data: &str) -> Option<String> {
-        if params_data.len() < 256 {
-            // 4 * 64 hex chars
-            return None;
-        }
-
-        // LivePositionDetails(int256 pnl, int256 funding, int256 effectiveMargin, bool isLiquidatable)
-        Some("LivePositionDetails: Position details provided for liquidation analysis".to_string())
-    }
-
-    fn decode_invalid_close(params_data: &str) -> Option<String> {
-        if params_data.len() < 192 {
-            // 3 * 64 hex chars (2 addresses + bool)
-            return None;
-        }
-
-        // InvalidClose(address caller, address holder, bool isLiquidated)
-        Some("InvalidClose: Invalid attempt to close position".to_string())
     }
 
     fn decode_safecast_overflow(params_data: &str) -> Option<String> {
@@ -136,38 +80,6 @@ impl ContractErrorDecoder {
         Some(format!(
             "SafeCastOverflowedUintToInt: value {value} overflows when casting to int"
         ))
-    }
-
-    fn decode_unknown_custom_error(params_data: &str) -> Option<String> {
-        // Try to decode parameters if present
-        if params_data.len() >= 128 {
-            // Two parameters: address and uint256
-            let pool_id_hex = &params_data[0..64];
-            let param2_hex = &params_data[64..128];
-
-            if let Ok(pool_address) = Address::from_str(&format!("0x{}", &pool_id_hex[24..])) {
-                let param2_value = u128::from_str_radix(param2_hex, 16).unwrap_or(0);
-                Some(format!(
-                    "Unknown contract error (0xfb8f41b2) - pool: {pool_address}, value: {param2_value}. This error signature is not recognized in the PerpManager contract."
-                ))
-            } else {
-                Some("Unknown contract error (0xfb8f41b2) with parameters. Check contract logs for details.".to_string())
-            }
-        } else if params_data.len() >= 64 {
-            // Single address parameter
-            let pool_id_hex = &params_data[0..64];
-            if let Ok(pool_address) = Address::from_str(&format!("0x{}", &pool_id_hex[24..])) {
-                Some(format!(
-                    "Unknown contract error (0xfb8f41b2) with pool address: {pool_address}. Check contract logs for details."
-                ))
-            } else {
-                Some("Unknown contract error (0xfb8f41b2) with parameters. Check contract logs for details.".to_string())
-            }
-        } else {
-            Some(
-                "Unknown contract error (0xfb8f41b2). Check contract logs for details.".to_string(),
-            )
-        }
     }
 }
 
@@ -218,8 +130,8 @@ pub fn try_decode_revert_reason(error: &impl std::fmt::Display) -> Option<String
             .count()
             + 2;
 
-        if hex_end > 10 {
-            // At least selector + some data
+        if hex_end >= 10 {
+            // At least a full selector (parameterless errors are exactly 10 chars)
             let error_data = &data_part[..hex_end];
             if let Some(decoded) = ContractErrorDecoder::decode_error_data(error_data) {
                 return Some(decoded);
