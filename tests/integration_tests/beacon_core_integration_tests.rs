@@ -1,37 +1,34 @@
 use alloy::primitives::{Address, B256};
 use serial_test::serial;
 use std::str::FromStr;
-use std::time::Duration;
-use tokio::time::timeout;
 
 use the_beaconator::models::UpdateBeaconRequest;
 use the_beaconator::services::beacon::core::{
-    create_beacon_via_factory, is_beacon_registered, is_transaction_confirmed,
+    create_identity_beacon, is_beacon_registered, is_transaction_confirmed,
     register_beacon_with_registry, update_beacon,
 };
 
-/// Test beacon creation via factory with Anvil
+/// Test identity beacon creation with Anvil
 #[tokio::test]
 #[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
-async fn test_create_beacon_via_factory_with_anvil() {
+async fn test_create_identity_beacon_with_anvil() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
-    let factory_address = app_state.beacon_factory_address;
-
-    // Create beacon via factory - this should execute actual contract calls
-    let result = create_beacon_via_factory(&app_state, factory_address).await;
+    // Create identity beacon - this should execute actual contract calls
+    let result = create_identity_beacon(&app_state, 12345).await;
 
     // In integration test, this should succeed with real contract deployment
     assert!(
         result.is_ok(),
-        "Factory beacon creation should succeed: {result:?}"
+        "Identity beacon creation should succeed: {result:?}"
     );
 
-    if let Ok(beacon_address) = result {
-        // Verify the beacon address is valid
+    if let Ok((beacon_address, verifier_address)) = result {
+        // Verify the addresses are valid
         assert_ne!(beacon_address, Address::ZERO);
-        println!("Created beacon at address: {beacon_address}");
+        assert_ne!(verifier_address, Address::ZERO);
+        println!("Created beacon at address: {beacon_address}, verifier: {verifier_address}");
 
         // Test that we can verify the beacon was created
         let is_registered = is_beacon_registered(
@@ -52,12 +49,10 @@ async fn test_register_beacon_with_registry_integration() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
     // First create a beacon
-    let factory_address = app_state.beacon_factory_address;
-
-    let beacon_result = create_beacon_via_factory(&app_state, factory_address).await;
+    let beacon_result = create_identity_beacon(&app_state, 12345).await;
     assert!(beacon_result.is_ok(), "Beacon creation should succeed");
 
-    let beacon_address = beacon_result.unwrap();
+    let (beacon_address, _verifier_address) = beacon_result.unwrap();
     let registry_address = app_state.perpcity_registry_address;
 
     // Register the beacon with registry
@@ -86,12 +81,10 @@ async fn test_update_beacon_integration() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
     // Create a beacon first
-    let factory_address = app_state.beacon_factory_address;
-
-    let beacon_result = create_beacon_via_factory(&app_state, factory_address).await;
+    let beacon_result = create_identity_beacon(&app_state, 12345).await;
     assert!(beacon_result.is_ok(), "Beacon creation should succeed");
 
-    let beacon_address = beacon_result.unwrap();
+    let (beacon_address, _verifier_address) = beacon_result.unwrap();
 
     // Create update request
     let update_request = UpdateBeaconRequest {
@@ -123,12 +116,6 @@ async fn test_update_beacon_integration() {
 #[serial]
 async fn test_transaction_confirmation_integration() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
-
-    // Create a beacon to get a real transaction hash
-    let factory_address = app_state.beacon_factory_address;
-
-    let beacon_result = create_beacon_via_factory(&app_state, factory_address).await;
-    assert!(beacon_result.is_ok(), "Beacon creation should succeed");
 
     // For this test, we'll use a known invalid transaction hash
     let invalid_tx_hash =
@@ -192,21 +179,19 @@ async fn test_beacon_registration_check_integration() {
 async fn test_multiple_beacon_creation_sequence() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
-    let factory_address = app_state.beacon_factory_address;
-
     let mut beacon_addresses = Vec::new();
 
     // Create multiple beacons
-    for i in 0..3 {
+    for i in 0..3u128 {
         println!("Creating beacon {i}");
 
-        let beacon_result = create_beacon_via_factory(&app_state, factory_address).await;
+        let beacon_result = create_identity_beacon(&app_state, 1000 + i).await;
         assert!(
             beacon_result.is_ok(),
             "Beacon {i} creation should succeed: {beacon_result:?}"
         );
 
-        let beacon_address = beacon_result.unwrap();
+        let (beacon_address, _verifier_address) = beacon_result.unwrap();
         assert_ne!(
             beacon_address,
             Address::ZERO,
@@ -237,13 +222,6 @@ async fn test_multiple_beacon_creation_sequence() {
 async fn test_beacon_operations_error_handling() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
-    // Test with zero addresses
-    let zero_address = Address::ZERO;
-
-    // Test with zero factory address
-    let result = create_beacon_via_factory(&app_state, zero_address).await;
-    assert!(result.is_err(), "Zero factory address should fail");
-
     // Test invalid update request
     let invalid_update = UpdateBeaconRequest {
         beacon_address: "invalid_address".to_string(),
@@ -270,14 +248,15 @@ async fn test_beacon_operations_error_handling() {
 #[ignore] // Temporarily disabled - hangs due to real network calls
 #[serial]
 async fn test_beacon_operation_timeouts() {
-    let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
+    use std::time::Duration;
+    use tokio::time::timeout;
 
-    let factory_address = app_state.beacon_factory_address;
+    let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
     // Test beacon creation with timeout
     let result = timeout(
         Duration::from_secs(30),
-        create_beacon_via_factory(&app_state, factory_address),
+        create_identity_beacon(&app_state, 12345),
     )
     .await;
 
@@ -300,16 +279,14 @@ async fn test_beacon_operation_timeouts() {
 async fn test_concurrent_beacon_operations() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
-    let factory_address = app_state.beacon_factory_address;
-
     // Create multiple beacons concurrently
     let mut handles = Vec::new();
 
-    for i in 0..3 {
+    for i in 0..3u128 {
         let app_state_clone = app_state.clone();
         let handle = tokio::spawn(async move {
             println!("Starting concurrent beacon creation {i}");
-            let result = create_beacon_via_factory(&app_state_clone, factory_address).await;
+            let result = create_identity_beacon(&app_state_clone, 1000 + i).await;
             (i, result)
         });
         handles.push(handle);
@@ -321,7 +298,7 @@ async fn test_concurrent_beacon_operations() {
         let (i, result) = handle.await.unwrap();
         println!("Concurrent beacon {i} result: {result:?}");
 
-        if let Ok(beacon_address) = result {
+        if let Ok((beacon_address, _verifier_address)) = result {
             assert_ne!(beacon_address, Address::ZERO);
             beacon_addresses.push(beacon_address);
         }

@@ -101,23 +101,11 @@ pub async fn create_rocket() -> Rocket<Build> {
         .expect("BEACONATOR_ACCESS_TOKEN environment variable not set");
 
     // Load ABIs from files
-    let beacon_abi = load_abi("Beacon");
-    let beacon_factory_abi = load_abi("BeaconFactory");
     let beacon_registry_abi = load_abi("BeaconRegistry");
     let perp_manager_abi = load_abi("PerpManager");
     let multicall3_abi = load_abi("Multicall3");
-    let dichotomous_beacon_factory_abi = load_abi("DichotomousBeaconFactory");
-    let step_beacon_abi = load_abi("StepBeacon");
-    let ecdsa_beacon_abi = load_abi("EcdsaBeacon");
-    let ecdsa_verifier_adapter_abi = load_abi("ECDSAVerifierAdapter");
 
     // Load contract addresses
-    let beacon_factory_address = Address::from_str(
-        &env::var("BEACON_FACTORY_ADDRESS")
-            .expect("BEACON_FACTORY_ADDRESS environment variable not set"),
-    )
-    .expect("Failed to parse beacon factory address");
-
     let perpcity_registry_address = Address::from_str(
         &env::var("PERPCITY_REGISTRY_ADDRESS")
             .expect("PERPCITY_REGISTRY_ADDRESS environment variable not set"),
@@ -146,28 +134,17 @@ pub async fn create_rocket() -> Rocket<Build> {
         tracing::warn!("MULTICALL3_ADDRESS not set - batch operations will be disabled");
     }
 
-    // Load dichotomous beacon factory address from environment
-    let dichotomous_beacon_factory_address = env::var("DICHOTOMOUS_BEACON_FACTORY_ADDRESS")
-        .ok()
-        .and_then(|addr_str| {
-            Address::from_str(&addr_str)
-                .inspect_err(|e| {
-                    tracing::warn!(
-                        "Failed to parse DICHOTOMOUS_BEACON_FACTORY_ADDRESS '{}': {}",
-                        addr_str,
-                        e
-                    );
-                })
-                .ok()
-        });
+    // Load ECDSA verifier factory address
+    let ecdsa_verifier_factory_address = Address::from_str(
+        &env::var("ECDSA_VERIFIER_FACTORY_ADDRESS")
+            .expect("ECDSA_VERIFIER_FACTORY_ADDRESS environment variable not set"),
+    )
+    .expect("Failed to parse ECDSA verifier factory address");
 
-    if let Some(addr) = dichotomous_beacon_factory_address {
-        tracing::info!("Dichotomous beacon factory address loaded: {:?}", addr);
-    } else {
-        tracing::info!(
-            "DICHOTOMOUS_BEACON_FACTORY_ADDRESS not set - verifiable beacon route will be disabled"
-        );
-    }
+    tracing::info!(
+        "ECDSA verifier factory address: {:?}",
+        ecdsa_verifier_factory_address
+    );
 
     let usdc_transfer_limit = env::var("USDC_TRANSFER_LIMIT")
         .unwrap_or_else(|_| "1000000000".to_string()) // Default 1000 USDC
@@ -351,21 +328,21 @@ pub async fn create_rocket() -> Rocket<Build> {
     let admin_token = env::var("BEACONATOR_ADMIN_TOKEN")
         .expect("BEACONATOR_ADMIN_TOKEN environment variable not set");
 
-    // Load ECDSA verifier adapter bytecode for on-chain deployment
-    let ecdsa_verifier_adapter_bytecode = {
-        let bytecode_hex = std::fs::read_to_string("abis/ECDSAVerifierAdapter.bytecode")
-            .expect("Failed to read abis/ECDSAVerifierAdapter.bytecode");
+    // Load IdentityBeacon bytecode for on-chain deployment
+    let identity_beacon_bytecode = {
+        let bytecode_hex = std::fs::read_to_string("abis/IdentityBeacon.bytecode")
+            .expect("Failed to read abis/IdentityBeacon.bytecode");
         let bytecode_hex = bytecode_hex
             .trim()
             .strip_prefix("0x")
             .unwrap_or(bytecode_hex.trim());
         let bytes =
-            hex::decode(bytecode_hex).expect("Failed to decode ECDSAVerifierAdapter bytecode hex");
+            hex::decode(bytecode_hex).expect("Failed to decode IdentityBeacon bytecode hex");
         Bytes::from(bytes)
     };
     tracing::info!(
-        "Loaded ECDSAVerifierAdapter bytecode ({} bytes)",
-        ecdsa_verifier_adapter_bytecode.len()
+        "Loaded IdentityBeacon bytecode ({} bytes)",
+        identity_beacon_bytecode.len()
     );
 
     // Initialize BeaconTypeRegistry (Redis-backed)
@@ -381,31 +358,20 @@ pub async fn create_rocket() -> Rocket<Build> {
         .unwrap()
         .as_secs();
 
-    let mut seed_configs = vec![BeaconTypeConfig {
-        slug: "perpcity".to_string(),
-        name: "PerpCity Beacon".to_string(),
-        description: Some("Simple beacon for PerpCity perpetuals".to_string()),
-        factory_address: beacon_factory_address,
-        factory_type: FactoryType::Simple,
+    let seed_configs = vec![BeaconTypeConfig {
+        slug: "identity".to_string(),
+        name: "Identity Beacon".to_string(),
+        description: Some(
+            "ECDSA-verified identity beacon that directly stores signed data as its index"
+                .to_string(),
+        ),
+        factory_address: ecdsa_verifier_factory_address,
+        factory_type: FactoryType::Identity,
         registry_address: Some(perpcity_registry_address),
         enabled: true,
         created_at: now_ts,
         updated_at: now_ts,
     }];
-
-    if let Some(dich_addr) = dichotomous_beacon_factory_address {
-        seed_configs.push(BeaconTypeConfig {
-            slug: "verifiable-twap".to_string(),
-            name: "Verifiable TWAP Beacon".to_string(),
-            description: Some("Dichotomous beacon with verification and TWAP support".to_string()),
-            factory_address: dich_addr,
-            factory_type: FactoryType::Dichotomous,
-            registry_address: None,
-            enabled: true,
-            created_at: now_ts,
-            updated_at: now_ts,
-        });
-    }
 
     match beacon_type_registry.seed_defaults(&seed_configs).await {
         Ok(result) => {
@@ -449,22 +415,15 @@ pub async fn create_rocket() -> Rocket<Build> {
         signer,
 
         // ABIs
-        beacon_abi,
-        beacon_factory_abi,
         beacon_registry_abi,
         perp_manager_abi,
         multicall3_abi,
-        dichotomous_beacon_factory_abi,
-        step_beacon_abi,
-        ecdsa_beacon_abi,
-        ecdsa_verifier_adapter_abi,
 
         // Addresses
-        beacon_factory_address,
         perpcity_registry_address,
         perp_manager_address,
         usdc_address,
-        dichotomous_beacon_factory_address,
+        ecdsa_verifier_factory_address,
 
         // Limits
         usdc_transfer_limit,
@@ -477,8 +436,8 @@ pub async fn create_rocket() -> Rocket<Build> {
         // Beacon type registry
         beacon_type_registry: std::sync::Arc::new(beacon_type_registry),
 
-        // ECDSA verifier bytecode
-        ecdsa_verifier_adapter_bytecode,
+        // IdentityBeacon bytecode
+        identity_beacon_bytecode,
 
         // Perp modules
         fees_module_address,
@@ -498,7 +457,6 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::info::index,
         routes::info::all_beacons,
         routes::beacon::create_beacon,
-        routes::beacon::batch_create_beacon,
         routes::beacon::create_beacon_with_ecdsa,
         routes::beacon::register_beacon,
         routes::beacon::update_beacon,

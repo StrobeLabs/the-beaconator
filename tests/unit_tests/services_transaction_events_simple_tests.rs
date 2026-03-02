@@ -1,7 +1,6 @@
 use alloy::primitives::{Address, FixedBytes, U256};
 use the_beaconator::services::transaction::events::{
-    parse_beacon_created_event, parse_beacon_created_events_from_multicall,
-    parse_data_updated_event, parse_maker_position_opened_event, parse_perp_created_event,
+    parse_index_updated_event, parse_maker_position_opened_event, parse_perp_created_event,
 };
 
 #[test]
@@ -12,10 +11,7 @@ fn test_event_parsing_function_signatures() {
     let perp_id = FixedBytes::<32>::from([1u8; 32]);
 
     // These calls test the function signatures compile correctly
-    let _: Result<Address, String> = parse_beacon_created_event(&receipt, address);
-    let _: Result<U256, String> = parse_data_updated_event(&receipt, address);
-    let _: Result<Vec<String>, String> =
-        parse_beacon_created_events_from_multicall(&receipt, address, 1);
+    let _: Result<U256, String> = parse_index_updated_event(&receipt, address);
     let _: Result<FixedBytes<32>, String> = parse_perp_created_event(&receipt, address);
     let _: Result<U256, String> = parse_maker_position_opened_event(&receipt, address, perp_id);
 }
@@ -26,17 +22,9 @@ fn test_event_parsing_with_empty_receipt() {
     let address = Address::from([1u8; 20]);
 
     // All event parsing functions should fail with empty receipts
-    let result = parse_beacon_created_event(&receipt, address);
+    let result = parse_index_updated_event(&receipt, address);
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .contains("BeaconCreated event not found")
-    );
-
-    let result = parse_data_updated_event(&receipt, address);
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("DataUpdated event not found"));
+    assert!(result.unwrap_err().contains("IndexUpdated event not found"));
 
     let result = parse_perp_created_event(&receipt, address);
     assert!(result.is_err());
@@ -49,27 +37,6 @@ fn test_event_parsing_with_empty_receipt() {
         result
             .unwrap_err()
             .contains("PositionOpened event (maker) not found")
-    );
-}
-
-#[test]
-fn test_multicall_beacon_events_parsing() {
-    let receipt = create_simple_mock_receipt();
-    let address = Address::from([1u8; 20]);
-
-    // Test with zero expected count
-    let result = parse_beacon_created_events_from_multicall(&receipt, address, 0);
-    assert!(result.is_ok());
-    let events = result.unwrap();
-    assert!(events.is_empty());
-
-    // Test with non-zero expected count - should fail because expected 5 but found 0
-    let result = parse_beacon_created_events_from_multicall(&receipt, address, 5);
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .contains("Expected 5 BeaconCreated events")
     );
 }
 
@@ -87,8 +54,7 @@ fn test_address_patterns_in_event_parsing() {
 
     for address in addresses {
         // Should consistently return "not found" errors for empty receipts
-        assert!(parse_beacon_created_event(&receipt, address).is_err());
-        assert!(parse_data_updated_event(&receipt, address).is_err());
+        assert!(parse_index_updated_event(&receipt, address).is_err());
         assert!(parse_perp_created_event(&receipt, address).is_err());
         assert!(
             parse_maker_position_opened_event(&receipt, address, FixedBytes::<32>::from([0u8; 32]))
@@ -127,17 +93,11 @@ fn test_error_message_content() {
     let address = Address::from([1u8; 20]);
 
     // Test that error messages are descriptive
-    let beacon_result = parse_beacon_created_event(&receipt, address);
-    assert!(beacon_result.is_err());
-    let beacon_error = beacon_result.unwrap_err();
-    assert!(beacon_error.contains("BeaconCreated"));
-    assert!(beacon_error.contains("not found"));
-
-    let data_result = parse_data_updated_event(&receipt, address);
-    assert!(data_result.is_err());
-    let data_error = data_result.unwrap_err();
-    assert!(data_error.contains("DataUpdated"));
-    assert!(data_error.contains("not found"));
+    let index_result = parse_index_updated_event(&receipt, address);
+    assert!(index_result.is_err());
+    let index_error = index_result.unwrap_err();
+    assert!(index_error.contains("IndexUpdated"));
+    assert!(index_error.contains("not found"));
 
     let perp_result = parse_perp_created_event(&receipt, address);
     assert!(perp_result.is_err());
@@ -193,8 +153,7 @@ fn test_event_parsing_address_mismatch_still_not_found() {
     let non_emitting_beacon = Address::from([8u8; 20]);
     let perp_id = FixedBytes::<32>::from([7u8; 32]);
 
-    assert!(parse_beacon_created_event(&receipt, non_emitting_factory).is_err());
-    assert!(parse_data_updated_event(&receipt, non_emitting_beacon).is_err());
+    assert!(parse_index_updated_event(&receipt, non_emitting_beacon).is_err());
     assert!(parse_perp_created_event(&receipt, non_emitting_factory).is_err());
     assert!(parse_maker_position_opened_event(&receipt, non_emitting_factory, perp_id).is_err());
 }

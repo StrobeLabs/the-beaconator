@@ -6,14 +6,12 @@ use rocket::serde::json::Json;
 use std::str::FromStr;
 use the_beaconator::guards::ApiToken;
 use the_beaconator::models::{
-    BatchCreateBeaconResponse, BatchUpdateBeaconRequest, BeaconUpdateData,
-    CreateBeaconByTypeRequest, CreateBeaconResponse,
+    BatchUpdateBeaconRequest, BeaconUpdateData, CreateBeaconByTypeRequest, CreateBeaconResponse,
 };
 use the_beaconator::routes::IMulticall3;
 use the_beaconator::routes::beacon::batch_update_beacon;
 use the_beaconator::services::beacon::core::{
-    create_beacon_via_factory, is_beacon_registered, is_transaction_confirmed,
-    register_beacon_with_registry,
+    is_beacon_registered, is_transaction_confirmed, register_beacon_with_registry,
 };
 
 #[tokio::test]
@@ -134,7 +132,7 @@ async fn test_app_state_has_required_contract_info() {
 
     // Test that all required contract addresses are set
     assert_ne!(
-        app_state.beacon_factory_address,
+        app_state.ecdsa_verifier_factory_address,
         Address::from_str("0x0000000000000000000000000000000000000000").unwrap()
     );
     assert_ne!(
@@ -142,42 +140,6 @@ async fn test_app_state_has_required_contract_info() {
         Address::from_str("0x0000000000000000000000000000000000000000").unwrap()
     );
     assert!(!app_state.access_token.is_empty());
-}
-
-#[test]
-fn test_batch_create_response_serialization() {
-    // Test response serialization/deserialization
-    let response = BatchCreateBeaconResponse {
-        beacon_type: "perpcity".to_string(),
-        created_count: 2,
-        beacon_addresses: vec![
-            "0x1234567890123456789012345678901234567890".to_string(),
-            "0x9876543210987654321098765432109876543210".to_string(),
-        ],
-        failed_count: 1,
-        errors: vec!["Error creating beacon".to_string()],
-    };
-
-    let serialized = serde_json::to_string(&response).unwrap();
-    let deserialized: BatchCreateBeaconResponse = serde_json::from_str(&serialized).unwrap();
-
-    assert_eq!(deserialized.created_count, 2);
-    assert_eq!(deserialized.failed_count, 1);
-    assert_eq!(deserialized.beacon_addresses.len(), 2);
-    assert_eq!(deserialized.errors.len(), 1);
-    assert_eq!(deserialized.beacon_type, "perpcity");
-}
-
-// Additional beacon helper function tests
-#[tokio::test]
-#[ignore = "requires WalletManager with Redis"]
-async fn test_create_beacon_via_factory_helper() {
-    let app_state = crate::test_utils::create_simple_test_app_state().await;
-    let factory_address = app_state.beacon_factory_address;
-
-    // This will fail without a real network, but tests the function signature
-    let result = create_beacon_via_factory(&app_state, factory_address).await;
-    assert!(result.is_err()); // Expected to fail without real network
 }
 
 #[tokio::test]

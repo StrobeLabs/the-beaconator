@@ -1,141 +1,91 @@
-use alloy::primitives::{Address, U256};
+//! IdentityBeacon deployment via bytecode
+//!
+//! Deploys IdentityBeacon contracts using pre-compiled bytecode with
+//! constructor args (IVerifier verifier, uint256 initialIndex).
+
+use alloy::primitives::{Address, Bytes, U256};
+use alloy::providers::Provider;
+use alloy::rpc::types::TransactionRequest;
+use alloy::sol_types::SolValue;
 use std::time::Duration;
 use tokio::time::timeout;
-use tracing;
 
 use crate::models::AppState;
-use crate::routes::IDichotomousBeaconFactory;
-use crate::services::transaction::events::parse_beacon_created_event;
-use crate::services::transaction::execution::is_nonce_error;
+use crate::services::wallet::WalletHandle;
 
-/// Creates a verifiable beacon using a DichotomousBeaconFactory at the given address.
+/// Deploys an IdentityBeacon contract with the given verifier and initial index.
 ///
-/// This is the core function that takes all parameters explicitly, including
-/// the factory address. Used by the unified beacon creation dispatch.
-pub async fn create_verifiable_beacon_with_factory(
+/// Uses bytecode from `state.identity_beacon_bytecode` with ABI-encoded constructor args.
+pub async fn deploy_identity_beacon(
     state: &AppState,
-    factory_address: Address,
+    wallet_handle: &WalletHandle,
     verifier_address: Address,
-    initial_data: u128,
-    initial_cardinality: u32,
+    initial_index: u128,
 ) -> Result<Address, String> {
-    tracing::info!("Creating verifiable beacon with:");
-    tracing::info!("  Factory: {}", factory_address);
-    tracing::info!("  Verifier: {}", verifier_address);
-    tracing::info!("  Initial data: {}", initial_data);
-    tracing::info!("  Initial cardinality: {}", initial_cardinality);
-
-    // Acquire a wallet from the pool
-    let wallet_handle = state
-        .wallet_manager
-        .acquire_any_wallet()
-        .await
-        .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
-
-    let wallet_address = wallet_handle.address();
     tracing::info!(
-        "Acquired wallet {} for verifiable beacon creation",
-        wallet_address
+        "Deploying IdentityBeacon with verifier={}, initialIndex={}",
+        verifier_address,
+        initial_index
     );
 
-    // Build provider with the acquired wallet
+    // Build provider from wallet handle
     let provider = wallet_handle
         .build_provider(&state.rpc_url)
-        .map_err(|e| format!("Failed to build provider: {e}"))?;
+        .map_err(|e| format!("Failed to build provider for beacon deployment: {e}"))?;
 
-    // Create contract instance using the wallet's provider
-    let contract = IDichotomousBeaconFactory::new(factory_address, &provider);
-
-    // Send beacon creation transaction
-    tracing::info!("Creating verifiable beacon with wallet {}", wallet_address);
-    let pending_tx = match contract
-        .createBeacon(
-            verifier_address,
-            U256::from(initial_data),
-            initial_cardinality,
-        )
-        .send()
-        .await
-    {
-        Ok(pending) => Ok(pending),
-        Err(e) => {
-            let error_msg = format!("Failed to send createBeacon transaction: {e}");
-            tracing::error!("{}", error_msg);
-
-            if is_nonce_error(&error_msg) {
-                tracing::warn!("Nonce error detected, transaction failed");
-            }
-
-            Err(error_msg)
-        }
-    }
-    .map_err(|e| {
-        tracing::error!("Transaction execution failed: {}", e);
-        sentry::capture_message(
-            &format!("Verifiable beacon creation failed: {e}"),
-            sentry::Level::Error,
+    if state.identity_beacon_bytecode.is_empty() {
+        return Err(
+            "IdentityBeacon bytecode is empty - check abis/IdentityBeacon.bytecode".to_string(),
         );
-        e
-    })?;
+    }
 
-    // Get transaction receipt with timeout
+    // ABI-encode constructor args: (address _verifier, uint256 _initialIndex)
+    let constructor_args = (verifier_address, U256::from(initial_index)).abi_encode();
+
+    // Concatenate bytecode + constructor args
+    let mut deploy_data = state.identity_beacon_bytecode.to_vec();
+    deploy_data.extend_from_slice(&constructor_args);
+
+    // Build deployment transaction (to = None for contract creation)
+    let tx = TransactionRequest::default().input(Bytes::from(deploy_data).into());
+
+    // Send deployment transaction
+    let pending_tx = provider
+        .send_transaction(tx)
+        .await
+        .map_err(|e| format!("Failed to send beacon deployment transaction: {e}"))?;
+
+    let tx_hash = *pending_tx.tx_hash();
+    tracing::info!("Beacon deployment tx sent: {:?}", tx_hash);
+
+    // Wait for receipt
     let receipt = match timeout(Duration::from_secs(120), pending_tx.get_receipt()).await {
         Ok(Ok(receipt)) => receipt,
         Ok(Err(e)) => {
-            let error_msg = format!("Failed to get transaction receipt: {e}");
-            tracing::error!("{}", error_msg);
-            sentry::capture_message(
-                &format!("Failed to get verifiable beacon creation receipt: {e}"),
-                sentry::Level::Error,
-            );
-            return Err(error_msg);
+            return Err(format!("Failed to get beacon deployment receipt: {e}"));
         }
         Err(_) => {
-            let error_msg = "Timeout waiting for transaction receipt".to_string();
-            tracing::error!("{}", error_msg);
-            sentry::capture_message(
-                "Timeout waiting for verifiable beacon creation receipt",
-                sentry::Level::Error,
-            );
-            return Err(error_msg);
+            return Err(format!(
+                "Timeout waiting for beacon deployment receipt (tx: {tx_hash})"
+            ));
         }
     };
 
-    let tx_hash = receipt.transaction_hash;
-    tracing::info!(
-        "Verifiable beacon creation transaction confirmed with hash: {:?}",
-        tx_hash
-    );
-
     // Check transaction status
     if !receipt.status() {
-        let error_msg =
-            format!("Verifiable beacon creation transaction {tx_hash} reverted (status: false)");
-        tracing::error!("{}", error_msg);
-        sentry::capture_message(
-            &format!(
-                "Verifiable beacon creation transaction reverted: {tx_hash} (factory: {factory_address})"
-            ),
-            sentry::Level::Error,
-        );
-        return Err(error_msg);
+        return Err(format!("Beacon deployment transaction {tx_hash} reverted"));
     }
 
-    tracing::info!("Verifiable beacon creation transaction succeeded (status: true)");
-
-    // Parse the BeaconCreated event from the transaction receipt
-    let beacon_address = parse_beacon_created_event(&receipt, factory_address).map_err(|e| {
-        tracing::error!("Failed to parse BeaconCreated event: {}", e);
-        sentry::capture_message(
-            &format!("Failed to parse verifiable BeaconCreated event: {e}"),
-            sentry::Level::Error,
-        );
-        e
+    // Extract deployed contract address
+    let beacon_address = receipt.contract_address.ok_or_else(|| {
+        format!("Beacon deployment receipt missing contract_address (tx: {tx_hash})")
     })?;
 
     tracing::info!(
-        "Verifiable beacon created successfully - Beacon: {}",
-        beacon_address
+        "IdentityBeacon deployed at {} (verifier={}, initialIndex={})",
+        beacon_address,
+        verifier_address,
+        initial_index
     );
 
     Ok(beacon_address)

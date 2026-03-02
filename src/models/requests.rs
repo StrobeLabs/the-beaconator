@@ -38,22 +38,18 @@ pub struct BatchUpdateBeaconRequest {
 /// Create a beacon by type slug (unified endpoint)
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateBeaconByTypeRequest {
-    /// Beacon type slug (e.g., "perpcity", "verifiable-twap")
+    /// Beacon type slug (e.g., "identity")
     pub beacon_type: String,
-    /// Type-specific creation parameters (required for Dichotomous factory types)
+    /// Type-specific creation parameters
     pub params: Option<BeaconCreationParams>,
 }
 
 /// Type-specific parameters for beacon creation
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BeaconCreationParams {
-    /// Verifier contract address (required for Dichotomous factory type)
-    pub verifier_address: Option<String>,
-    /// Initial data value (required for Dichotomous factory type)
+    /// Initial beacon index value
     #[schemars(with = "Option<String>")]
-    pub initial_data: Option<u128>,
-    /// Initial TWAP observation slots (required for Dichotomous factory type)
-    pub initial_cardinality: Option<u32>,
+    pub initial_index: Option<u128>,
 }
 
 /// Batch create beacons by type slug
@@ -67,16 +63,12 @@ pub struct BatchCreateBeaconByTypeRequest {
     pub params: Option<BeaconCreationParams>,
 }
 
-/// Create a beacon with an auto-deployed ECDSA verifier adapter
+/// Create an IdentityBeacon with an auto-deployed ECDSA verifier
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateBeaconWithEcdsaRequest {
-    /// Beacon type slug (must reference a Dichotomous factory type)
-    pub beacon_type: String,
-    /// Initial data value (MUST be pre-scaled by 2^96 if representing a decimal)
+    /// Initial beacon index value
     #[schemars(with = "String")]
-    pub initial_data: u128,
-    /// Initial TWAP observation slots (typically 100-1000)
-    pub initial_cardinality: u32,
+    pub initial_index: u128,
 }
 
 /// Register an existing beacon with the registry

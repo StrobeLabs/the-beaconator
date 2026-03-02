@@ -8,6 +8,6 @@ pub mod verifiable;
 pub use batch::*;
 pub use core::*;
 pub use ecdsa::*;
-pub use ecdsa_deploy::deploy_ecdsa_verifier_adapter;
+pub use ecdsa_deploy::create_ecdsa_verifier;
 pub use registry::BeaconTypeRegistry;
 pub use verifiable::*;

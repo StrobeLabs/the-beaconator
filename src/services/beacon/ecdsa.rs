@@ -7,7 +7,7 @@ use tokio::time::timeout;
 use tracing;
 
 use crate::models::{AppState, UpdateBeaconWithEcdsaRequest};
-use crate::routes::{IEcdsaBeacon, IEcdsaVerifierAdapter};
+use crate::routes::{IBeacon, IEcdsaVerifier};
 
 /// Updates a beacon using ECDSA signature from the PRIVATE_KEY wallet.
 ///
@@ -39,19 +39,19 @@ pub async fn update_beacon_with_ecdsa(
         measurement
     );
 
-    // 2. Get verifier adapter address from beacon using read provider
-    let beacon_read = IEcdsaBeacon::new(beacon_address, &*state.read_provider);
+    // 2. Get verifier address from beacon using read provider
+    let beacon_read = IBeacon::new(beacon_address, &*state.read_provider);
     let verifier_address_raw = beacon_read
-        .verifierAdapter()
+        .verifier()
         .call()
         .await
-        .map_err(|e| format!("Failed to get verifier adapter address: {e}"))?;
+        .map_err(|e| format!("Failed to get verifier address: {e}"))?;
     let verifier_address = Address::from(verifier_address_raw.0);
 
-    tracing::info!("Beacon verifier adapter: {}", verifier_address);
+    tracing::info!("Beacon verifier: {}", verifier_address);
 
-    // Get the designated signer from the verifier adapter using read provider
-    let verifier = IEcdsaVerifierAdapter::new(verifier_address, &*state.read_provider);
+    // Get the designated signer from the verifier using read provider
+    let verifier = IEcdsaVerifier::new(verifier_address, &*state.read_provider);
     let designated_signer_raw = verifier
         .SIGNER()
         .call()
@@ -104,9 +104,10 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Using nonce (timestamp_nanos): {}", nonce);
 
-    // 6. Get EIP-712 digest from verifier
+    // 6. Get EIP-712 digest from verifier (measurement is now uint256[])
+    let measurement_array = vec![measurement];
     let digest_raw = verifier
-        .digest(measurement, nonce)
+        .digest(measurement_array.clone(), nonce)
         .call()
         .await
         .map_err(|e| format!("Failed to get EIP-712 digest: {e}"))?;
@@ -129,23 +130,23 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::debug!("Signature bytes length: {}", sig_bytes.len());
 
-    // 9. ABI-encode inputs as (measurement, nonce)
-    let inputs = (measurement, nonce).abi_encode();
+    // 9. ABI-encode inputs as (uint256[] measurement, uint256 nonce)
+    let inputs = (measurement_array, nonce).abi_encode();
     let inputs_bytes = Bytes::from(inputs);
 
     tracing::debug!("Inputs bytes length: {}", inputs_bytes.len());
 
-    // 10. Call beacon.updateIndex(signature, inputs) using the write provider
+    // 10. Call beacon.update(signature, inputs) using the write provider
     tracing::info!(
-        "Sending updateIndex transaction to beacon with wallet {}",
+        "Sending update transaction to beacon with wallet {}",
         tx_wallet_address
     );
-    let beacon_write = IEcdsaBeacon::new(beacon_address, &provider);
+    let beacon_write = IBeacon::new(beacon_address, &provider);
     let pending_tx = beacon_write
-        .updateIndex(sig_bytes.clone(), inputs_bytes.clone())
+        .update(sig_bytes.clone(), inputs_bytes.clone())
         .send()
         .await
-        .map_err(|e| format!("Failed to send updateIndex transaction: {e}"))?;
+        .map_err(|e| format!("Failed to send update transaction: {e}"))?;
 
     tracing::info!("Transaction sent, waiting for receipt...");
 
@@ -217,10 +218,11 @@ mod tests {
         let measurement = U256::from(1000000000000000000u128);
         let nonce = U256::from(1704067200u64); // Example timestamp
 
-        let inputs = (measurement, nonce).abi_encode();
+        let measurement_array = vec![measurement];
+        let inputs = (measurement_array, nonce).abi_encode();
 
-        // ABI-encoded (uint256, uint256) should be 64 bytes
-        assert_eq!(inputs.len(), 64);
+        // ABI-encoded (uint256[], uint256) = offset(32) + nonce(32) + length(32) + element(32) + padding(32) = 160 bytes
+        assert_eq!(inputs.len(), 160);
     }
 
     #[test]
