@@ -1677,10 +1677,28 @@
         "internalType": "bool"
       },
       {
-        "name": "entryPerpDelta",
+        "name": "perpDelta",
         "type": "int256",
         "indexed": false,
         "internalType": "int256"
+      },
+      {
+        "name": "usdDelta",
+        "type": "int256",
+        "indexed": false,
+        "internalType": "int256"
+      },
+      {
+        "name": "tickLower",
+        "type": "int24",
+        "indexed": false,
+        "internalType": "int24"
+      },
+      {
+        "name": "tickUpper",
+        "type": "int24",
+        "indexed": false,
+        "internalType": "int24"
       }
     ],
     "anonymous": false
@@ -1771,17 +1789,6 @@
   },
   {
     "type": "error",
-    "name": "InvalidLiquidity",
-    "inputs": [
-      {
-        "name": "liquidity",
-        "type": "uint128",
-        "internalType": "uint128"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "InvalidMargin",
     "inputs": []
   },
@@ -1795,11 +1802,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "InvalidStartingSqrtPriceX96",
-    "inputs": []
   },
   {
     "type": "error",
@@ -1921,6 +1923,41 @@
   {
     "type": "error",
     "name": "ZeroDelta",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroLiquidity",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroNotional",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TicksOutOfBounds",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidMarginDelta",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StartingSqrtPriceTooLow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StartingSqrtPriceTooHigh",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CouldNotFullyFill",
     "inputs": []
   }
 ]
