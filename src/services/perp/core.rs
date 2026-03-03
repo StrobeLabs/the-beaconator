@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, FixedBytes, Signed, U160, U256};
+use alloy::primitives::{Address, FixedBytes, Signed, U160, U256, Uint};
 use alloy::providers::Provider;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -129,23 +129,23 @@ pub async fn deploy_perp_for_beacon(
         }
     }
 
-    // Try to call getData() function to verify it's a beacon contract
-    tracing::info!("Validating beacon contract has getData() function...");
-    let get_data_call_result = state
+    // Try to call index() function to verify it's a beacon contract
+    tracing::info!("Validating beacon contract has index() function...");
+    let index_call_result = state
         .read_provider
         .call(
             alloy::rpc::types::TransactionRequest::default()
                 .to(beacon_address)
-                .input(alloy::primitives::hex!("4d2301cc").to_vec().into()), // selector for getData() function
+                .input(alloy::primitives::hex!("2986c0e5").to_vec().into()), // selector for index()
         )
         .await;
 
-    match get_data_call_result {
+    match index_call_result {
         Ok(_) => {
-            tracing::info!("Beacon contract has getData() function");
+            tracing::info!("Beacon contract has index() function");
         }
         Err(e) => {
-            tracing::warn!("Beacon contract may not have getData() function: {}", e);
+            tracing::warn!("Beacon contract may not have index() function: {}", e);
             tracing::warn!(
                 "  - The perp deployment may fail if PerpManager expects a standard beacon"
             );
@@ -411,7 +411,15 @@ pub async fn deposit_liquidity_for_perp(
     // Use conservative liquidity scaling factor
     // This converts USDC margin (6 decimals) to 18-decimal liquidity amount
     let liquidity_scaling_factor = 500_000u128;
-    let liquidity = margin_amount_usdc * liquidity_scaling_factor;
+    let liquidity_raw = margin_amount_usdc * liquidity_scaling_factor;
+
+    // uint120 max value: 2^120 - 1
+    const MAX_UINT120: u128 = (1u128 << 120) - 1;
+    if liquidity_raw > MAX_UINT120 {
+        return Err(format!(
+            "Computed liquidity {liquidity_raw} exceeds uint120 max ({MAX_UINT120}). Reduce margin amount."
+        ));
+    }
 
     // Set reasonable defaults for slippage protection (max values mean no limit)
     let max_amt0_in = u128::MAX;
@@ -419,8 +427,8 @@ pub async fn deposit_liquidity_for_perp(
 
     let open_maker_params = IPerpManager::OpenMakerPositionParams {
         holder: wallet_address,
-        margin: U256::from(margin_amount_usdc),
-        liquidity,
+        margin: margin_amount_usdc,
+        liquidity: Uint::<120, 2>::from(liquidity_raw),
         tickLower: Signed::<24, 1>::try_from(tick_lower)
             .map_err(|e| format!("Invalid tick lower: {e}"))?,
         tickUpper: Signed::<24, 1>::try_from(tick_upper)
@@ -434,7 +442,7 @@ pub async fn deposit_liquidity_for_perp(
         tick_lower,
         tick_upper,
         margin_amount_usdc as f64 / 1_000_000.0,
-        liquidity
+        liquidity_raw
     );
 
     // First, approve USDC spending by the PerpManager contract

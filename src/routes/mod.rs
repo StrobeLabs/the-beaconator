@@ -110,43 +110,18 @@ sol! {
         function createPerp(CreatePerpParams memory params) external returns (bytes32 perpId);
         event PerpCreated(bytes32 perpId, address beacon, uint256 sqrtPriceX96, uint256 indexPriceX96);
 
-        // Perp info struct - simplified version for checking if perp exists
-        struct PerpInfo {
-            address beacon;
-            IFees fees;
-            IMarginRatios marginRatios;
-            ILockupPeriod lockupPeriod;
-            ISqrtPriceImpactLimit sqrtPriceImpactLimit;
-        }
-
-        function perps(bytes32 perpId) external view returns (PerpInfo memory);
-
         struct OpenMakerPositionParams {
             address holder;
-            uint256 margin;
-            uint128 liquidity;
+            uint128 margin;
+            uint120 liquidity;
             int24 tickLower;
             int24 tickUpper;
             uint128 maxAmt0In;
             uint128 maxAmt1In;
         }
 
-        struct MakerInfo {
-            address holder;
-            int24 tickLower;
-            int24 tickUpper;
-            uint160 sqrtPriceLowerX96;
-            uint160 sqrtPriceUpperX96;
-            uint256 margin;
-            uint128 liquidity;
-            uint128 perpsBorrowed;
-            uint128 usdBorrowed;
-            int128 entryTwPremiumX96;
-            int128 entryTwPremiumDivBySqrtPriceX96;
-        }
-
         function openMakerPos(bytes32 perpId, OpenMakerPositionParams memory params) external returns (uint256 posId);
-        event PositionOpened(bytes32 perpId, uint256 sqrtPriceX96, uint256 longOI, uint256 shortOI, uint256 posId, bool isMaker, int256 entryPerpDelta);
+        event PositionOpened(bytes32 perpId, uint256 sqrtPriceX96, uint256 longOI, uint256 shortOI, uint256 posId, bool isMaker, int256 perpDelta, int256 usdDelta, int24 tickLower, int24 tickUpper);
     }
 }
 
