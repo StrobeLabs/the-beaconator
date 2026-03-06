@@ -450,6 +450,25 @@ pub async fn create_rocket() -> Rocket<Build> {
         }
     }
 
+    // Optional Safe multisig configuration for beacon registration
+    let safe_address = env::var("SAFE_ADDRESS")
+        .ok()
+        .map(|addr_str| Address::from_str(&addr_str).expect("Failed to parse SAFE_ADDRESS"));
+
+    let safe_tx_service_url = if let Some(safe_addr) = safe_address {
+        let url = env::var("SAFE_TX_SERVICE_URL")
+            .ok()
+            .or_else(|| services::safe::SafeTransactionService::default_url_for_chain(chain_id));
+        if let Some(ref url) = url {
+            tracing::info!("Safe multisig configured:");
+            tracing::info!("  - Safe address: {:?}", safe_addr);
+            tracing::info!("  - TX Service URL: {}", url);
+        }
+        url
+    } else {
+        None
+    };
+
     let app_state = AppState {
         // Provider
         read_provider,
@@ -490,6 +509,10 @@ pub async fn create_rocket() -> Rocket<Build> {
         lockup_period_module_address,
         sqrt_price_impact_limit_module_address,
         multicall3_address,
+
+        // Safe multisig
+        safe_address,
+        safe_tx_service_url,
     };
 
     // Configure OpenAPI settings
