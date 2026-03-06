@@ -262,6 +262,8 @@ pub async fn register_beacon(
         Ok(tx_hash) => {
             let message = if tx_hash == B256::ZERO {
                 "Beacon was already registered"
+            } else if state.safe_address.is_some() {
+                "Safe transaction proposed for beacon registration"
             } else {
                 "Beacon registered successfully"
             };
