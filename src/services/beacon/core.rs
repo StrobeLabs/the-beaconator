@@ -11,6 +11,7 @@ use crate::models::{AppState, UpdateBeaconRequest};
 use crate::routes::{IBeacon, IBeaconRegistry};
 use crate::services::beacon::ecdsa_deploy::create_ecdsa_verifier;
 use crate::services::beacon::verifiable::deploy_identity_beacon;
+use crate::services::safe::SafeTransactionService;
 use crate::services::transaction::events::parse_index_updated_event;
 use crate::services::transaction::execution::is_nonce_error;
 
@@ -171,6 +172,48 @@ pub async fn register_beacon_with_registry(
             tracing::error!("{}", error_msg);
             return Err(error_msg);
         }
+    }
+
+    // If Safe is configured, propose via Safe instead of direct execution
+    if let (Some(safe_addr), Some(safe_url)) = (&state.safe_address, &state.safe_tx_service_url) {
+        tracing::info!(
+            "Safe configured at {}, proposing multisig transaction",
+            safe_addr
+        );
+
+        // Build registerBeacon(address) calldata
+        let call = IBeaconRegistry::registerBeaconCall {
+            beacon: beacon_address,
+        };
+        let calldata = alloy::sol_types::SolCall::abi_encode(&call);
+
+        let safe_service = SafeTransactionService::new(safe_url);
+        let nonce = safe_service.get_nonce(*safe_addr).await?;
+
+        let safe_tx_hash = safe_service
+            .propose_transaction(
+                *safe_addr,
+                state.chain_id,
+                registry_address,
+                &calldata,
+                nonce,
+                &state.signer,
+            )
+            .await?;
+
+        tracing::info!(
+            "Safe transaction proposed (nonce: {}, hash: {})",
+            nonce,
+            safe_tx_hash
+        );
+        sentry::capture_message(
+            &format!(
+                "Safe tx proposed for beacon {} registration (nonce: {}, hash: {})",
+                beacon_address, nonce, safe_tx_hash
+            ),
+            sentry::Level::Info,
+        );
+        return Ok(safe_tx_hash);
     }
 
     // Acquire a wallet from the pool

@@ -601,6 +601,8 @@ pub async fn create_test_app_state() -> AppState {
         wallet_manager: Arc::new(WalletManager::test_stub()),
         admin_token: "test_admin_token".to_string(),
         beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        safe_address: None,
+        safe_tx_service_url: None,
     }
 }
 
@@ -669,6 +671,8 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
         wallet_manager: create_test_wallet_manager().await,
         admin_token: "test_admin_token".to_string(),
         beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        safe_address: None,
+        safe_tx_service_url: None,
     };
 
     (app_state, anvil)
@@ -762,6 +766,8 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
         wallet_manager,
         admin_token: "test_admin_token".to_string(),
         beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        safe_address: None,
+        safe_tx_service_url: None,
     };
 
     (app_state, anvil)
@@ -823,6 +829,8 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
         wallet_manager: Arc::new(WalletManager::test_stub()),
         admin_token: "test_admin_token".to_string(),
         beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        safe_address: None,
+        safe_tx_service_url: None,
     }
 }
 
@@ -936,6 +944,8 @@ pub async fn create_simple_test_app_state() -> AppState {
         wallet_manager,
         admin_token: "test_admin_token".to_string(),
         beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        safe_address: None,
+        safe_tx_service_url: None,
     }
 }
 
@@ -998,6 +1008,8 @@ pub async fn create_test_app_state_with_provider(
         wallet_manager,
         admin_token: "test_admin_token".to_string(),
         beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
+        safe_address: None,
+        safe_tx_service_url: None,
     }
 }
 
