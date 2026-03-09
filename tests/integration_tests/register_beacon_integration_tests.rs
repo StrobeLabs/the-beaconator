@@ -39,8 +39,8 @@ async fn test_register_beacon_with_anvil() {
         "Beacon registration should succeed: {register_result:?}"
     );
 
-    let tx_hash = register_result.unwrap();
-    println!("Beacon registered with tx hash: {tx_hash}");
+    let outcome = register_result.unwrap();
+    println!("Beacon registered with outcome: {outcome:?}");
 
     let is_registered = is_beacon_registered(&app_state, beacon_address, registry_address).await;
     assert!(is_registered.is_ok());
@@ -74,8 +74,8 @@ async fn test_register_beacon_idempotency() {
         "Second registration should succeed (idempotent)"
     );
 
-    let tx_hash = second_register.unwrap();
-    println!("Second registration tx hash: {tx_hash}");
+    let outcome = second_register.unwrap();
+    println!("Second registration outcome: {outcome:?}");
 
     let is_registered = is_beacon_registered(&app_state, beacon_address, registry_address).await;
     assert!(is_registered.unwrap());

@@ -11,8 +11,20 @@ use crate::models::{AppState, UpdateBeaconRequest};
 use crate::routes::{IBeacon, IBeaconRegistry};
 use crate::services::beacon::ecdsa_deploy::create_ecdsa_verifier;
 use crate::services::beacon::verifiable::deploy_identity_beacon;
+use crate::services::safe::SafeTransactionService;
 use crate::services::transaction::events::parse_index_updated_event;
 use crate::services::transaction::execution::is_nonce_error;
+
+/// Outcome of a beacon registration attempt.
+#[derive(Debug)]
+pub enum RegistrationOutcome {
+    /// Beacon was already registered, no action taken.
+    AlreadyRegistered,
+    /// A Safe multisig transaction was proposed (not yet executed).
+    SafeProposed(B256),
+    /// Transaction was submitted and confirmed on-chain.
+    OnChainConfirmed(B256),
+}
 
 /// Create an IdentityBeacon with an ECDSA verifier.
 ///
@@ -132,7 +144,7 @@ pub async fn register_beacon_with_registry(
     state: &AppState,
     beacon_address: Address,
     registry_address: Address,
-) -> Result<B256, String> {
+) -> Result<RegistrationOutcome, String> {
     tracing::info!(
         "Registering beacon {} with registry {}",
         beacon_address,
@@ -149,9 +161,7 @@ pub async fn register_beacon_with_registry(
             beacon_address,
             registry_address
         );
-        // Return a fake transaction hash to indicate success without actual transaction
-        // Using zeros is a common pattern to indicate no-op success
-        return Ok(B256::ZERO);
+        return Ok(RegistrationOutcome::AlreadyRegistered);
     }
 
     // Validate beacon contract exists and has code
@@ -171,6 +181,67 @@ pub async fn register_beacon_with_registry(
             tracing::error!("{}", error_msg);
             return Err(error_msg);
         }
+    }
+
+    // If Safe is configured, propose via Safe instead of direct execution
+    if let (Some(safe_addr), Some(safe_url)) = (&state.safe_address, &state.safe_tx_service_url) {
+        tracing::info!(
+            "Safe configured at {}, proposing multisig transaction",
+            safe_addr
+        );
+
+        // Build registerBeacon(address) calldata
+        let call = IBeaconRegistry::registerBeaconCall {
+            beacon: beacon_address,
+        };
+        let calldata = alloy::sol_types::SolCall::abi_encode(&call);
+
+        // Preflight: simulate the registerBeacon call from the Safe to catch reverts early
+        let tx_request = alloy::rpc::types::TransactionRequest::default()
+            .from(*safe_addr)
+            .to(registry_address)
+            .input(alloy::primitives::Bytes::from(calldata.clone()).into());
+        match state.read_provider.estimate_gas(tx_request).await {
+            Ok(_) => {
+                tracing::info!("Preflight estimate_gas succeeded for registerBeacon");
+            }
+            Err(e) => {
+                let error_msg = format!(
+                    "Preflight check failed: registerBeacon would revert on registry {}: {}",
+                    registry_address, e
+                );
+                tracing::error!("{}", error_msg);
+                return Err(error_msg);
+            }
+        }
+
+        let safe_service = SafeTransactionService::new(safe_url);
+        let nonce = safe_service.get_nonce(*safe_addr).await?;
+
+        let safe_tx_hash = safe_service
+            .propose_transaction(
+                *safe_addr,
+                state.chain_id,
+                registry_address,
+                &calldata,
+                nonce,
+                &state.signer,
+            )
+            .await?;
+
+        tracing::info!(
+            "Safe transaction proposed (nonce: {}, hash: {})",
+            nonce,
+            safe_tx_hash
+        );
+        sentry::capture_message(
+            &format!(
+                "Safe tx proposed for beacon {} registration (nonce: {}, hash: {})",
+                beacon_address, nonce, safe_tx_hash
+            ),
+            sentry::Level::Info,
+        );
+        return Ok(RegistrationOutcome::SafeProposed(safe_tx_hash));
     }
 
     // Acquire a wallet from the pool
@@ -364,7 +435,7 @@ pub async fn register_beacon_with_registry(
             &format!("Beacon {beacon_address} registered with registry {registry_address}"),
             sentry::Level::Info,
         );
-        Ok(tx_hash)
+        Ok(RegistrationOutcome::OnChainConfirmed(tx_hash))
     } else {
         let error_msg = format!("Registration transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
@@ -557,15 +628,24 @@ pub async fn create_and_register_beacon_by_type(
 ) -> Result<CreateBeaconResponse, String> {
     let (beacon_address, _verifier_address) = create_beacon_by_type(state, config, params).await?;
 
-    let registered = if let Some(registry_address) = config.registry_address {
+    let (registered, safe_proposal_hash) = if let Some(registry_address) = config.registry_address {
         match register_beacon_with_registry(state, beacon_address, registry_address).await {
-            Ok(_) => {
+            Ok(RegistrationOutcome::OnChainConfirmed(_))
+            | Ok(RegistrationOutcome::AlreadyRegistered) => {
                 tracing::info!(
                     "Beacon {} registered with registry {}",
                     beacon_address,
                     registry_address
                 );
-                true
+                (true, None)
+            }
+            Ok(RegistrationOutcome::SafeProposed(hash)) => {
+                tracing::info!(
+                    "Beacon {} Safe registration proposed (hash: {}), not yet confirmed",
+                    beacon_address,
+                    hash
+                );
+                (false, Some(format!("{hash:#x}")))
             }
             Err(e) => {
                 tracing::warn!(
@@ -573,11 +653,11 @@ pub async fn create_and_register_beacon_by_type(
                     beacon_address,
                     e
                 );
-                false
+                (false, None)
             }
         }
     } else {
-        false
+        (false, None)
     };
 
     Ok(CreateBeaconResponse {
@@ -585,5 +665,6 @@ pub async fn create_and_register_beacon_by_type(
         beacon_type: config.slug.clone(),
         factory_address: format!("{:#x}", config.factory_address),
         registered,
+        safe_proposal_hash,
     })
 }

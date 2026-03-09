@@ -253,4 +253,8 @@ pub struct AppState {
 
     // Optional multicall3 contract for batch operations
     pub multicall3_address: Option<Address>,
+
+    // Optional Safe multisig for beacon registration
+    pub safe_address: Option<Address>,
+    pub safe_tx_service_url: Option<String>,
 }

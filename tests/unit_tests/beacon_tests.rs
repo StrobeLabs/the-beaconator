@@ -202,6 +202,7 @@ fn test_create_beacon_response_serialization() {
         beacon_type: "perpcity".to_string(),
         factory_address: "0x9876543210987654321098765432109876543210".to_string(),
         registered: true,
+        safe_proposal_hash: None,
     };
 
     let serialized = serde_json::to_string(&response).unwrap();

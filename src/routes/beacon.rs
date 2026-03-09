@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, B256};
+use alloy::primitives::Address;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
 use rocket_okapi::openapi;
@@ -13,8 +13,9 @@ use crate::models::{
     UpdateBeaconWithEcdsaRequest,
 };
 use crate::services::beacon::{
-    batch_update_beacon as service_batch_update_beacon, create_and_register_beacon_by_type,
-    create_identity_beacon, register_beacon_with_registry, update_beacon as service_update_beacon,
+    RegistrationOutcome, batch_update_beacon as service_batch_update_beacon,
+    create_and_register_beacon_by_type, create_identity_beacon, register_beacon_with_registry,
+    update_beacon as service_update_beacon,
     update_beacon_with_ecdsa as service_update_beacon_with_ecdsa,
 };
 
@@ -140,26 +141,35 @@ pub async fn create_beacon_with_ecdsa(
 
     // Register with the perpcity registry
     let registry_address = state.perpcity_registry_address;
-    let registered = match register_beacon_with_registry(
+    let (registered, safe_proposal_hash) = match register_beacon_with_registry(
         state.inner(),
         beacon_address,
         registry_address,
     )
     .await
     {
-        Ok(_) => {
+        Ok(RegistrationOutcome::OnChainConfirmed(_))
+        | Ok(RegistrationOutcome::AlreadyRegistered) => {
             tracing::info!(
                 "Beacon {} registered with registry {}",
                 beacon_address,
                 registry_address
             );
-            true
+            (true, None)
+        }
+        Ok(RegistrationOutcome::SafeProposed(hash)) => {
+            tracing::info!(
+                "Beacon {} Safe registration proposed (hash: {}), not yet confirmed",
+                beacon_address,
+                hash
+            );
+            (false, Some(format!("{hash:#x}")))
         }
         Err(e) => {
             let warn_msg = format!("Beacon {beacon_address} created but registration failed: {e}");
             tracing::warn!("{}", warn_msg);
             sentry::capture_message(&warn_msg, sentry::Level::Warning);
-            false
+            (false, None)
         }
     };
 
@@ -168,6 +178,7 @@ pub async fn create_beacon_with_ecdsa(
         verifier_address: format!("{verifier_address:#x}"),
         beacon_type: "identity".to_string(),
         registered,
+        safe_proposal_hash,
     };
 
     tracing::info!(
@@ -259,11 +270,20 @@ pub async fn register_beacon(
 
     // Register the beacon with the specified registry
     match register_beacon_with_registry(state.inner(), beacon_address, registry_address).await {
-        Ok(tx_hash) => {
-            let message = if tx_hash == B256::ZERO {
-                "Beacon was already registered"
-            } else {
-                "Beacon registered successfully"
+        Ok(outcome) => {
+            let (message, data) = match &outcome {
+                RegistrationOutcome::AlreadyRegistered => (
+                    "Beacon was already registered",
+                    "Already registered".to_string(),
+                ),
+                RegistrationOutcome::SafeProposed(hash) => (
+                    "Safe transaction proposed for beacon registration",
+                    format!("Safe tx hash: {hash}"),
+                ),
+                RegistrationOutcome::OnChainConfirmed(hash) => (
+                    "Beacon registered successfully",
+                    format!("Transaction hash: {hash}"),
+                ),
             };
             tracing::info!(
                 "{}: {} with registry {}",
@@ -277,7 +297,7 @@ pub async fn register_beacon(
             );
             Ok(Json(ApiResponse {
                 success: true,
-                data: Some(format!("Transaction hash: {tx_hash}")),
+                data: Some(data),
                 message: message.to_string(),
             }))
         }
