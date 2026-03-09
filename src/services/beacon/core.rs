@@ -542,6 +542,10 @@ pub async fn create_beacon_by_type(
 
             create_identity_beacon(state, initial_index).await
         }
+        FactoryType::LBCGBM => Err("LBCGBM beacon creation not yet implemented".to_string()),
+        FactoryType::WeightedSumComposite => {
+            Err("WeightedSumComposite beacon creation not yet implemented".to_string())
+        }
     }
 }
 

@@ -146,6 +146,25 @@ pub async fn create_rocket() -> Rocket<Build> {
         ecdsa_verifier_factory_address
     );
 
+    // Load optional factory addresses for other beacon types
+    let lbcgbm_factory_address = env::var("LBCGBM_FACTORY_ADDRESS")
+        .ok()
+        .map(|s| Address::from_str(&s).expect("Failed to parse LBCGBM_FACTORY_ADDRESS"));
+
+    if let Some(addr) = lbcgbm_factory_address {
+        tracing::info!("LBCGBM factory address: {:?}", addr);
+    }
+
+    let weighted_sum_composite_factory_address = env::var("WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS")
+        .ok()
+        .map(|s| {
+            Address::from_str(&s).expect("Failed to parse WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS")
+        });
+
+    if let Some(addr) = weighted_sum_composite_factory_address {
+        tracing::info!("WeightedSumComposite factory address: {:?}", addr);
+    }
+
     let usdc_transfer_limit = env::var("USDC_TRANSFER_LIMIT")
         .unwrap_or_else(|_| "1000000000".to_string()) // Default 1000 USDC
         .parse::<u128>()
@@ -350,7 +369,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         .unwrap()
         .as_secs();
 
-    let seed_configs = vec![BeaconTypeConfig {
+    let mut seed_configs = vec![BeaconTypeConfig {
         slug: "identity".to_string(),
         name: "Identity Beacon".to_string(),
         description: Some(
@@ -364,6 +383,40 @@ pub async fn create_rocket() -> Rocket<Build> {
         created_at: now_ts,
         updated_at: now_ts,
     }];
+
+    if let Some(addr) = lbcgbm_factory_address {
+        seed_configs.push(BeaconTypeConfig {
+            slug: "lbcgbm".to_string(),
+            name: "LBCGBM Standalone Beacon".to_string(),
+            description: Some(
+                "Standalone beacon with Identity preprocessor, CGBM base function, and Bounded transform"
+                    .to_string(),
+            ),
+            factory_address: addr,
+            factory_type: FactoryType::LBCGBM,
+            registry_address: Some(perpcity_registry_address),
+            enabled: true,
+            created_at: now_ts,
+            updated_at: now_ts,
+        });
+    }
+
+    if let Some(addr) = weighted_sum_composite_factory_address {
+        seed_configs.push(BeaconTypeConfig {
+            slug: "weighted-sum-composite".to_string(),
+            name: "Weighted Sum Composite Beacon".to_string(),
+            description: Some(
+                "Composite beacon that computes its index as a weighted sum of reference beacon indices"
+                    .to_string(),
+            ),
+            factory_address: addr,
+            factory_type: FactoryType::WeightedSumComposite,
+            registry_address: Some(perpcity_registry_address),
+            enabled: true,
+            created_at: now_ts,
+            updated_at: now_ts,
+        });
+    }
 
     match beacon_type_registry.seed_defaults(&seed_configs).await {
         Ok(result) => {
