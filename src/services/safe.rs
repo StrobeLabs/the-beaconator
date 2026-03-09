@@ -6,6 +6,23 @@ use std::time::Duration;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Deserialize a u64 that may arrive as either a JSON number or a string.
+fn deserialize_u64_or_string<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum U64OrString {
+        Num(u64),
+        Str(String),
+    }
+    match U64OrString::deserialize(deserializer)? {
+        U64OrString::Num(n) => Ok(n),
+        U64OrString::Str(s) => s.parse().map_err(serde::de::Error::custom),
+    }
+}
+
 /// Client for the Safe Transaction Service API.
 ///
 /// Proposes multisig transactions to a Gnosis Safe via the off-chain
@@ -17,6 +34,7 @@ pub struct SafeTransactionService {
 
 #[derive(Deserialize)]
 struct SafeInfoResponse {
+    #[serde(deserialize_with = "deserialize_u64_or_string")]
     nonce: u64,
 }
 
@@ -27,6 +45,7 @@ struct MultisigTxListResponse {
 
 #[derive(Deserialize)]
 struct MultisigTxSummary {
+    #[serde(deserialize_with = "deserialize_u64_or_string")]
     nonce: u64,
 }
 
