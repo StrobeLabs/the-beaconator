@@ -141,7 +141,7 @@ pub async fn create_beacon_with_ecdsa(
 
     // Register with the perpcity registry
     let registry_address = state.perpcity_registry_address;
-    let registered = match register_beacon_with_registry(
+    let (registered, safe_proposal_hash) = match register_beacon_with_registry(
         state.inner(),
         beacon_address,
         registry_address,
@@ -155,7 +155,7 @@ pub async fn create_beacon_with_ecdsa(
                 beacon_address,
                 registry_address
             );
-            true
+            (true, None)
         }
         Ok(RegistrationOutcome::SafeProposed(hash)) => {
             tracing::info!(
@@ -163,13 +163,13 @@ pub async fn create_beacon_with_ecdsa(
                 beacon_address,
                 hash
             );
-            false
+            (false, Some(format!("{hash:#x}")))
         }
         Err(e) => {
             let warn_msg = format!("Beacon {beacon_address} created but registration failed: {e}");
             tracing::warn!("{}", warn_msg);
             sentry::capture_message(&warn_msg, sentry::Level::Warning);
-            false
+            (false, None)
         }
     };
 
@@ -178,6 +178,7 @@ pub async fn create_beacon_with_ecdsa(
         verifier_address: format!("{verifier_address:#x}"),
         beacon_type: "identity".to_string(),
         registered,
+        safe_proposal_hash,
     };
 
     tracing::info!(

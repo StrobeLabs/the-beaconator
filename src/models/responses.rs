@@ -73,6 +73,9 @@ pub struct CreateBeaconResponse {
     pub factory_address: String,
     /// Whether the beacon was registered with a registry
     pub registered: bool,
+    /// Safe multisig tx hash if registration was proposed (not yet executed)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub safe_proposal_hash: Option<String>,
 }
 
 /// Response from batch beacon creation
@@ -101,6 +104,9 @@ pub struct CreateBeaconWithEcdsaResponse {
     pub beacon_type: String,
     /// Whether the beacon was registered with a registry
     pub registered: bool,
+    /// Safe multisig tx hash if registration was proposed (not yet executed)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub safe_proposal_hash: Option<String>,
 }
 
 /// Response listing beacon types

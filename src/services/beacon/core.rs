@@ -196,6 +196,25 @@ pub async fn register_beacon_with_registry(
         };
         let calldata = alloy::sol_types::SolCall::abi_encode(&call);
 
+        // Preflight: simulate the registerBeacon call from the Safe to catch reverts early
+        let tx_request = alloy::rpc::types::TransactionRequest::default()
+            .from(*safe_addr)
+            .to(registry_address)
+            .input(alloy::primitives::Bytes::from(calldata.clone()).into());
+        match state.read_provider.estimate_gas(tx_request).await {
+            Ok(_) => {
+                tracing::info!("Preflight estimate_gas succeeded for registerBeacon");
+            }
+            Err(e) => {
+                let error_msg = format!(
+                    "Preflight check failed: registerBeacon would revert on registry {}: {}",
+                    registry_address, e
+                );
+                tracing::error!("{}", error_msg);
+                return Err(error_msg);
+            }
+        }
+
         let safe_service = SafeTransactionService::new(safe_url);
         let nonce = safe_service.get_nonce(*safe_addr).await?;
 
@@ -609,7 +628,7 @@ pub async fn create_and_register_beacon_by_type(
 ) -> Result<CreateBeaconResponse, String> {
     let (beacon_address, _verifier_address) = create_beacon_by_type(state, config, params).await?;
 
-    let registered = if let Some(registry_address) = config.registry_address {
+    let (registered, safe_proposal_hash) = if let Some(registry_address) = config.registry_address {
         match register_beacon_with_registry(state, beacon_address, registry_address).await {
             Ok(RegistrationOutcome::OnChainConfirmed(_))
             | Ok(RegistrationOutcome::AlreadyRegistered) => {
@@ -618,7 +637,7 @@ pub async fn create_and_register_beacon_by_type(
                     beacon_address,
                     registry_address
                 );
-                true
+                (true, None)
             }
             Ok(RegistrationOutcome::SafeProposed(hash)) => {
                 tracing::info!(
@@ -626,7 +645,7 @@ pub async fn create_and_register_beacon_by_type(
                     beacon_address,
                     hash
                 );
-                false
+                (false, Some(format!("{hash:#x}")))
             }
             Err(e) => {
                 tracing::warn!(
@@ -634,11 +653,11 @@ pub async fn create_and_register_beacon_by_type(
                     beacon_address,
                     e
                 );
-                false
+                (false, None)
             }
         }
     } else {
-        false
+        (false, None)
     };
 
     Ok(CreateBeaconResponse {
@@ -646,5 +665,6 @@ pub async fn create_and_register_beacon_by_type(
         beacon_type: config.slug.clone(),
         factory_address: format!("{:#x}", config.factory_address),
         registered,
+        safe_proposal_hash,
     })
 }

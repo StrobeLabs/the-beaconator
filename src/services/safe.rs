@@ -75,15 +75,14 @@ impl SafeTransactionService {
             "{}/api/v1/safes/{:#x}/multisig-transactions/?executed=false&limit=1&ordering=-nonce",
             self.base_url, safe_address
         );
-        let next_nonce = match self
+        let pending_list = self
             .fetch_json::<MultisigTxListResponse>(&pending_url)
-            .await
-        {
-            Ok(list) if !list.results.is_empty() => {
-                let highest_pending = list.results[0].nonce;
-                std::cmp::max(on_chain_nonce, highest_pending + 1)
-            }
-            _ => on_chain_nonce,
+            .await?;
+        let next_nonce = if !pending_list.results.is_empty() {
+            let highest_pending = pending_list.results[0].nonce;
+            std::cmp::max(on_chain_nonce, highest_pending + 1)
+        } else {
+            on_chain_nonce
         };
 
         tracing::info!(
