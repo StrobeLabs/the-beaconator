@@ -129,9 +129,6 @@ pub struct DeployPerpForBeaconRequest {
     pub lockup_period_module: String,
     /// Address of the sqrt price impact limit configuration module
     pub sqrt_price_impact_limit_module: String,
-    /// Starting sqrt price in Q96 format as string
-    #[schemars(with = "String")]
-    pub starting_sqrt_price_x96: String,
 }
 
 /// Batch deploy perpetual contracts for multiple beacons
@@ -147,9 +144,6 @@ pub struct BatchDeployPerpsForBeaconsRequest {
     pub lockup_period_module: String,
     /// Address of the sqrt price impact limit configuration module
     pub sqrt_price_impact_limit_module: String,
-    /// Starting sqrt price in Q96 format as string
-    #[schemars(with = "String")]
-    pub starting_sqrt_price_x96: String,
 }
 
 /// Deposit liquidity for a perpetual contract

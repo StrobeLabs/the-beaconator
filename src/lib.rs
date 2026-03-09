@@ -180,11 +180,6 @@ pub async fn create_rocket() -> Rocket<Build> {
     )
     .expect("Failed to parse SQRT_PRICE_IMPACT_LIMIT_MODULE_ADDRESS");
 
-    // Optional default starting price
-    let default_starting_sqrt_price_x96 = env::var("PERP_DEFAULT_STARTING_SQRT_PRICE_X96")
-        .ok()
-        .and_then(|s| s.parse::<u128>().ok());
-
     // Log loaded module addresses for debugging
     tracing::info!("Perp module addresses loaded:");
     tracing::info!("  - Fees module: {:?}", fees_module_address);
@@ -200,9 +195,6 @@ pub async fn create_rocket() -> Rocket<Build> {
         "  - Price impact limit module: {:?}",
         sqrt_price_impact_limit_module_address
     );
-    if let Some(price) = default_starting_sqrt_price_x96 {
-        tracing::info!("  - Default starting sqrt price X96: {}", price);
-    }
 
     // Get environment configuration and chain ID
     let env_type = &rpc_config.env_type;
@@ -444,7 +436,6 @@ pub async fn create_rocket() -> Rocket<Build> {
         margin_ratios_module_address,
         lockup_period_module_address,
         sqrt_price_impact_limit_module_address,
-        default_starting_sqrt_price_x96,
         multicall3_address,
     };
 

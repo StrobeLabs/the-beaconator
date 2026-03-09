@@ -250,7 +250,6 @@ pub struct AppState {
     pub margin_ratios_module_address: Address,
     pub lockup_period_module_address: Address,
     pub sqrt_price_impact_limit_module_address: Address,
-    pub default_starting_sqrt_price_x96: Option<u128>,
 
     // Optional multicall3 contract for batch operations
     pub multicall3_address: Option<Address>,

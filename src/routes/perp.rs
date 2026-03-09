@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, FixedBytes, U160};
+use alloy::primitives::{Address, FixedBytes};
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
 use rocket_okapi::openapi;
@@ -149,20 +149,6 @@ pub async fn deploy_perp_for_beacon_endpoint(
 
     tracing::info!("All module addresses validated successfully");
 
-    // Parse starting sqrt price
-    let starting_sqrt_price_x96 = match U160::from_str(&request.starting_sqrt_price_x96) {
-        Ok(price) => price,
-        Err(e) => {
-            let error_msg = format!(
-                "Invalid starting sqrt price X96 '{}': {}",
-                request.starting_sqrt_price_x96, e
-            );
-            tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
-            return Err(Status::BadRequest);
-        }
-    };
-
     tracing::info!("Starting perp deployment process...");
     match deploy_perp_for_beacon(
         state,
@@ -171,7 +157,6 @@ pub async fn deploy_perp_for_beacon_endpoint(
         margin_ratios_module,
         lockup_period_module,
         sqrt_price_impact_limit_module,
-        starting_sqrt_price_x96,
     )
     .await
     {
