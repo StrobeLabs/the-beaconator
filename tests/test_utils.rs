@@ -594,7 +594,7 @@ pub async fn create_test_app_state() -> AppState {
             "0x7890123456789012345678901234567890123456",
         )
         .unwrap(),
-        default_starting_sqrt_price_x96: Some(560227709747861419891227623424), // sqrt(50) * 2^96
+
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
@@ -662,7 +662,7 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
             "0x7890123456789012345678901234567890123456",
         )
         .unwrap(),
-        default_starting_sqrt_price_x96: Some(560227709747861419891227623424), // sqrt(50) * 2^96
+
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
@@ -755,7 +755,6 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
             "0x7890123456789012345678901234567890123456",
         )
         .unwrap(),
-        default_starting_sqrt_price_x96: Some(560227709747861419891227623424),
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ),
@@ -816,7 +815,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
             "0x7890123456789012345678901234567890123456",
         )
         .unwrap(),
-        default_starting_sqrt_price_x96: Some(560227709747861419891227623424), // sqrt(50) * 2^96
+
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
@@ -929,7 +928,7 @@ pub async fn create_simple_test_app_state() -> AppState {
             "0x7890123456789012345678901234567890123456",
         )
         .unwrap(),
-        default_starting_sqrt_price_x96: Some(560227709747861419891227623424), // sqrt(50) * 2^96
+
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests
@@ -991,7 +990,7 @@ pub async fn create_test_app_state_with_provider(
             "0x7890123456789012345678901234567890123456",
         )
         .unwrap(),
-        default_starting_sqrt_price_x96: Some(560227709747861419891227623424), // sqrt(50) * 2^96
+
         multicall3_address: Some(
             Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
         ), // Standard multicall3 address for tests

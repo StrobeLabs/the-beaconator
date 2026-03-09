@@ -104,7 +104,6 @@ sol! {
             IMarginRatios marginRatios;
             ILockupPeriod lockupPeriod;
             ISqrtPriceImpactLimit sqrtPriceImpactLimit;
-            uint160 startingSqrtPriceX96;
         }
 
         function createPerp(CreatePerpParams memory params) external returns (bytes32 perpId);

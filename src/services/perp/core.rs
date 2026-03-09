@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, FixedBytes, Signed, U160, U256, Uint};
+use alloy::primitives::{Address, FixedBytes, Signed, U256, Uint};
 use alloy::providers::Provider;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -23,7 +23,6 @@ pub async fn deploy_perp_for_beacon(
     margin_ratios_module: Address,
     lockup_period_module: Address,
     sqrt_price_impact_limit_module: Address,
-    starting_sqrt_price_x96: U160,
 ) -> Result<DeployPerpForBeaconResponse, String> {
     tracing::info!("Starting perp deployment for beacon: {}", beacon_address);
 
@@ -55,8 +54,6 @@ pub async fn deploy_perp_for_beacon(
         "  - Sqrt price impact limit module: {}",
         sqrt_price_impact_limit_module
     );
-    tracing::info!("  - Starting sqrt price X96: {}", starting_sqrt_price_x96);
-
     // Check wallet balance first using read provider
     match state.read_provider.get_balance(wallet_address).await {
         Ok(balance) => {
@@ -153,7 +150,7 @@ pub async fn deploy_perp_for_beacon(
     }
 
     // Prepare the CreatePerpParams struct with modular configuration
-    tracing::info!("CreatePerpParams parameters (6 fields - modular architecture):");
+    tracing::info!("CreatePerpParams parameters (5 fields - modular architecture):");
     tracing::info!("  1. beacon: {} (address)", beacon_address);
     tracing::info!("  2. fees: {} (IFees module)", fees_module);
     tracing::info!(
@@ -168,10 +165,6 @@ pub async fn deploy_perp_for_beacon(
         "  5. sqrtPriceImpactLimit: {} (ISqrtPriceImpactLimit module)",
         sqrt_price_impact_limit_module
     );
-    tracing::info!(
-        "  6. startingSqrtPriceX96: {} (uint160)",
-        starting_sqrt_price_x96
-    );
 
     let create_perp_params = IPerpManager::CreatePerpParams {
         beacon: beacon_address,
@@ -179,7 +172,6 @@ pub async fn deploy_perp_for_beacon(
         marginRatios: margin_ratios_module,
         lockupPeriod: lockup_period_module,
         sqrtPriceImpactLimit: sqrt_price_impact_limit_module,
-        startingSqrtPriceX96: starting_sqrt_price_x96,
     };
 
     tracing::info!("CreatePerpParams struct prepared successfully");
@@ -244,7 +236,6 @@ pub async fn deploy_perp_for_beacon(
                         "  - Sqrt price impact limit module: {}",
                         sqrt_price_impact_limit_module
                     );
-                    tracing::error!("  - Starting sqrt price X96: {}", starting_sqrt_price_x96);
                 }
                 "Insufficient Funds" => {
                     tracing::error!("Troubleshooting hints:");

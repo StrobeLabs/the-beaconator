@@ -103,7 +103,6 @@ async fn test_deploy_perp_invalid_beacon_address() {
         margin_ratios_module: "0x2222222222222222222222222222222222222222".to_string(),
         lockup_period_module: "0x3333333333333333333333333333333333333333".to_string(),
         sqrt_price_impact_limit_module: "0x4444444444444444444444444444444444444444".to_string(),
-        starting_sqrt_price_x96: "560227709747861419891227623424".to_string(), // sqrt(50) * 2^96
     });
 
     let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
@@ -125,7 +124,6 @@ async fn test_deploy_perp_short_beacon_address() {
         margin_ratios_module: "0x2222222222222222222222222222222222222222".to_string(),
         lockup_period_module: "0x3333333333333333333333333333333333333333".to_string(),
         sqrt_price_impact_limit_module: "0x4444444444444444444444444444444444444444".to_string(),
-        starting_sqrt_price_x96: "560227709747861419891227623424".to_string(), // sqrt(50) * 2^96
     });
 
     let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
