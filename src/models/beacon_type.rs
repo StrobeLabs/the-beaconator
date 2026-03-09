@@ -5,8 +5,12 @@ use serde::{Deserialize, Serialize};
 /// Identifies beacon creation strategy.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum FactoryType {
-    /// Deploy IdentityBeacon with ECDSA verifier via ECDSAVerifierFactory
+    /// Deploy IdentityBeacon with ECDSA verifier via IdentityFactory
     Identity,
+    /// Deploy StandaloneBeacon with Identity preprocessor + CGBM basefn + Bounded transform via LBCGBMFactory
+    LBCGBM,
+    /// Deploy CompositeBeacon with WeightedSum composer via WeightedSumCompositeFactory
+    WeightedSumComposite,
 }
 
 /// Configuration for a registered beacon type stored in Redis.
@@ -77,5 +81,17 @@ mod tests {
 
         let deserialized: FactoryType = serde_json::from_str("\"Identity\"").unwrap();
         assert_eq!(deserialized, FactoryType::Identity);
+
+        let lbcgbm = FactoryType::LBCGBM;
+        let json = serde_json::to_string(&lbcgbm).unwrap();
+        assert_eq!(json, "\"LBCGBM\"");
+        let deserialized: FactoryType = serde_json::from_str("\"LBCGBM\"").unwrap();
+        assert_eq!(deserialized, FactoryType::LBCGBM);
+
+        let composite = FactoryType::WeightedSumComposite;
+        let json = serde_json::to_string(&composite).unwrap();
+        assert_eq!(json, "\"WeightedSumComposite\"");
+        let deserialized: FactoryType = serde_json::from_str("\"WeightedSumComposite\"").unwrap();
+        assert_eq!(deserialized, FactoryType::WeightedSumComposite);
     }
 }
