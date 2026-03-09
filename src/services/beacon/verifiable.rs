@@ -3,6 +3,7 @@
 //! Deploys IdentityBeacon contracts using pre-compiled bytecode with
 //! constructor args (IVerifier verifier, uint256 initialIndex).
 
+use alloy::network::TransactionBuilder;
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::providers::Provider;
 use alloy::rpc::types::TransactionRequest;
@@ -46,8 +47,8 @@ pub async fn deploy_identity_beacon(
     let mut deploy_data = state.identity_beacon_bytecode.to_vec();
     deploy_data.extend_from_slice(&constructor_args);
 
-    // Build deployment transaction (to = None for contract creation)
-    let tx = TransactionRequest::default().input(Bytes::from(deploy_data).into());
+    // Build deployment transaction using with_deploy_code for proper contract creation
+    let tx = TransactionRequest::default().with_deploy_code(Bytes::from(deploy_data));
 
     // Send deployment transaction
     let pending_tx = provider
