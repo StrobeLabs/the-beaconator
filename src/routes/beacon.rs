@@ -532,11 +532,17 @@ pub async fn create_lbcgbm_beacon_endpoint(
             }))
         }
         Err(e) => {
-            tracing::error!("LBCGBM beacon registration failed: {}", e);
+            tracing::error!(
+                "LBCGBM beacon {} registration failed: {}",
+                beacon_address,
+                e
+            );
             Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: format!("Beacon created at but registration failed: {e}"),
+                message: format!(
+                    "Beacon created at {beacon_address:#x} but registration failed: {e}"
+                ),
             }))
         }
     }
@@ -631,11 +637,17 @@ pub async fn create_weighted_sum_composite_beacon_endpoint(
             }))
         }
         Err(e) => {
-            tracing::error!("WeightedSumComposite beacon registration failed: {}", e);
+            tracing::error!(
+                "WeightedSumComposite beacon {} registration failed: {}",
+                beacon_address,
+                e
+            );
             Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: format!("Beacon created but registration failed: {e}"),
+                message: format!(
+                    "Beacon created at {beacon_address:#x} but registration failed: {e}"
+                ),
             }))
         }
     }
