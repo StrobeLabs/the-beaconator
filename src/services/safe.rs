@@ -140,8 +140,9 @@ impl SafeTransactionService {
             .map_err(|e| format!("Failed to read Safe TX Service response body: {e}"))?;
 
         serde_json::from_str(&body).map_err(|e| {
-            let preview = if body.len() > 200 {
-                format!("{}...", &body[..200])
+            let preview = if body.chars().count() > 200 {
+                let truncated: String = body.chars().take(200).collect();
+                format!("{truncated}...")
             } else {
                 body.clone()
             };
