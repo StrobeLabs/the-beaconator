@@ -115,9 +115,19 @@ impl SafeTransactionService {
             ));
         }
 
-        resp.json()
+        let body = resp
+            .text()
             .await
-            .map_err(|e| format!("Failed to parse Safe TX Service response: {e}"))
+            .map_err(|e| format!("Failed to read Safe TX Service response body: {e}"))?;
+
+        serde_json::from_str(&body).map_err(|e| {
+            let preview = if body.len() > 200 {
+                format!("{}...", &body[..200])
+            } else {
+                body.clone()
+            };
+            format!("Failed to parse Safe TX Service response: {e}. Body: {preview}")
+        })
     }
 
     /// Compute the EIP-712 Safe transaction hash.
