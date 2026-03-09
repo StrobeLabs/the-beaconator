@@ -301,9 +301,9 @@ fn test_create_beacon_response_lbcgbm_type() {
 #[test]
 fn test_create_beacon_response_composite_unregistered() {
     let response = CreateBeaconResponse {
-        beacon_address: "0xcccccccccccccccccccccccccccccccccccccccc".to_string(),
+        beacon_address: "0xcccccccccccccccccccccccccccccccccccccc".to_string(),
         beacon_type: "weighted-sum-composite".to_string(),
-        factory_address: "0xdddddddddddddddddddddddddddddddddddddd".to_string(),
+        factory_address: "0xdddddddddddddddddddddddddddddddddddddddd".to_string(),
         registered: false,
         safe_proposal_hash: None,
     };
