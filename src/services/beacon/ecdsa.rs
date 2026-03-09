@@ -128,9 +128,15 @@ pub async fn update_beacon_with_ecdsa(
     // Alloy signature.as_bytes() returns [r (32 bytes) | s (32 bytes) | v (1 byte)]
     let sig_bytes = Bytes::from(signature.as_bytes().to_vec());
 
+    let proof_hash = alloy::primitives::keccak256(sig_bytes.as_ref());
+
     tracing::info!(
-        "Signature: len={}, v={}, r={:#x}, s={:#x}",
+        "Signature: len={}, proof_hash={:#x}",
         sig_bytes.len(),
+        proof_hash
+    );
+    tracing::debug!(
+        "Signature details: v={}, r={:#x}, s={:#x}",
         if signature.v() { 28u8 } else { 27u8 },
         signature.r(),
         signature.s()
@@ -145,11 +151,16 @@ pub async fn update_beacon_with_ecdsa(
         alloy::sol_types::sol_data::Uint<256>,
     )>::abi_encode_params(&(measurement_array.clone(), nonce));
     let inputs_bytes = Bytes::from(inputs);
+    let inputs_hash = alloy::primitives::keccak256(inputs_bytes.as_ref());
 
     tracing::info!(
-        "Update params: proof_len={}, inputs_len={}, measurement={}, nonce={}",
+        "Update params: proof_len={}, inputs_len={}, inputs_hash={:#x}",
         sig_bytes.len(),
         inputs_bytes.len(),
+        inputs_hash
+    );
+    tracing::debug!(
+        "Update raw values: measurement={}, nonce={}",
         measurement,
         nonce
     );
@@ -165,31 +176,43 @@ pub async fn update_beacon_with_ecdsa(
             tracing::info!("Preflight simulation of beacon.update() succeeded");
         }
         Err(e) => {
-            // Also try calling verify() directly on the verifier to isolate the failure
-            let verify_result = verifier
-                .verify(sig_bytes.clone(), inputs_bytes.clone())
-                .call()
-                .await;
-            let verify_detail = match verify_result {
-                Ok(_) => "verify() succeeded".to_string(),
-                Err(ve) => format!("verify() also reverted: {ve}"),
-            };
+            // Only run diagnostics for EVM reverts, not transport/network failures
+            if e.as_revert_data().is_some() {
+                let diag_timeout = Duration::from_secs(5);
 
-            // Check if the proof hash was already used
-            let proof_hash = alloy::primitives::keccak256(sig_bytes.as_ref());
-            let used_check = verifier.usedProofs(proof_hash).call().await;
-            let used_detail = match used_check {
-                Ok(val) => {
-                    // usedProofs returns a bool - access via Debug since field name is generated
-                    format!("usedProofs({:#x})={:?}", proof_hash, val)
-                }
-                Err(ue) => format!("usedProofs check failed: {ue}"),
-            };
+                let verify_detail = match timeout(
+                    diag_timeout,
+                    verifier
+                        .verify(sig_bytes.clone(), inputs_bytes.clone())
+                        .call(),
+                )
+                .await
+                {
+                    Ok(Ok(_)) => "verify() succeeded".to_string(),
+                    Ok(Err(ve)) => format!("verify() also reverted: {ve}"),
+                    Err(_) => "verify() diagnostic timed out".to_string(),
+                };
 
-            let error_msg = format!(
-                "Preflight simulation of beacon.update() reverted: {e}. \
-                 Verifier diagnostics: {verify_detail}. {used_detail}"
-            );
+                let used_detail =
+                    match timeout(diag_timeout, verifier.usedProofs(proof_hash).call()).await {
+                        Ok(Ok(val)) => {
+                            format!("usedProofs({:#x})={:?}", proof_hash, val)
+                        }
+                        Ok(Err(ue)) => format!("usedProofs check failed: {ue}"),
+                        Err(_) => "usedProofs diagnostic timed out".to_string(),
+                    };
+
+                let error_msg = format!(
+                    "Preflight simulation of beacon.update() reverted: {e}. \
+                     Verifier diagnostics: {verify_detail}. {used_detail}"
+                );
+                tracing::error!("{}", error_msg);
+                return Err(error_msg);
+            }
+
+            // Transport or other non-revert error: fail fast without diagnostics
+            let error_msg =
+                format!("Preflight simulation of beacon.update() failed (transport/RPC): {e}");
             tracing::error!("{}", error_msg);
             return Err(error_msg);
         }
