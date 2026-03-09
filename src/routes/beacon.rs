@@ -478,26 +478,33 @@ pub async fn create_lbcgbm_beacon_endpoint(
     let config = match state.beacon_type_registry.get_type("lbcgbm").await {
         Ok(Some(config)) if config.enabled && config.factory_type == FactoryType::LBCGBM => config,
         Ok(Some(_)) => {
+            let msg = "LBCGBM beacon type is disabled or misconfigured";
+            tracing::warn!("{}", msg);
+            sentry::capture_message(msg, sentry::Level::Warning);
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: "LBCGBM beacon type is disabled or misconfigured".to_string(),
+                message: msg.to_string(),
             }));
         }
         Ok(None) => {
+            let msg = "LBCGBM beacon type not registered. Set LBCGBM_FACTORY_ADDRESS env var.";
+            tracing::warn!("{}", msg);
+            sentry::capture_message(msg, sentry::Level::Warning);
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: "LBCGBM beacon type not registered. Set LBCGBM_FACTORY_ADDRESS env var."
-                    .to_string(),
+                message: msg.to_string(),
             }));
         }
         Err(e) => {
-            tracing::error!("Failed to look up LBCGBM beacon type: {}", e);
+            let msg = format!("Failed to look up LBCGBM beacon type: {e}");
+            tracing::error!("{}", msg);
+            sentry::capture_message(&msg, sentry::Level::Error);
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: format!("Failed to look up beacon type: {e}"),
+                message: msg,
             }));
         }
     };
@@ -532,17 +539,20 @@ pub async fn create_lbcgbm_beacon_endpoint(
             }))
         }
         Err(e) => {
-            tracing::error!(
-                "LBCGBM beacon {} registration failed: {}",
-                beacon_address,
-                e
-            );
+            let warn_msg =
+                format!("LBCGBM beacon {beacon_address:#x} created but registration failed: {e}");
+            tracing::warn!("{}", warn_msg);
+            sentry::capture_message(&warn_msg, sentry::Level::Warning);
             Ok(Json(ApiResponse {
-                success: false,
-                data: None,
-                message: format!(
-                    "Beacon created at {beacon_address:#x} but registration failed: {e}"
-                ),
+                success: true,
+                data: Some(CreateBeaconResponse {
+                    beacon_address: format!("{beacon_address:#x}"),
+                    beacon_type: config.slug.clone(),
+                    factory_address: format!("{:#x}", config.factory_address),
+                    registered: false,
+                    safe_proposal_hash: None,
+                }),
+                message: warn_msg,
             }))
         }
     }
@@ -580,28 +590,33 @@ pub async fn create_weighted_sum_composite_beacon_endpoint(
             config
         }
         Ok(Some(_)) => {
+            let msg = "WeightedSumComposite beacon type is disabled or misconfigured";
+            tracing::warn!("{}", msg);
+            sentry::capture_message(msg, sentry::Level::Warning);
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: "WeightedSumComposite beacon type is disabled or misconfigured"
-                    .to_string(),
+                message: msg.to_string(),
             }));
         }
         Ok(None) => {
+            let msg = "WeightedSumComposite beacon type not registered. Set WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS env var.";
+            tracing::warn!("{}", msg);
+            sentry::capture_message(msg, sentry::Level::Warning);
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message:
-                    "WeightedSumComposite beacon type not registered. Set WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS env var."
-                        .to_string(),
+                message: msg.to_string(),
             }));
         }
         Err(e) => {
-            tracing::error!("Failed to look up WeightedSumComposite beacon type: {}", e);
+            let msg = format!("Failed to look up WeightedSumComposite beacon type: {e}");
+            tracing::error!("{}", msg);
+            sentry::capture_message(&msg, sentry::Level::Error);
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: format!("Failed to look up beacon type: {e}"),
+                message: msg,
             }));
         }
     };
@@ -637,17 +652,21 @@ pub async fn create_weighted_sum_composite_beacon_endpoint(
             }))
         }
         Err(e) => {
-            tracing::error!(
-                "WeightedSumComposite beacon {} registration failed: {}",
-                beacon_address,
-                e
+            let warn_msg = format!(
+                "WeightedSumComposite beacon {beacon_address:#x} created but registration failed: {e}"
             );
+            tracing::warn!("{}", warn_msg);
+            sentry::capture_message(&warn_msg, sentry::Level::Warning);
             Ok(Json(ApiResponse {
-                success: false,
-                data: None,
-                message: format!(
-                    "Beacon created at {beacon_address:#x} but registration failed: {e}"
-                ),
+                success: true,
+                data: Some(CreateBeaconResponse {
+                    beacon_address: format!("{beacon_address:#x}"),
+                    beacon_type: config.slug.clone(),
+                    factory_address: format!("{:#x}", config.factory_address),
+                    registered: false,
+                    safe_proposal_hash: None,
+                }),
+                message: warn_msg,
             }))
         }
     }
