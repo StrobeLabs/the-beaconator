@@ -6,15 +6,18 @@ use std::str::FromStr;
 use tracing;
 
 use crate::guards::ApiToken;
+use crate::models::beacon_type::FactoryType;
 use crate::models::{
     ApiResponse, AppState, BatchUpdateBeaconRequest, BatchUpdateBeaconResponse,
     CreateBeaconByTypeRequest, CreateBeaconResponse, CreateBeaconWithEcdsaRequest,
-    CreateBeaconWithEcdsaResponse, RegisterBeaconRequest, UpdateBeaconRequest,
+    CreateBeaconWithEcdsaResponse, CreateLBCGBMBeaconRequest,
+    CreateWeightedSumCompositeBeaconRequest, RegisterBeaconRequest, UpdateBeaconRequest,
     UpdateBeaconWithEcdsaRequest,
 };
 use crate::services::beacon::{
     RegistrationOutcome, batch_update_beacon as service_batch_update_beacon,
-    create_and_register_beacon_by_type, create_identity_beacon, register_beacon_with_registry,
+    create_and_register_beacon_by_type, create_and_register_factory_beacon, create_identity_beacon,
+    create_lbcgbm_beacon, create_weighted_sum_composite_beacon, register_beacon_with_registry,
     update_beacon as service_update_beacon,
     update_beacon_with_ecdsa as service_update_beacon_with_ecdsa,
 };
@@ -447,6 +450,193 @@ pub async fn update_beacon_with_ecdsa_adapter(
                 sentry::Level::Error,
             );
             Err(Status::InternalServerError)
+        }
+    }
+}
+
+/// Creates an LBCGBM standalone beacon via the LBCGBMFactory.
+///
+/// Deploys a StandaloneBeacon with Identity preprocessor, CGBM base function,
+/// and Bounded transform. Optionally registers with the default registry.
+#[openapi(tag = "Beacon")]
+#[post("/create_lbcgbm_beacon", data = "<request>")]
+pub async fn create_lbcgbm_beacon_endpoint(
+    request: Json<CreateLBCGBMBeaconRequest>,
+    _token: ApiToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<CreateBeaconResponse>>, Status> {
+    tracing::info!(
+        "Received request: POST /create_lbcgbm_beacon (initial_index={})",
+        request.initial_index
+    );
+    let _guard = sentry::Hub::current().push_scope();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("endpoint", "/create_lbcgbm_beacon");
+    });
+
+    // Look up the LBCGBM beacon type config from registry
+    let config = match state.beacon_type_registry.get_type("lbcgbm").await {
+        Ok(Some(config)) if config.enabled && config.factory_type == FactoryType::LBCGBM => config,
+        Ok(Some(_)) => {
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "LBCGBM beacon type is disabled or misconfigured".to_string(),
+            }));
+        }
+        Ok(None) => {
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "LBCGBM beacon type not registered. Set LBCGBM_FACTORY_ADDRESS env var."
+                    .to_string(),
+            }));
+        }
+        Err(e) => {
+            tracing::error!("Failed to look up LBCGBM beacon type: {}", e);
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: format!("Failed to look up beacon type: {e}"),
+            }));
+        }
+    };
+
+    // Create the beacon via factory
+    let beacon_address = match create_lbcgbm_beacon(state.inner(), &config, &request).await {
+        Ok(addr) => addr,
+        Err(e) => {
+            let error_msg = format!("LBCGBM beacon creation failed: {e}");
+            tracing::error!("{}", error_msg);
+            sentry::capture_message(&error_msg, sentry::Level::Error);
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: error_msg,
+            }));
+        }
+    };
+
+    // Register with registry
+    match create_and_register_factory_beacon(state.inner(), &config, beacon_address).await {
+        Ok(response) => {
+            tracing::info!(
+                "LBCGBM beacon created: beacon={}, registered={}",
+                response.beacon_address,
+                response.registered,
+            );
+            Ok(Json(ApiResponse {
+                success: true,
+                data: Some(response),
+                message: "LBCGBM beacon created successfully".to_string(),
+            }))
+        }
+        Err(e) => {
+            tracing::error!("LBCGBM beacon registration failed: {}", e);
+            Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: format!("Beacon created at but registration failed: {e}"),
+            }))
+        }
+    }
+}
+
+/// Creates a WeightedSumComposite beacon via the WeightedSumCompositeFactory.
+///
+/// Deploys a CompositeBeacon that computes its index as a weighted sum of
+/// reference beacon indices. Optionally registers with the default registry.
+#[openapi(tag = "Beacon")]
+#[post("/create_weighted_sum_composite_beacon", data = "<request>")]
+pub async fn create_weighted_sum_composite_beacon_endpoint(
+    request: Json<CreateWeightedSumCompositeBeaconRequest>,
+    _token: ApiToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<CreateBeaconResponse>>, Status> {
+    tracing::info!(
+        "Received request: POST /create_weighted_sum_composite_beacon ({} reference beacons)",
+        request.reference_beacons.len()
+    );
+    let _guard = sentry::Hub::current().push_scope();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("endpoint", "/create_weighted_sum_composite_beacon");
+    });
+
+    // Look up the WeightedSumComposite beacon type config from registry
+    let config = match state
+        .beacon_type_registry
+        .get_type("weighted-sum-composite")
+        .await
+    {
+        Ok(Some(config))
+            if config.enabled && config.factory_type == FactoryType::WeightedSumComposite =>
+        {
+            config
+        }
+        Ok(Some(_)) => {
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "WeightedSumComposite beacon type is disabled or misconfigured"
+                    .to_string(),
+            }));
+        }
+        Ok(None) => {
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message:
+                    "WeightedSumComposite beacon type not registered. Set WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS env var."
+                        .to_string(),
+            }));
+        }
+        Err(e) => {
+            tracing::error!("Failed to look up WeightedSumComposite beacon type: {}", e);
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: format!("Failed to look up beacon type: {e}"),
+            }));
+        }
+    };
+
+    // Create the beacon via factory
+    let beacon_address =
+        match create_weighted_sum_composite_beacon(state.inner(), &config, &request).await {
+            Ok(addr) => addr,
+            Err(e) => {
+                let error_msg = format!("WeightedSumComposite beacon creation failed: {e}");
+                tracing::error!("{}", error_msg);
+                sentry::capture_message(&error_msg, sentry::Level::Error);
+                return Ok(Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: error_msg,
+                }));
+            }
+        };
+
+    // Register with registry
+    match create_and_register_factory_beacon(state.inner(), &config, beacon_address).await {
+        Ok(response) => {
+            tracing::info!(
+                "WeightedSumComposite beacon created: beacon={}, registered={}",
+                response.beacon_address,
+                response.registered,
+            );
+            Ok(Json(ApiResponse {
+                success: true,
+                data: Some(response),
+                message: "WeightedSumComposite beacon created successfully".to_string(),
+            }))
+        }
+        Err(e) => {
+            tracing::error!("WeightedSumComposite beacon registration failed: {}", e);
+            Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: format!("Beacon created but registration failed: {e}"),
+            }))
         }
     }
 }

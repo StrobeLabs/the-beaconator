@@ -529,6 +529,8 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::beacon::update_beacon,
         routes::beacon::batch_update_beacon,
         routes::beacon::update_beacon_with_ecdsa_adapter,
+        routes::beacon::create_lbcgbm_beacon_endpoint,
+        routes::beacon::create_weighted_sum_composite_beacon_endpoint,
         routes::perp::deploy_perp_for_beacon_endpoint,
         routes::perp::batch_deploy_perps_for_beacons,
         routes::perp::deposit_liquidity_for_perp_endpoint,

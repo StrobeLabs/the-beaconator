@@ -71,6 +71,53 @@ pub struct CreateBeaconWithEcdsaRequest {
     pub initial_index: u128,
 }
 
+/// Create an LBCGBM standalone beacon via the LBCGBMFactory
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CreateLBCGBMBeaconRequest {
+    /// Measurement scale for the Identity preprocessor
+    #[schemars(with = "String")]
+    pub measurement_scale: u128,
+    /// Base sigma for CGBM
+    #[schemars(with = "String")]
+    pub sigma_base: u128,
+    /// Scaling factor for CGBM
+    #[schemars(with = "String")]
+    pub scaling_factor: u128,
+    /// Alpha parameter for CGBM
+    #[schemars(with = "String")]
+    pub alpha: u128,
+    /// Decay parameter for CGBM
+    #[schemars(with = "String")]
+    pub decay: u128,
+    /// Initial sigma ratio for CGBM
+    #[schemars(with = "String")]
+    pub initial_sigma_ratio: u128,
+    /// Whether to use variance scaling in CGBM
+    pub variance_scaling: bool,
+    /// Minimum index for the Bounded transform
+    #[schemars(with = "String")]
+    pub min_index: u128,
+    /// Maximum index for the Bounded transform
+    #[schemars(with = "String")]
+    pub max_index: u128,
+    /// Steepness for the Bounded transform sigmoid
+    #[schemars(with = "String")]
+    pub steepness: u128,
+    /// Initial beacon index value
+    #[schemars(with = "String")]
+    pub initial_index: u128,
+}
+
+/// Create a WeightedSumComposite beacon via the WeightedSumCompositeFactory
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CreateWeightedSumCompositeBeaconRequest {
+    /// Addresses of reference beacons to compose (hex with 0x prefix)
+    pub reference_beacons: Vec<String>,
+    /// Weights for the WeightedSum composer (WAD-scaled, as decimal strings)
+    #[schemars(with = "Vec<String>")]
+    pub weights: Vec<u128>,
+}
+
 /// Register an existing beacon with the registry
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RegisterBeaconRequest {
