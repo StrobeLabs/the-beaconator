@@ -63,3 +63,60 @@ fn test_ecdsa_request_serialization() {
 
     assert_eq!(deserialized.initial_index, 1000000);
 }
+
+/// Verify that with_deploy_code sets tx kind to Create,
+/// which was the root cause of the "missing properties: [('Wallet', ['to'])]" bug.
+#[test]
+fn test_deploy_tx_uses_create_kind() {
+    use alloy::network::TransactionBuilder;
+    use alloy::primitives::{Address, Bytes, TxKind, U256};
+    use alloy::rpc::types::TransactionRequest;
+    use alloy::sol_types::SolValue;
+
+    let bytecode = vec![0x60, 0x80, 0x60, 0x40]; // minimal placeholder bytecode
+    let verifier = Address::ZERO;
+    let initial_index = 100u128;
+
+    let constructor_args = (verifier, U256::from(initial_index)).abi_encode();
+    let mut deploy_data = bytecode;
+    deploy_data.extend_from_slice(&constructor_args);
+
+    let tx = TransactionRequest::default().with_deploy_code(Bytes::from(deploy_data));
+
+    // with_deploy_code explicitly sets TxKind::Create
+    assert_eq!(
+        tx.to,
+        Some(TxKind::Create),
+        "Deploy tx must have TxKind::Create"
+    );
+    // input should be populated
+    assert!(tx.input.input().is_some(), "Deploy tx must have input data");
+}
+
+/// Verify that the old .input() approach leaves tx kind unset (the bug).
+#[test]
+fn test_old_input_approach_lacks_create_kind() {
+    use alloy::primitives::{Bytes, TxKind};
+    use alloy::rpc::types::TransactionRequest;
+
+    let deploy_data = vec![0x60, 0x80, 0x60, 0x40];
+    let tx = TransactionRequest::default().input(Bytes::from(deploy_data).into());
+
+    // The old approach sets input but does NOT set tx kind to Create.
+    // This was the bug: wallet layer expected explicit Create kind.
+    assert_ne!(
+        tx.to,
+        Some(TxKind::Create),
+        "Old .input() should NOT set Create kind"
+    );
+}
+
+#[tokio::test]
+async fn test_deploy_identity_beacon_empty_bytecode_in_test_state() {
+    let app_state = crate::test_utils::create_simple_test_app_state().await;
+    // Test app state should have empty bytecode (deploy_identity_beacon would reject this)
+    assert!(
+        app_state.identity_beacon_bytecode.is_empty(),
+        "Test app state should have empty bytecode"
+    );
+}

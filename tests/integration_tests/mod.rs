@@ -2,6 +2,7 @@
 
 pub mod beacon_core_integration_tests;
 pub mod beacon_verifiable_integration_tests;
+pub mod factory_integration_tests;
 pub mod models_test;
 pub mod nonce_conflict_tests;
 // pub mod nonce_sync_tests; // Removed - nonce management obsolete with WalletManager
