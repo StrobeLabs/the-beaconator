@@ -1,6 +1,6 @@
 use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::signers::Signer;
-use alloy::sol_types::SolValue;
+use alloy::sol_types::SolType;
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
@@ -137,7 +137,13 @@ pub async fn update_beacon_with_ecdsa(
     );
 
     // 9. ABI-encode inputs as (uint256[] measurement, uint256 nonce)
-    let inputs = (measurement_array.clone(), nonce).abi_encode();
+    // Use abi_encode_params to match Solidity's abi.encode(uint256[], uint256)
+    // Note: SolValue::abi_encode() adds an extra tuple wrapper (160 bytes),
+    // but Solidity's abi.decode expects flat params encoding (128 bytes for 1-element array).
+    let inputs = <(
+        alloy::sol_types::sol_data::Array<alloy::sol_types::sol_data::Uint<256>>,
+        alloy::sol_types::sol_data::Uint<256>,
+    )>::abi_encode_params(&(measurement_array.clone(), nonce));
     let inputs_bytes = Bytes::from(inputs);
 
     tracing::info!(
@@ -262,7 +268,6 @@ pub async fn update_beacon_with_ecdsa(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::sol_types::SolValue;
 
     #[test]
     fn test_abi_encode_inputs() {
@@ -270,10 +275,14 @@ mod tests {
         let nonce = U256::from(1704067200u64); // Example timestamp
 
         let measurement_array = vec![measurement];
-        let inputs = (measurement_array, nonce).abi_encode();
+        // Use abi_encode_params (flat params encoding) to match Solidity's abi.decode(inputs, (uint256[], uint256))
+        let inputs = <(
+            alloy::sol_types::sol_data::Array<alloy::sol_types::sol_data::Uint<256>>,
+            alloy::sol_types::sol_data::Uint<256>,
+        )>::abi_encode_params(&(measurement_array, nonce));
 
-        // ABI-encoded (uint256[], uint256) = offset(32) + nonce(32) + length(32) + element(32) + padding(32) = 160 bytes
-        assert_eq!(inputs.len(), 160);
+        // Flat params encoding: offset(32) + nonce(32) + length(32) + element(32) = 128 bytes
+        assert_eq!(inputs.len(), 128);
     }
 
     #[test]
