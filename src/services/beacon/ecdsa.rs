@@ -128,20 +128,72 @@ pub async fn update_beacon_with_ecdsa(
     // Alloy signature.as_bytes() returns [r (32 bytes) | s (32 bytes) | v (1 byte)]
     let sig_bytes = Bytes::from(signature.as_bytes().to_vec());
 
-    tracing::debug!("Signature bytes length: {}", sig_bytes.len());
+    tracing::info!(
+        "Signature: len={}, v={}, r={:#x}, s={:#x}",
+        sig_bytes.len(),
+        if signature.v() { 28u8 } else { 27u8 },
+        signature.r(),
+        signature.s()
+    );
 
     // 9. ABI-encode inputs as (uint256[] measurement, uint256 nonce)
-    let inputs = (measurement_array, nonce).abi_encode();
+    let inputs = (measurement_array.clone(), nonce).abi_encode();
     let inputs_bytes = Bytes::from(inputs);
 
-    tracing::debug!("Inputs bytes length: {}", inputs_bytes.len());
+    tracing::info!(
+        "Update params: proof_len={}, inputs_len={}, measurement={}, nonce={}",
+        sig_bytes.len(),
+        inputs_bytes.len(),
+        measurement,
+        nonce
+    );
 
-    // 10. Call beacon.update(signature, inputs) using the write provider
+    // 10. Simulate the update call first to get revert reason if it would fail
+    let beacon_write = IBeacon::new(beacon_address, &provider);
+    match beacon_write
+        .update(sig_bytes.clone(), inputs_bytes.clone())
+        .call()
+        .await
+    {
+        Ok(_) => {
+            tracing::info!("Preflight simulation of beacon.update() succeeded");
+        }
+        Err(e) => {
+            // Also try calling verify() directly on the verifier to isolate the failure
+            let verify_result = verifier
+                .verify(sig_bytes.clone(), inputs_bytes.clone())
+                .call()
+                .await;
+            let verify_detail = match verify_result {
+                Ok(_) => "verify() succeeded".to_string(),
+                Err(ve) => format!("verify() also reverted: {ve}"),
+            };
+
+            // Check if the proof hash was already used
+            let proof_hash = alloy::primitives::keccak256(sig_bytes.as_ref());
+            let used_check = verifier.usedProofs(proof_hash).call().await;
+            let used_detail = match used_check {
+                Ok(val) => {
+                    // usedProofs returns a bool - access via Debug since field name is generated
+                    format!("usedProofs({:#x})={:?}", proof_hash, val)
+                }
+                Err(ue) => format!("usedProofs check failed: {ue}"),
+            };
+
+            let error_msg = format!(
+                "Preflight simulation of beacon.update() reverted: {e}. \
+                 Verifier diagnostics: {verify_detail}. {used_detail}"
+            );
+            tracing::error!("{}", error_msg);
+            return Err(error_msg);
+        }
+    }
+
+    // 11. Send the actual transaction
     tracing::info!(
         "Sending update transaction to beacon with wallet {}",
         tx_wallet_address
     );
-    let beacon_write = IBeacon::new(beacon_address, &provider);
     let pending_tx = beacon_write
         .update(sig_bytes.clone(), inputs_bytes.clone())
         .send()
@@ -150,11 +202,10 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Transaction sent, waiting for receipt...");
 
-    // Get the transaction hash before calling get_receipt()
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Transaction hash: {:?}", tx_hash);
 
-    // 11. Wait for confirmation with timeout
+    // 12. Wait for confirmation with timeout
     let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
         Ok(Ok(receipt)) => {
             tracing::info!("Transaction confirmed via get_receipt()");
@@ -172,7 +223,7 @@ pub async fn update_beacon_with_ecdsa(
         }
     };
 
-    // 12. Validate transaction status
+    // 13. Validate transaction status
     if !receipt.status() {
         let error_msg = format!("update() transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
@@ -181,7 +232,7 @@ pub async fn update_beacon_with_ecdsa(
         return Err(error_msg);
     }
 
-    // 13. Validate IndexUpdated event was emitted
+    // 14. Validate IndexUpdated event was emitted
     let index_updated_found = receipt.inner.logs().iter().any(|log| {
         // IndexUpdated event signature: keccak256("IndexUpdated(uint256)")
         log.address() == beacon_address
