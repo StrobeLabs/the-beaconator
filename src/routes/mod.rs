@@ -59,6 +59,16 @@ sol! {
     }
 
     #[sol(rpc)]
+    interface IIdentityFactory {
+        function createBeacon(address signer, uint256 initialIndex) external returns (address);
+    }
+
+    #[sol(rpc)]
+    interface IWeightedSumCompositeFactory {
+        function createBeacon(address[] memory referenceBeacons, uint256[] memory weights) external returns (address);
+    }
+
+    #[sol(rpc)]
     interface IERC20 {
         function transfer(address to, uint256 amount) external returns (bool);
         function approve(address spender, uint256 amount) external returns (bool);
@@ -123,6 +133,31 @@ sol! {
         event PositionOpened(bytes32 perpId, uint256 sqrtPriceX96, uint256 longOI, uint256 shortOI, uint256 posId, bool isMaker, int256 perpDelta, int256 usdDelta, int24 tickLower, int24 tickUpper);
     }
 }
+
+// Separate module for LBCGBMFactory to allow clippy::too_many_arguments on generated code
+#[allow(clippy::too_many_arguments, clippy::module_inception)]
+mod lbcgbm_factory {
+    alloy::sol! {
+        #[sol(rpc)]
+        interface ILBCGBMFactory {
+            function createBeacon(
+                address signer,
+                uint256 measurementScale,
+                uint256 sigmaBase,
+                uint256 scalingFactor,
+                uint256 alpha,
+                uint256 decay,
+                uint256 initialSigmaRatio,
+                bool varianceScaling,
+                uint256 minIndex,
+                uint256 maxIndex,
+                uint256 steepness,
+                uint256 initialIndex
+            ) external returns (address);
+        }
+    }
+}
+pub use lbcgbm_factory::ILBCGBMFactory;
 
 // Re-export transaction utilities from services module
 pub use crate::services::transaction::execution::is_nonce_error;

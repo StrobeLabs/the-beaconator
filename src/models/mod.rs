@@ -9,9 +9,11 @@ pub use beacon_type::{BeaconTypeConfig, FactoryType, SeedResult};
 pub use requests::{
     BatchDeployPerpsForBeaconsRequest, BatchDepositLiquidityForPerpsRequest,
     BatchUpdateBeaconRequest, BeaconCreationParams, BeaconUpdateData, CreateBeaconByTypeRequest,
-    CreateBeaconWithEcdsaRequest, DeployPerpForBeaconRequest, DepositLiquidityForPerpRequest,
-    FundGuestWalletRequest, RegisterBeaconRequest, RegisterBeaconTypeRequest, UpdateBeaconRequest,
-    UpdateBeaconTypeRequest, UpdateBeaconWithEcdsaRequest,
+    CreateBeaconWithEcdsaRequest, CreateLBCGBMBeaconRequest,
+    CreateWeightedSumCompositeBeaconRequest, DeployPerpForBeaconRequest,
+    DepositLiquidityForPerpRequest, FundGuestWalletRequest, RegisterBeaconRequest,
+    RegisterBeaconTypeRequest, UpdateBeaconRequest, UpdateBeaconTypeRequest,
+    UpdateBeaconWithEcdsaRequest,
 };
 pub use responses::{
     ApiResponse, BatchDeployPerpsForBeaconsResponse, BatchDepositLiquidityForPerpsResponse,
