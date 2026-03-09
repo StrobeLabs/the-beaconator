@@ -67,13 +67,18 @@ impl SafeTransactionService {
     /// conflicting with queued-but-unexecuted transactions.
     pub async fn get_nonce(&self, safe_address: Address) -> Result<u64, String> {
         // Get on-chain nonce from Safe info
-        let info_url = format!("{}/api/v1/safes/{:#x}/", self.base_url, safe_address);
+        let info_url = format!(
+            "{}/api/v1/safes/{}/",
+            self.base_url,
+            safe_address.to_checksum(None)
+        );
         let on_chain_nonce = self.fetch_json::<SafeInfoResponse>(&info_url).await?.nonce;
 
         // Check for pending (non-executed) transactions with higher nonces
         let pending_url = format!(
-            "{}/api/v1/safes/{:#x}/multisig-transactions/?executed=false&limit=1&ordering=-nonce",
-            self.base_url, safe_address
+            "{}/api/v1/safes/{}/multisig-transactions/?executed=false&limit=1&ordering=-nonce",
+            self.base_url,
+            safe_address.to_checksum(None)
         );
         let pending_list = self
             .fetch_json::<MultisigTxListResponse>(&pending_url)
@@ -206,25 +211,26 @@ impl SafeTransactionService {
         let sender = signer.address();
 
         let request_body = ProposeTransactionRequest {
-            to: format!("{:#x}", to),
+            to: to.to_checksum(None),
             value: "0".to_string(),
             data: format!("0x{}", hex::encode(data)),
             operation: 0,
             safe_tx_gas: "0".to_string(),
             base_gas: "0".to_string(),
             gas_price: "0".to_string(),
-            gas_token: format!("{:#x}", Address::ZERO),
-            refund_receiver: format!("{:#x}", Address::ZERO),
+            gas_token: Address::ZERO.to_checksum(None),
+            refund_receiver: Address::ZERO.to_checksum(None),
             nonce,
             contract_transaction_hash: format!("{:#x}", safe_tx_hash),
-            sender: format!("{:#x}", sender),
+            sender: sender.to_checksum(None),
             signature: format!("0x{}", hex::encode(&sig_bytes)),
             origin: "the-beaconator".to_string(),
         };
 
         let url = format!(
-            "{}/api/v1/safes/{:#x}/multisig-transactions/",
-            self.base_url, safe_address
+            "{}/api/v1/safes/{}/multisig-transactions/",
+            self.base_url,
+            safe_address.to_checksum(None)
         );
 
         let resp = self
