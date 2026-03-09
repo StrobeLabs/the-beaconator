@@ -15,6 +15,17 @@ use crate::services::safe::SafeTransactionService;
 use crate::services::transaction::events::parse_index_updated_event;
 use crate::services::transaction::execution::is_nonce_error;
 
+/// Outcome of a beacon registration attempt.
+#[derive(Debug)]
+pub enum RegistrationOutcome {
+    /// Beacon was already registered, no action taken.
+    AlreadyRegistered,
+    /// A Safe multisig transaction was proposed (not yet executed).
+    SafeProposed(B256),
+    /// Transaction was submitted and confirmed on-chain.
+    OnChainConfirmed(B256),
+}
+
 /// Create an IdentityBeacon with an ECDSA verifier.
 ///
 /// This function handles:
@@ -133,7 +144,7 @@ pub async fn register_beacon_with_registry(
     state: &AppState,
     beacon_address: Address,
     registry_address: Address,
-) -> Result<B256, String> {
+) -> Result<RegistrationOutcome, String> {
     tracing::info!(
         "Registering beacon {} with registry {}",
         beacon_address,
@@ -150,9 +161,7 @@ pub async fn register_beacon_with_registry(
             beacon_address,
             registry_address
         );
-        // Return a fake transaction hash to indicate success without actual transaction
-        // Using zeros is a common pattern to indicate no-op success
-        return Ok(B256::ZERO);
+        return Ok(RegistrationOutcome::AlreadyRegistered);
     }
 
     // Validate beacon contract exists and has code
@@ -213,7 +222,7 @@ pub async fn register_beacon_with_registry(
             ),
             sentry::Level::Info,
         );
-        return Ok(safe_tx_hash);
+        return Ok(RegistrationOutcome::SafeProposed(safe_tx_hash));
     }
 
     // Acquire a wallet from the pool
@@ -407,7 +416,7 @@ pub async fn register_beacon_with_registry(
             &format!("Beacon {beacon_address} registered with registry {registry_address}"),
             sentry::Level::Info,
         );
-        Ok(tx_hash)
+        Ok(RegistrationOutcome::OnChainConfirmed(tx_hash))
     } else {
         let error_msg = format!("Registration transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
@@ -602,13 +611,22 @@ pub async fn create_and_register_beacon_by_type(
 
     let registered = if let Some(registry_address) = config.registry_address {
         match register_beacon_with_registry(state, beacon_address, registry_address).await {
-            Ok(_) => {
+            Ok(RegistrationOutcome::OnChainConfirmed(_))
+            | Ok(RegistrationOutcome::AlreadyRegistered) => {
                 tracing::info!(
                     "Beacon {} registered with registry {}",
                     beacon_address,
                     registry_address
                 );
                 true
+            }
+            Ok(RegistrationOutcome::SafeProposed(hash)) => {
+                tracing::info!(
+                    "Beacon {} Safe registration proposed (hash: {}), not yet confirmed",
+                    beacon_address,
+                    hash
+                );
+                false
             }
             Err(e) => {
                 tracing::warn!(

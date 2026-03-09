@@ -2,6 +2,9 @@ use alloy::primitives::{Address, B256, U256, keccak256};
 use alloy::signers::Signer;
 use alloy::signers::local::PrivateKeySigner;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Client for the Safe Transaction Service API.
 ///
@@ -14,6 +17,16 @@ pub struct SafeTransactionService {
 
 #[derive(Deserialize)]
 struct SafeInfoResponse {
+    nonce: u64,
+}
+
+#[derive(Deserialize)]
+struct MultisigTxListResponse {
+    results: Vec<MultisigTxSummary>,
+}
+
+#[derive(Deserialize)]
+struct MultisigTxSummary {
     nonce: u64,
 }
 
@@ -38,22 +51,57 @@ struct ProposeTransactionRequest {
 
 impl SafeTransactionService {
     pub fn new(base_url: &str) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(DEFAULT_TIMEOUT)
+            .build()
+            .expect("Failed to build reqwest client");
         Self {
-            client: reqwest::Client::new(),
+            client,
             base_url: base_url.trim_end_matches('/').to_string(),
         }
     }
 
-    /// Get the next nonce for the Safe from the Transaction Service.
+    /// Get the next available nonce for a Safe transaction proposal.
+    ///
+    /// Returns `max(on_chain_nonce, highest_pending_nonce + 1)` to avoid
+    /// conflicting with queued-but-unexecuted transactions.
     pub async fn get_nonce(&self, safe_address: Address) -> Result<u64, String> {
-        let url = format!("{}/api/v1/safes/{:#x}/", self.base_url, safe_address);
+        // Get on-chain nonce from Safe info
+        let info_url = format!("{}/api/v1/safes/{:#x}/", self.base_url, safe_address);
+        let on_chain_nonce = self.fetch_json::<SafeInfoResponse>(&info_url).await?.nonce;
 
+        // Check for pending (non-executed) transactions with higher nonces
+        let pending_url = format!(
+            "{}/api/v1/safes/{:#x}/multisig-transactions/?executed=false&limit=1&ordering=-nonce",
+            self.base_url, safe_address
+        );
+        let next_nonce = match self
+            .fetch_json::<MultisigTxListResponse>(&pending_url)
+            .await
+        {
+            Ok(list) if !list.results.is_empty() => {
+                let highest_pending = list.results[0].nonce;
+                std::cmp::max(on_chain_nonce, highest_pending + 1)
+            }
+            _ => on_chain_nonce,
+        };
+
+        tracing::info!(
+            "Safe nonce: on_chain={}, next={}",
+            on_chain_nonce,
+            next_nonce
+        );
+        Ok(next_nonce)
+    }
+
+    /// Fetch JSON from a URL with error handling.
+    async fn fetch_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T, String> {
         let resp = self
             .client
-            .get(&url)
+            .get(url)
             .send()
             .await
-            .map_err(|e| format!("Failed to fetch Safe info: {e}"))?;
+            .map_err(|e| format!("Safe TX Service request failed: {e}"))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -63,12 +111,9 @@ impl SafeTransactionService {
             ));
         }
 
-        let info: SafeInfoResponse = resp
-            .json()
+        resp.json()
             .await
-            .map_err(|e| format!("Failed to parse Safe info response: {e}"))?;
-
-        Ok(info.nonce)
+            .map_err(|e| format!("Failed to parse Safe TX Service response: {e}"))
     }
 
     /// Compute the EIP-712 Safe transaction hash.
