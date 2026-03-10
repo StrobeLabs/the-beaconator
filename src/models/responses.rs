@@ -139,3 +139,45 @@ pub struct BatchDepositLiquidityForPerpsResponse {
     /// Error messages for failed deposits
     pub errors: Vec<String>,
 }
+
+/// Addresses of components created during modular beacon creation
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct BeaconComponentAddresses {
+    /// Preprocessor contract address (for standalone beacons)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preprocessor: Option<String>,
+    /// Base function contract address (for standalone beacons)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_fn: Option<String>,
+    /// Transform contract address (for standalone beacons)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform: Option<String>,
+    /// Composer contract address (for composite beacons)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub composer: Option<String>,
+    /// Group function contract address (for group beacons)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_fn: Option<String>,
+    /// Group transform contract address (for group beacons)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_transform: Option<String>,
+}
+
+/// Response from modular beacon creation
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CreateModularBeaconResponse {
+    /// Address of the created beacon
+    pub beacon_address: String,
+    /// Address of the deployed verifier (if applicable)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verifier_address: Option<String>,
+    /// Recipe slug used for creation
+    pub recipe: String,
+    /// Addresses of all intermediate components created
+    pub components: BeaconComponentAddresses,
+    /// Whether the beacon was registered with a registry
+    pub registered: bool,
+    /// Safe multisig tx hash if registration was proposed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub safe_proposal_hash: Option<String>,
+}

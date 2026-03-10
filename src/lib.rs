@@ -19,6 +19,8 @@ use crate::models::AppState;
 use crate::models::beacon_type::{BeaconTypeConfig, FactoryType};
 use crate::models::wallet::WalletManagerConfig;
 use crate::services::beacon::BeaconTypeRegistry;
+use crate::services::beacon::ComponentFactoryRegistry;
+use crate::services::beacon::RecipeRegistry;
 use crate::services::wallet::{WalletManager, WalletSyncService};
 use rocket::{Request, catch, catchers};
 
@@ -450,6 +452,43 @@ pub async fn create_rocket() -> Rocket<Build> {
         }
     }
 
+    // Initialize ComponentFactoryRegistry (Redis-backed)
+    let component_factory_registry = ComponentFactoryRegistry::new(&redis_url)
+        .await
+        .unwrap_or_else(|e| {
+            panic!("ComponentFactoryRegistry failed to initialize: {e}. Check Redis connectivity.")
+        });
+
+    match component_factory_registry.list_factories().await {
+        Ok(factories) => {
+            tracing::info!(
+                "Component factory registry contains {} factories",
+                factories.len()
+            );
+        }
+        Err(e) => {
+            tracing::warn!("Failed to list component factories: {e}");
+        }
+    }
+
+    // Initialize RecipeRegistry and seed standard recipes (Redis-backed)
+    let recipe_registry = RecipeRegistry::new(&redis_url).await.unwrap_or_else(|e| {
+        panic!("RecipeRegistry failed to initialize: {e}. Check Redis connectivity.")
+    });
+
+    match recipe_registry.seed_standard_recipes().await {
+        Ok(result) => {
+            tracing::info!(
+                "Recipe seed: {} seeded, {} already existed",
+                result.seeded,
+                result.skipped
+            );
+        }
+        Err(e) => {
+            tracing::warn!("Failed to seed standard recipes: {e}");
+        }
+    }
+
     // Optional Safe multisig configuration for beacon registration
     let safe_address = env::var("SAFE_ADDRESS")
         .ok()
@@ -500,6 +539,12 @@ pub async fn create_rocket() -> Rocket<Build> {
         // Beacon type registry
         beacon_type_registry: std::sync::Arc::new(beacon_type_registry),
 
+        // Component factory registry
+        component_factory_registry: std::sync::Arc::new(component_factory_registry),
+
+        // Recipe registry
+        recipe_registry: std::sync::Arc::new(recipe_registry),
+
         // IdentityBeacon bytecode
         identity_beacon_bytecode,
 
@@ -541,6 +586,10 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::beacon_type::register_beacon_type,
         routes::beacon_type::update_beacon_type,
         routes::beacon_type::delete_beacon_type,
+        routes::recipe::list_recipes,
+        routes::recipe::get_recipe,
+        routes::recipe::list_component_factories,
+        routes::beacon::create_modular_beacon,
     ];
 
     // Serve the OpenAPI spec at /openapi.json

@@ -39,12 +39,19 @@ make build-release # Build project (release)
 ### Core Components
 
 - **`src/lib.rs`**: Provider setup, ABI loading, and app initialization
-- **`src/models.rs`**: Request/response models and AppState definition
+- **`src/models/`**: Request/response models and AppState definition
+  - `component_factory.rs`: 20 component factory types and configs
+  - `recipe.rs`: Beacon recipes and spec enums (BeaconKind, PreprocessorSpec, etc.)
 - **`src/routes/`**: API endpoint implementations
-  - `beacon.rs` (2,828 lines): Beacon operations
-  - `perp.rs` (3,351 lines): Perpetual operations
+  - `beacon.rs`: Beacon operations (create, update, batch)
+  - `perp.rs`: Perpetual operations
+  - `recipe.rs`: Recipe and component factory listing endpoints
   - `wallet.rs`: Wallet funding
-  - `mod.rs`: Shared utilities and transaction management
+  - `mod.rs`: Shared utilities, sol! interfaces, and transaction management
+- **`src/services/beacon/`**: Beacon service layer
+  - `modular.rs`: Multi-step modular beacon creation orchestrator
+  - `component_registry.rs`: Redis-backed component factory address registry
+  - `recipe_registry.rs`: Redis-backed recipe registry with 12 standard recipes
 - **`src/guards.rs`**: Authentication guard for Bearer token validation
 - **`src/main.rs`**: Entry point that launches Rocket server
 - **`abis/`**: Contract ABI files loaded at runtime
@@ -59,11 +66,10 @@ See `ARCHITECTURE.md` for detailed guidelines on code organization and best prac
 - `POST /batch_create_perpcity_beacon` - Batch create beacons (1-100 limit)
 - `POST /deploy_perp_for_beacon` - Deploy perp for single beacon
 - `POST /update_beacon` - Update beacon with ZK proof
-
-**Placeholder (not implemented):**
-- `GET /all_beacons`
-- `POST /create_beacon` 
-- `POST /register_beacon`
+- `POST /create_modular_beacon` - Create beacon using modular recipe system
+- `GET /recipes` - List all available beacon recipes
+- `GET /recipes/<slug>` - Get specific recipe details
+- `GET /component_factories` - List all component factory addresses
 
 ### Alloy Provider Architecture
 
@@ -186,6 +192,40 @@ let contract = IBeacon::new(address, &*state.provider);
 - ABIs stored in `abis/` directory and loaded at runtime via `load_abi()` 
 - File-based approach preferred over embedded serde structs
 - Manual ABI modifications documented (e.g., createPerp function added to PerpHook.json)
+
+## Modular Beacon Creation
+
+The beacon system uses a modular architecture with 20 individual component factory contracts. Beacons are created by composing components from separate factories.
+
+### Component Factory Types
+- **Preprocessors**: IdentityPreprocessor, Threshold, TernaryToBinary, Argmax
+- **Base Functions**: CGBM (continuous), DGBM (discrete)
+- **Transforms**: Bounded (sigmoid), Unbounded (exponential)
+- **Composers**: WeightedSum
+- **Group Functions**: Dominance, RelativeDominance, ContinuousAllocation, DiscreteAllocation
+- **Group Transforms**: Softmax, GMNormalize
+- **Beacon Factories**: Identity, Standalone, Composite, GroupManager
+- **Verifier**: ECDSAVerifier
+
+### Recipe System
+Standard recipes define which component factories to call. 12 built-in recipes are seeded at startup:
+- 8 Standalone: lbcgbm, cgbm, lbdgbm, dgbm, ternary_lbcgbm, ternary_cgbm, ternary_lbdgbm, ternary_dgbm
+- 4 Group: dominance, relative_dominance, discrete_allocation, continuous_allocation
+
+### Redis Storage
+Factory addresses are pre-seeded into Redis (not env vars). Keys:
+- `beaconator:component_factory:{FactoryType}` - factory config JSON
+- `beaconator:component_factories` - set of factory type names
+- `beaconator:beacon_recipe:{slug}` - recipe config JSON
+- `beaconator:beacon_recipes` - set of recipe slugs
+
+### Creation Flow
+1. Look up recipe by slug from RecipeRegistry
+2. Acquire wallet from pool (held for all steps)
+3. Create ECDSA verifier via ECDSAVerifierFactory
+4. Create components via appropriate factories (preprocessor, baseFn, transform, etc.)
+5. Create beacon via beacon factory (Standalone/Composite/GroupManager), passing component addresses
+6. Register with beacon registry
 
 ## Perp Deployment - Modular Architecture
 
