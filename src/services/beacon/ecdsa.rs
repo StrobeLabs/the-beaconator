@@ -1,6 +1,6 @@
 use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::signers::Signer;
-use alloy::sol_types::SolValue;
+use alloy::sol_types::SolType;
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
@@ -128,20 +128,101 @@ pub async fn update_beacon_with_ecdsa(
     // Alloy signature.as_bytes() returns [r (32 bytes) | s (32 bytes) | v (1 byte)]
     let sig_bytes = Bytes::from(signature.as_bytes().to_vec());
 
-    tracing::debug!("Signature bytes length: {}", sig_bytes.len());
+    let proof_hash = alloy::primitives::keccak256(sig_bytes.as_ref());
+
+    tracing::info!(
+        "Signature: len={}, proof_hash={:#x}",
+        sig_bytes.len(),
+        proof_hash
+    );
+    tracing::debug!(
+        "Signature details: v={}, r={:#x}, s={:#x}",
+        if signature.v() { 28u8 } else { 27u8 },
+        signature.r(),
+        signature.s()
+    );
 
     // 9. ABI-encode inputs as (uint256[] measurement, uint256 nonce)
-    let inputs = (measurement_array, nonce).abi_encode();
+    // Use abi_encode_params to match Solidity's abi.encode(uint256[], uint256)
+    // Note: SolValue::abi_encode() adds an extra tuple wrapper (160 bytes),
+    // but Solidity's abi.decode expects flat params encoding (128 bytes for 1-element array).
+    let inputs = <(
+        alloy::sol_types::sol_data::Array<alloy::sol_types::sol_data::Uint<256>>,
+        alloy::sol_types::sol_data::Uint<256>,
+    )>::abi_encode_params(&(measurement_array.clone(), nonce));
     let inputs_bytes = Bytes::from(inputs);
+    let inputs_hash = alloy::primitives::keccak256(inputs_bytes.as_ref());
 
-    tracing::debug!("Inputs bytes length: {}", inputs_bytes.len());
+    tracing::info!(
+        "Update params: proof_len={}, inputs_len={}, inputs_hash={:#x}",
+        sig_bytes.len(),
+        inputs_bytes.len(),
+        inputs_hash
+    );
+    tracing::debug!(
+        "Update raw values: measurement={}, nonce={}",
+        measurement,
+        nonce
+    );
 
-    // 10. Call beacon.update(signature, inputs) using the write provider
+    // 10. Simulate the update call first to get revert reason if it would fail
+    let beacon_write = IBeacon::new(beacon_address, &provider);
+    match beacon_write
+        .update(sig_bytes.clone(), inputs_bytes.clone())
+        .call()
+        .await
+    {
+        Ok(_) => {
+            tracing::info!("Preflight simulation of beacon.update() succeeded");
+        }
+        Err(e) => {
+            // Only run diagnostics for EVM reverts, not transport/network failures
+            if e.as_revert_data().is_some() {
+                let diag_timeout = Duration::from_secs(5);
+
+                let verify_detail = match timeout(
+                    diag_timeout,
+                    verifier
+                        .verify(sig_bytes.clone(), inputs_bytes.clone())
+                        .call(),
+                )
+                .await
+                {
+                    Ok(Ok(_)) => "verify() succeeded".to_string(),
+                    Ok(Err(ve)) => format!("verify() also reverted: {ve}"),
+                    Err(_) => "verify() diagnostic timed out".to_string(),
+                };
+
+                let used_detail =
+                    match timeout(diag_timeout, verifier.usedProofs(proof_hash).call()).await {
+                        Ok(Ok(val)) => {
+                            format!("usedProofs({:#x})={:?}", proof_hash, val)
+                        }
+                        Ok(Err(ue)) => format!("usedProofs check failed: {ue}"),
+                        Err(_) => "usedProofs diagnostic timed out".to_string(),
+                    };
+
+                let error_msg = format!(
+                    "Preflight simulation of beacon.update() reverted: {e}. \
+                     Verifier diagnostics: {verify_detail}. {used_detail}"
+                );
+                tracing::error!("{}", error_msg);
+                return Err(error_msg);
+            }
+
+            // Transport or other non-revert error: fail fast without diagnostics
+            let error_msg =
+                format!("Preflight simulation of beacon.update() failed (transport/RPC): {e}");
+            tracing::error!("{}", error_msg);
+            return Err(error_msg);
+        }
+    }
+
+    // 11. Send the actual transaction
     tracing::info!(
         "Sending update transaction to beacon with wallet {}",
         tx_wallet_address
     );
-    let beacon_write = IBeacon::new(beacon_address, &provider);
     let pending_tx = beacon_write
         .update(sig_bytes.clone(), inputs_bytes.clone())
         .send()
@@ -150,11 +231,10 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Transaction sent, waiting for receipt...");
 
-    // Get the transaction hash before calling get_receipt()
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Transaction hash: {:?}", tx_hash);
 
-    // 11. Wait for confirmation with timeout
+    // 12. Wait for confirmation with timeout
     let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
         Ok(Ok(receipt)) => {
             tracing::info!("Transaction confirmed via get_receipt()");
@@ -172,7 +252,7 @@ pub async fn update_beacon_with_ecdsa(
         }
     };
 
-    // 12. Validate transaction status
+    // 13. Validate transaction status
     if !receipt.status() {
         let error_msg = format!("update() transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
@@ -181,7 +261,7 @@ pub async fn update_beacon_with_ecdsa(
         return Err(error_msg);
     }
 
-    // 13. Validate IndexUpdated event was emitted
+    // 14. Validate IndexUpdated event was emitted
     let index_updated_found = receipt.inner.logs().iter().any(|log| {
         // IndexUpdated event signature: keccak256("IndexUpdated(uint256)")
         log.address() == beacon_address
@@ -211,7 +291,6 @@ pub async fn update_beacon_with_ecdsa(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::sol_types::SolValue;
 
     #[test]
     fn test_abi_encode_inputs() {
@@ -219,10 +298,14 @@ mod tests {
         let nonce = U256::from(1704067200u64); // Example timestamp
 
         let measurement_array = vec![measurement];
-        let inputs = (measurement_array, nonce).abi_encode();
+        // Use abi_encode_params (flat params encoding) to match Solidity's abi.decode(inputs, (uint256[], uint256))
+        let inputs = <(
+            alloy::sol_types::sol_data::Array<alloy::sol_types::sol_data::Uint<256>>,
+            alloy::sol_types::sol_data::Uint<256>,
+        )>::abi_encode_params(&(measurement_array, nonce));
 
-        // ABI-encoded (uint256[], uint256) = offset(32) + nonce(32) + length(32) + element(32) + padding(32) = 160 bytes
-        assert_eq!(inputs.len(), 160);
+        // Flat params encoding: offset(32) + nonce(32) + length(32) + element(32) = 128 bytes
+        assert_eq!(inputs.len(), 128);
     }
 
     #[test]
