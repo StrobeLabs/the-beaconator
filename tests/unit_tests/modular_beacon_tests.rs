@@ -701,3 +701,113 @@ fn test_beacon_kind_all_group_combos_serde() {
 
     assert_eq!(count, 8, "must cover all 8 group combinations");
 }
+
+// ============================================================================
+// BEACON KIND IDENTITY & COMPOSITE SERDE TESTS
+// ============================================================================
+
+#[test]
+fn test_beacon_kind_identity_serde() {
+    let kind = BeaconKind::Identity;
+    let json = serde_json::to_string(&kind).unwrap();
+    let deserialized: BeaconKind = serde_json::from_str(&json).unwrap();
+    assert!(matches!(deserialized, BeaconKind::Identity));
+}
+
+#[test]
+fn test_beacon_recipe_serde_identity() {
+    let recipe = BeaconRecipe {
+        slug: "identity".to_string(),
+        name: "Identity".to_string(),
+        description: Some("Simple identity beacon".to_string()),
+        beacon_kind: BeaconKind::Identity,
+        enabled: true,
+        created_at: 1700000000,
+        updated_at: 1700000000,
+    };
+
+    let json = serde_json::to_string(&recipe).unwrap();
+    let deser: BeaconRecipe = serde_json::from_str(&json).unwrap();
+    assert_eq!(deser.slug, "identity");
+    assert!(matches!(deser.beacon_kind, BeaconKind::Identity));
+}
+
+#[test]
+fn test_beacon_recipe_serde_composite() {
+    let recipe = BeaconRecipe {
+        slug: "weighted-sum".to_string(),
+        name: "WeightedSum".to_string(),
+        description: Some("WeightedSum composite beacon".to_string()),
+        beacon_kind: BeaconKind::Composite {
+            composer: ComposerSpec::WeightedSum,
+        },
+        enabled: true,
+        created_at: 1700000000,
+        updated_at: 1700000000,
+    };
+
+    let json = serde_json::to_string(&recipe).unwrap();
+    let deser: BeaconRecipe = serde_json::from_str(&json).unwrap();
+    assert_eq!(deser.slug, "weighted-sum");
+    match deser.beacon_kind {
+        BeaconKind::Composite { composer } => {
+            assert_eq!(composer, ComposerSpec::WeightedSum);
+        }
+        _ => panic!("Expected Composite beacon kind"),
+    }
+}
+
+// ============================================================================
+// BEACON KIND REQUIRED FACTORY TYPES TESTS
+// ============================================================================
+
+#[test]
+fn test_beacon_kind_required_factory_types_identity() {
+    let kind = BeaconKind::Identity;
+    let types = kind.required_factory_types();
+    assert!(types.contains(&ComponentFactoryType::ECDSAVerifierFactory));
+    assert!(types.contains(&ComponentFactoryType::IdentityBeaconFactory));
+    assert_eq!(types.len(), 2);
+}
+
+#[test]
+fn test_beacon_kind_required_factory_types_standalone() {
+    let kind = BeaconKind::Standalone {
+        preprocessor: PreprocessorSpec::Identity,
+        base_fn: BaseFnSpec::CGBM,
+        transform: TransformSpec::Bounded,
+    };
+    let types = kind.required_factory_types();
+    assert!(types.contains(&ComponentFactoryType::ECDSAVerifierFactory));
+    assert!(types.contains(&ComponentFactoryType::StandaloneBeaconFactory));
+    assert!(types.contains(&ComponentFactoryType::IdentityPreprocessorFactory));
+    assert!(types.contains(&ComponentFactoryType::CGBMFactory));
+    assert!(types.contains(&ComponentFactoryType::BoundedFactory));
+    assert_eq!(types.len(), 5);
+}
+
+#[test]
+fn test_beacon_kind_required_factory_types_composite() {
+    let kind = BeaconKind::Composite {
+        composer: ComposerSpec::WeightedSum,
+    };
+    let types = kind.required_factory_types();
+    assert!(types.contains(&ComponentFactoryType::ECDSAVerifierFactory));
+    assert!(types.contains(&ComponentFactoryType::CompositeBeaconFactory));
+    assert!(types.contains(&ComponentFactoryType::WeightedSumComponentFactory));
+    assert_eq!(types.len(), 3);
+}
+
+#[test]
+fn test_beacon_kind_required_factory_types_group() {
+    let kind = BeaconKind::Group {
+        group_fn: GroupFnSpec::Dominance,
+        group_transform: GroupTransformSpec::Softmax,
+    };
+    let types = kind.required_factory_types();
+    assert!(types.contains(&ComponentFactoryType::ECDSAVerifierFactory));
+    assert!(types.contains(&ComponentFactoryType::GroupManagerFactory));
+    assert!(types.contains(&ComponentFactoryType::DominanceFactory));
+    assert!(types.contains(&ComponentFactoryType::SoftmaxFactory));
+    assert_eq!(types.len(), 4);
+}

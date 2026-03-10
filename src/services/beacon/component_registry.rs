@@ -24,8 +24,9 @@ impl ComponentFactoryRegistry {
 
     /// Create a test stub that will fail on actual Redis operations.
     /// Use this in tests that don't exercise component factory registry functionality.
+    /// Uses an invalid host so accidental operations fail fast instead of hitting real Redis.
     pub fn test_stub() -> Self {
-        let redis = redis::Client::open("redis://127.0.0.1:6379")
+        let redis = redis::Client::open("redis://invalid-test-stub:0")
             .expect("Failed to create Redis client for test stub");
         Self {
             redis,

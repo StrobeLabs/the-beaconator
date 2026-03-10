@@ -160,6 +160,42 @@ impl GroupTransformSpec {
     }
 }
 
+impl BeaconKind {
+    /// Returns all component factory types required by this beacon kind.
+    /// Always includes ECDSAVerifierFactory since all beacons need a verifier.
+    pub fn required_factory_types(&self) -> Vec<ComponentFactoryType> {
+        let mut types = vec![ComponentFactoryType::ECDSAVerifierFactory];
+        match self {
+            BeaconKind::Identity => {
+                types.push(ComponentFactoryType::IdentityBeaconFactory);
+            }
+            BeaconKind::Standalone {
+                preprocessor,
+                base_fn,
+                transform,
+            } => {
+                types.push(ComponentFactoryType::StandaloneBeaconFactory);
+                types.push(preprocessor.factory_type());
+                types.push(base_fn.factory_type());
+                types.push(transform.factory_type());
+            }
+            BeaconKind::Composite { composer } => {
+                types.push(ComponentFactoryType::CompositeBeaconFactory);
+                types.push(composer.factory_type());
+            }
+            BeaconKind::Group {
+                group_fn,
+                group_transform,
+            } => {
+                types.push(ComponentFactoryType::GroupManagerFactory);
+                types.push(group_fn.factory_type());
+                types.push(group_transform.factory_type());
+            }
+        }
+        types
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

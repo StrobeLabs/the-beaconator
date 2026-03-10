@@ -489,6 +489,25 @@ pub async fn create_rocket() -> Rocket<Build> {
         }
     }
 
+    // Validate that all enabled recipes have their required factories registered
+    if let Ok(recipes) = recipe_registry.list_recipes().await {
+        for recipe in recipes.iter().filter(|r| r.enabled) {
+            for factory_type in recipe.beacon_kind.required_factory_types() {
+                if component_factory_registry
+                    .get_factory_address(&factory_type)
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "Recipe '{}' requires {} but it is not registered",
+                        recipe.slug,
+                        factory_type
+                    );
+                }
+            }
+        }
+    }
+
     // Optional Safe multisig configuration for beacon registration
     let safe_address = env::var("SAFE_ADDRESS")
         .ok()

@@ -7,6 +7,7 @@ use tracing;
 
 use crate::guards::ApiToken;
 use crate::models::beacon_type::FactoryType;
+use crate::models::component_factory::ComponentFactoryType;
 use crate::models::recipe::{
     BaseFnSpec, BeaconKind, BeaconRecipe, PreprocessorSpec, TransformSpec,
 };
@@ -564,10 +565,18 @@ pub async fn create_lbcgbm_beacon_endpoint(
         }
     };
 
+    // Get the StandaloneBeaconFactory address used for LBCGBM creation
+    let factory_address = state
+        .component_factory_registry
+        .get_factory_address(&ComponentFactoryType::StandaloneBeaconFactory)
+        .await
+        .map(|a| format!("{a:#x}"))
+        .unwrap_or_else(|_| "unknown".to_string());
+
     let response = CreateBeaconResponse {
         beacon_address: format!("{beacon_address:#x}"),
         beacon_type: "lbcgbm".to_string(),
-        factory_address: "modular".to_string(),
+        factory_address,
         registered,
         safe_proposal_hash,
     };
