@@ -42,6 +42,9 @@ tarpaulin-report.html
 # Agent files
 .claude/settings.local.json
 
+# Redis
+dump.rdb
+
 # Generated API clients (generate locally, do not commit)
 clients/
 node_modules/

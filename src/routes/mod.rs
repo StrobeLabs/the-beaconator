@@ -4,6 +4,7 @@ pub mod beacon;
 pub mod beacon_type;
 pub mod info;
 pub mod perp;
+pub mod recipe;
 pub mod wallet;
 
 #[cfg(test)]
@@ -158,6 +159,142 @@ mod lbcgbm_factory {
     }
 }
 pub use lbcgbm_factory::ILBCGBMFactory;
+
+// Component factories for modular beacon creation
+#[allow(clippy::too_many_arguments, clippy::module_inception)]
+mod component_factories {
+    alloy::sol! {
+        // ---- Beacon Factories ----
+        #[sol(rpc)]
+        interface IIdentityBeaconFactory {
+            function createBeacon(address verifier, uint256 initialIndex) external returns (address);
+        }
+
+        #[sol(rpc)]
+        interface IStandaloneBeaconFactory {
+            function createBeacon(
+                address verifier,
+                address preprocessor,
+                address baseFn,
+                address transform,
+                uint256 initialIndex
+            ) external returns (address);
+        }
+
+        #[sol(rpc)]
+        interface ICompositeBeaconFactory {
+            function createBeacon(
+                address[] memory referenceBeacons,
+                address composer
+            ) external returns (address);
+        }
+
+        #[sol(rpc)]
+        interface IGroupManagerFactory {
+            function createGroupManager(
+                uint256[] memory initialIndices,
+                int256[] memory initialZSpaceIndices,
+                address verifier,
+                address groupFn,
+                address groupTransform
+            ) external returns (address);
+        }
+
+        // ---- Preprocessor Factories ----
+        #[sol(rpc)]
+        interface IIdentityPreprocessorFactory {
+            function createPreprocessor(uint256 measurementScale) external returns (address);
+        }
+
+        #[sol(rpc)]
+        interface IThresholdFactory {
+            function createPreprocessor(uint256 measurementScale, uint256 threshold) external returns (address);
+        }
+
+        #[sol(rpc)]
+        interface ITernaryToBinaryFactory {
+            function createPreprocessor(uint256 measurementScale, uint256 threshold) external returns (address);
+        }
+
+        #[sol(rpc)]
+        interface IArgmaxFactory {
+            function createPreprocessor(uint256 measurementScale) external returns (address);
+        }
+
+        // ---- BaseFn Factories ----
+        #[sol(rpc)]
+        interface ICGBMFactory {
+            function createBaseFn(
+                uint256 sigmaBase,
+                uint256 scalingFactor,
+                uint256 alpha,
+                uint256 decay,
+                uint256 initialSigmaRatio,
+                bool varianceScaling
+            ) external returns (address);
+        }
+
+        #[sol(rpc)]
+        interface IDGBMFactory {
+            function createBaseFn(
+                uint256 sigmaBase,
+                uint256 scalingFactor,
+                uint256 decay,
+                uint256 initialPositiveRate
+            ) external returns (address);
+        }
+
+        // ---- Transform Factories ----
+        #[sol(rpc)]
+        interface IBoundedFactory {
+            function createTransform(uint256 minIndex, uint256 maxIndex, uint256 steepness) external returns (address);
+        }
+
+        #[sol(rpc)]
+        interface IUnboundedFactory {
+            function createTransform(uint256 initialIndex) external returns (address);
+        }
+
+        // ---- Composer Factories ----
+        #[sol(rpc)]
+        interface IWeightedSumComponentFactory {
+            function createComposer(uint256[] memory weights) external returns (address);
+        }
+
+        // ---- GroupFn Factories ----
+        #[sol(rpc)]
+        interface IDominanceFactory {
+            function createGroupFn(uint256 numClasses, uint256 alpha, uint256 decay, uint256[] memory initialEma) external returns (address);
+        }
+
+        #[sol(rpc)]
+        interface IRelativeDominanceFactory {
+            function createGroupFn(uint256 numClasses, uint256 alpha, uint256 decayFast, uint256 decaySlow, uint256[] memory initialMFast, uint256[] memory initialMSlow) external returns (address);
+        }
+
+        #[sol(rpc)]
+        interface IContinuousAllocationFactory {
+            function createGroupFn(uint256[] memory classProbs, uint256 sigmaBase, uint256 scaleFactor, uint256 decay) external returns (address);
+        }
+
+        #[sol(rpc)]
+        interface IDiscreteAllocationFactory {
+            function createGroupFn(uint256[] memory classProbs, uint256 sigmaBase, uint256 scaleFactor, uint256 decay) external returns (address);
+        }
+
+        // ---- GroupTransform Factories ----
+        #[sol(rpc)]
+        interface ISoftmaxFactory {
+            function createGroupTransform(uint256 steepness, uint256 indexScale) external returns (address);
+        }
+
+        #[sol(rpc)]
+        interface IGMNormalizeFactory {
+            function createGroupTransform(uint256 indexScale) external returns (address);
+        }
+    }
+}
+pub use component_factories::*;
 
 // Re-export transaction utilities from services module
 pub use crate::services::transaction::execution::is_nonce_error;

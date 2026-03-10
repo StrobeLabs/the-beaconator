@@ -100,9 +100,11 @@ test-redis: ## Run all Redis-dependent tests (spins up Redis container)
 	@echo "Flushing Redis to ensure clean state..."
 	@redis-cli -h 127.0.0.1 -p 6379 FLUSHALL > /dev/null 2>&1 || true
 	@echo "Running wallet module tests..."
-	@REDIS_URL=redis://127.0.0.1:6379 cargo test --lib wallet -- --ignored --nocapture --test-threads=1
+	@REDIS_URL=redis://127.0.0.1:6379 cargo test --lib wallet -- --ignored --nocapture --test-threads=4
 	@echo "Running unit tests that require WalletManager..."
-	@REDIS_URL=redis://127.0.0.1:6379 cargo test unit_tests -- --ignored --nocapture --test-threads=1
+	@REDIS_URL=redis://127.0.0.1:6379 cargo test unit_tests -- --ignored --nocapture --test-threads=4
+	@echo "Running Redis-dependent integration tests..."
+	@REDIS_URL=redis://127.0.0.1:6379 cargo test integration_tests::modular_registry_tests -- --ignored --nocapture --test-threads=4
 	@echo "Redis-dependent tests completed ✅"
 
 test-full: ## Run full test suite including integration tests

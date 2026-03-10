@@ -248,3 +248,103 @@ pub struct UpdateBeaconWithEcdsaRequest {
     /// The measurement value to update the beacon with (uint256 as decimal string)
     pub measurement: String,
 }
+
+/// Create a modular beacon using a named recipe
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CreateModularBeaconRequest {
+    /// Recipe slug (e.g., "lbcgbm", "dgbm", "dominance")
+    pub recipe: String,
+    /// Component-specific parameters (recipe determines which fields are required)
+    pub params: ModularBeaconParams,
+}
+
+/// Parameters for modular beacon creation. All fields are optional - the recipe determines which are required.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ModularBeaconParams {
+    // -- Preprocessor params --
+    /// Measurement scale for preprocessor (WAD-scaled)
+    #[schemars(with = "Option<String>")]
+    pub measurement_scale: Option<u128>,
+    /// Threshold value for Threshold/TernaryToBinary preprocessors (WAD-scaled)
+    #[schemars(with = "Option<String>")]
+    pub threshold: Option<u128>,
+
+    // -- CGBM base function params --
+    /// Base sigma for CGBM/DGBM
+    #[schemars(with = "Option<String>")]
+    pub sigma_base: Option<u128>,
+    /// Scaling factor for CGBM/DGBM
+    #[schemars(with = "Option<String>")]
+    pub scaling_factor: Option<u128>,
+    /// Alpha parameter for CGBM power law exponent
+    #[schemars(with = "Option<String>")]
+    pub alpha: Option<u128>,
+    /// Decay parameter (EMA decay factor, WAD-scaled)
+    #[schemars(with = "Option<String>")]
+    pub decay: Option<u128>,
+    /// Initial sigma ratio for CGBM
+    #[schemars(with = "Option<String>")]
+    pub initial_sigma_ratio: Option<u128>,
+    /// Whether to use variance scaling in CGBM
+    pub variance_scaling: Option<bool>,
+
+    // -- DGBM-specific params --
+    /// Initial positive rate for DGBM (WAD-scaled)
+    #[schemars(with = "Option<String>")]
+    pub initial_positive_rate: Option<u128>,
+
+    // -- Bounded transform params --
+    /// Minimum index for Bounded transform
+    #[schemars(with = "Option<String>")]
+    pub min_index: Option<u128>,
+    /// Maximum index for Bounded transform
+    #[schemars(with = "Option<String>")]
+    pub max_index: Option<u128>,
+    /// Steepness for Bounded/Softmax transform sigmoid
+    #[schemars(with = "Option<String>")]
+    pub steepness: Option<u128>,
+
+    // -- Beacon params --
+    /// Initial beacon index value
+    #[schemars(with = "Option<String>")]
+    pub initial_index: Option<u128>,
+
+    // -- Composite params --
+    /// Addresses of reference beacons for composite (hex with 0x prefix)
+    pub reference_beacons: Option<Vec<String>>,
+    /// Weights for WeightedSum composer (WAD-scaled)
+    #[schemars(with = "Option<Vec<String>>")]
+    pub weights: Option<Vec<u128>>,
+
+    // -- Group params --
+    /// Number of classes for group functions
+    #[schemars(with = "Option<String>")]
+    pub num_classes: Option<u128>,
+    /// Class probabilities for allocation group functions (WAD-scaled)
+    #[schemars(with = "Option<Vec<String>>")]
+    pub class_probs: Option<Vec<u128>>,
+    /// Initial indices for group manager members
+    #[schemars(with = "Option<Vec<String>>")]
+    pub initial_indices: Option<Vec<u128>>,
+    /// Initial z-space indices for group manager members
+    #[schemars(with = "Option<Vec<String>>")]
+    pub initial_z_space_indices: Option<Vec<i128>>,
+    /// Initial EMA values for Dominance group function
+    #[schemars(with = "Option<Vec<String>>")]
+    pub initial_ema: Option<Vec<u128>>,
+    /// Fast decay for RelativeDominance (WAD-scaled)
+    #[schemars(with = "Option<String>")]
+    pub decay_fast: Option<u128>,
+    /// Slow decay for RelativeDominance (WAD-scaled)
+    #[schemars(with = "Option<String>")]
+    pub decay_slow: Option<u128>,
+    /// Initial fast EMA for RelativeDominance
+    #[schemars(with = "Option<Vec<String>>")]
+    pub initial_m_fast: Option<Vec<u128>>,
+    /// Initial slow EMA for RelativeDominance
+    #[schemars(with = "Option<Vec<String>>")]
+    pub initial_m_slow: Option<Vec<u128>>,
+    /// Index scale for group transforms (WAD-scaled)
+    #[schemars(with = "Option<String>")]
+    pub index_scale: Option<u128>,
+}

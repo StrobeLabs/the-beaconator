@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 use crate::ReadOnlyProvider;
 use crate::services::beacon::BeaconTypeRegistry;
+use crate::services::beacon::ComponentFactoryRegistry;
+use crate::services::beacon::RecipeRegistry;
 use crate::services::wallet::WalletManager;
 
 /// API endpoint information for documentation
@@ -241,6 +243,12 @@ pub struct AppState {
 
     // Beacon type registry (Redis-backed)
     pub beacon_type_registry: Arc<BeaconTypeRegistry>,
+
+    // Component factory registry (Redis-backed)
+    pub component_factory_registry: Arc<ComponentFactoryRegistry>,
+
+    // Recipe registry (Redis-backed)
+    pub recipe_registry: Arc<RecipeRegistry>,
 
     // IdentityBeacon deployment bytecode
     pub identity_beacon_bytecode: Bytes,

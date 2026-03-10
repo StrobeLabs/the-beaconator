@@ -127,6 +127,26 @@ impl PrefixedRedisKeys {
     pub fn beacon_type_config(&self, slug: &str) -> String {
         format!("{}beacon_type:{slug}", self.prefix)
     }
+
+    /// Set of all component factory type names: component_factories
+    pub fn component_factories_set(&self) -> String {
+        format!("{}component_factories", self.prefix)
+    }
+
+    /// Component factory config: component_factory:{type} -> ComponentFactoryConfig JSON
+    pub fn component_factory(&self, factory_type: &str) -> String {
+        format!("{}component_factory:{factory_type}", self.prefix)
+    }
+
+    /// Set of all beacon recipe slugs: beacon_recipes
+    pub fn beacon_recipes_set(&self) -> String {
+        format!("{}beacon_recipes", self.prefix)
+    }
+
+    /// Beacon recipe config: beacon_recipe:{slug} -> BeaconRecipe JSON
+    pub fn beacon_recipe_config(&self, slug: &str) -> String {
+        format!("{}beacon_recipe:{slug}", self.prefix)
+    }
 }
 
 impl Default for PrefixedRedisKeys {
