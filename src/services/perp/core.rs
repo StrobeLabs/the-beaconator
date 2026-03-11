@@ -28,7 +28,8 @@ pub async fn deploy_perp_for_beacon(
 
     // Acquire a wallet from the pool
     let wallet_handle = state
-        .wallet_manager
+        .wallets
+        .manager
         .acquire_any_wallet()
         .await
         .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
@@ -38,14 +39,14 @@ pub async fn deploy_perp_for_beacon(
 
     // Build provider with the acquired wallet
     let provider = wallet_handle
-        .build_provider(&state.rpc_url)
+        .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
     // Log environment details
     tracing::info!("Environment details:");
-    tracing::info!("  - PerpManager address: {}", state.perp_manager_address);
+    tracing::info!("  - PerpManager address: {}", state.contracts.perp_manager);
     tracing::info!("  - Wallet address: {}", wallet_address);
-    tracing::info!("  - USDC address: {}", state.usdc_address);
+    tracing::info!("  - USDC address: {}", state.contracts.usdc);
     tracing::info!("Modular configuration:");
     tracing::info!("  - Fees module: {}", fees_module);
     tracing::info!("  - Margin ratios module: {}", margin_ratios_module);
@@ -55,7 +56,12 @@ pub async fn deploy_perp_for_beacon(
         sqrt_price_impact_limit_module
     );
     // Check wallet balance first using read provider
-    match state.read_provider.get_balance(wallet_address).await {
+    match state
+        .provider
+        .read_provider
+        .get_balance(wallet_address)
+        .await
+    {
         Ok(balance) => {
             let balance_f64 = balance.to::<u128>() as f64 / 1e18;
             tracing::info!("Wallet balance: {:.6} ETH", balance_f64);
@@ -66,11 +72,16 @@ pub async fn deploy_perp_for_beacon(
     }
 
     // Create contract instance using the wallet's provider for transactions
-    let contract = IPerpManager::new(state.perp_manager_address, &provider);
+    let contract = IPerpManager::new(state.contracts.perp_manager, &provider);
 
     // Validate beacon exists and has code deployed using read provider
     tracing::info!("Validating beacon address exists...");
-    match state.read_provider.get_code_at(beacon_address).await {
+    match state
+        .provider
+        .read_provider
+        .get_code_at(beacon_address)
+        .await
+    {
         Ok(code) => {
             if code.is_empty() {
                 let error_msg = format!(
@@ -106,6 +117,7 @@ pub async fn deploy_perp_for_beacon(
 
     // Try to get the beacon address from the beacon contract (if it implements the standard interface)
     let beacon_call_result = state
+        .provider
         .read_provider
         .call(
             alloy::rpc::types::TransactionRequest::default()
@@ -129,6 +141,7 @@ pub async fn deploy_perp_for_beacon(
     // Try to call index() function to verify it's a beacon contract
     tracing::info!("Validating beacon contract has index() function...");
     let index_call_result = state
+        .provider
         .read_provider
         .call(
             alloy::rpc::types::TransactionRequest::default()
@@ -206,7 +219,7 @@ pub async fn deploy_perp_for_beacon(
             }
 
             tracing::error!("Contract call details:");
-            tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
+            tracing::error!("  - PerpManager address: {}", state.contracts.perp_manager);
             tracing::error!("  - Beacon address: {}", beacon_address);
             tracing::error!("  - Provider type: Alloy HTTP provider");
 
@@ -228,7 +241,7 @@ pub async fn deploy_perp_for_beacon(
                     // Additional debugging for execution reverted
                     tracing::error!("Execution revert analysis:");
                     tracing::error!("  - Beacon address: {} (has code deployed)", beacon_address);
-                    tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
+                    tracing::error!("  - PerpManager address: {}", state.contracts.perp_manager);
                     tracing::error!("  - Fees module: {}", fees_module);
                     tracing::error!("  - Margin ratios module: {}", margin_ratios_module);
                     tracing::error!("  - Lockup period module: {}", lockup_period_module);
@@ -277,7 +290,10 @@ pub async fn deploy_perp_for_beacon(
             // Try to get the receipt directly from the read provider with timeout
             match timeout(
                 Duration::from_secs(30),
-                state.read_provider.get_transaction_receipt(pending_tx_hash),
+                state
+                    .provider
+                    .read_provider
+                    .get_transaction_receipt(pending_tx_hash),
             )
             .await
             {
@@ -327,17 +343,17 @@ pub async fn deploy_perp_for_beacon(
     );
 
     // Parse the perp ID from the PerpCreated event
-    let perp_id = parse_perp_created_event(&receipt, state.perp_manager_address)?;
+    let perp_id = parse_perp_created_event(&receipt, state.contracts.perp_manager)?;
 
     tracing::info!("Successfully deployed perp with ID: {}", perp_id);
     tracing::info!(
         "Perp is managed by PerpManager contract: {}",
-        state.perp_manager_address
+        state.contracts.perp_manager
     );
 
     Ok(DeployPerpForBeaconResponse {
         perp_id: perp_id.to_string(),
-        perp_manager_address: state.perp_manager_address.to_string(),
+        perp_manager_address: state.contracts.perp_manager.to_string(),
         transaction_hash: tx_hash.to_string(),
     })
 }
@@ -359,7 +375,8 @@ pub async fn deposit_liquidity_for_perp(
 
     // Acquire a wallet from the pool
     let wallet_handle = state
-        .wallet_manager
+        .wallets
+        .manager
         .acquire_any_wallet()
         .await
         .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
@@ -369,11 +386,11 @@ pub async fn deposit_liquidity_for_perp(
 
     // Build provider with the acquired wallet
     let provider = wallet_handle
-        .build_provider(&state.rpc_url)
+        .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
     // Create contract instance using the wallet's provider
-    let contract = IPerpManager::new(state.perp_manager_address, &provider);
+    let contract = IPerpManager::new(state.contracts.perp_manager, &provider);
 
     // Validate tick alignment with tick_spacing
     if tick_lower % tick_spacing != 0 {
@@ -440,14 +457,14 @@ pub async fn deposit_liquidity_for_perp(
     tracing::info!(
         "Approving USDC spending: {} USDC for PerpManager contract {}",
         margin_amount_usdc as f64 / 1_000_000.0,
-        state.perp_manager_address
+        state.contracts.perp_manager
     );
 
     // USDC approval using acquired wallet
-    let usdc_contract = IERC20::new(state.usdc_address, &provider);
+    let usdc_contract = IERC20::new(state.contracts.usdc, &provider);
     tracing::info!("Approving USDC spending with wallet {}", wallet_address);
     let pending_approval = match usdc_contract
-        .approve(state.perp_manager_address, U256::from(margin_amount_usdc))
+        .approve(state.contracts.perp_manager, U256::from(margin_amount_usdc))
         .send()
         .await
     {
@@ -487,6 +504,7 @@ pub async fn deposit_liquidity_for_perp(
             match timeout(
                 Duration::from_secs(60),
                 state
+                    .provider
                     .read_provider
                     .get_transaction_receipt(approval_tx_hash),
             )
@@ -545,6 +563,7 @@ pub async fn deposit_liquidity_for_perp(
                 match timeout(
                     Duration::from_secs(current_timeout),
                     state
+                        .provider
                         .read_provider
                         .get_transaction_receipt(approval_tx_hash),
                 )
@@ -677,7 +696,10 @@ pub async fn deposit_liquidity_for_perp(
             // Try to get the receipt directly from the read provider with timeout
             match timeout(
                 Duration::from_secs(30),
-                state.read_provider.get_transaction_receipt(deposit_tx_hash),
+                state
+                    .provider
+                    .read_provider
+                    .get_transaction_receipt(deposit_tx_hash),
             )
             .await
             {
@@ -722,7 +744,7 @@ pub async fn deposit_liquidity_for_perp(
 
     // Parse the maker position ID from the MakerPositionOpened event
     let maker_pos_id =
-        parse_maker_position_opened_event(&receipt, state.perp_manager_address, perp_id)?;
+        parse_maker_position_opened_event(&receipt, state.contracts.perp_manager, perp_id)?;
 
     tracing::info!(
         "Parsed maker position ID {} from MakerPositionOpened event",

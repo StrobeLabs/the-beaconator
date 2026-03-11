@@ -17,7 +17,7 @@ pub async fn list_beacon_types(
     _token: AdminToken,
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<BeaconTypeListResponse>>, Status> {
-    match state.beacon_type_registry.list_types().await {
+    match state.registries.beacon_types.list_types().await {
         Ok(beacon_types) => Ok(Json(ApiResponse {
             success: true,
             data: Some(BeaconTypeListResponse { beacon_types }),
@@ -42,7 +42,7 @@ pub async fn get_beacon_type(
     _token: AdminToken,
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<BeaconTypeConfig>>, Status> {
-    match state.beacon_type_registry.get_type(slug).await {
+    match state.registries.beacon_types.get_type(slug).await {
         Ok(Some(config)) => Ok(Json(ApiResponse {
             success: true,
             data: Some(config),
@@ -114,7 +114,7 @@ pub async fn register_beacon_type(
         updated_at: now_ts,
     };
 
-    match state.beacon_type_registry.register_type(&config).await {
+    match state.registries.beacon_types.register_type(&config).await {
         Ok(()) => {
             tracing::info!("Registered beacon type '{}'", config.slug);
             Ok(Json(ApiResponse {
@@ -144,7 +144,7 @@ pub async fn update_beacon_type(
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<BeaconTypeConfig>>, Status> {
     // Get existing config
-    let existing = match state.beacon_type_registry.get_type(slug).await {
+    let existing = match state.registries.beacon_types.get_type(slug).await {
         Ok(Some(config)) => config,
         Ok(None) => {
             return Ok(Json(ApiResponse {
@@ -211,7 +211,12 @@ pub async fn update_beacon_type(
         updated_at: now_ts,
     };
 
-    match state.beacon_type_registry.update_type(slug, &updated).await {
+    match state
+        .registries
+        .beacon_types
+        .update_type(slug, &updated)
+        .await
+    {
         Ok(()) => {
             tracing::info!("Updated beacon type '{}'", slug);
             Ok(Json(ApiResponse {
@@ -239,7 +244,7 @@ pub async fn delete_beacon_type(
     _token: AdminToken,
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<String>>, Status> {
-    match state.beacon_type_registry.delete_type(slug).await {
+    match state.registries.beacon_types.delete_type(slug).await {
         Ok(()) => {
             tracing::info!("Deleted beacon type '{}'", slug);
             Ok(Json(ApiResponse {

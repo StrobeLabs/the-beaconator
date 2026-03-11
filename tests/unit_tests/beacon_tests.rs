@@ -21,7 +21,7 @@ async fn test_batch_update_beacon_with_multicall3() {
     let mut app_state = crate::test_utils::create_simple_test_app_state().await;
 
     // Set multicall3 address for the test
-    app_state.multicall3_address =
+    app_state.contracts.multicall3 =
         Some(Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap());
 
     let state = State::from(&app_state);
@@ -132,21 +132,21 @@ async fn test_app_state_has_required_contract_info() {
 
     // Test that all required contract addresses are set
     assert_ne!(
-        app_state.ecdsa_verifier_factory_address,
+        app_state.contracts.ecdsa_verifier_factory,
         Address::from_str("0x0000000000000000000000000000000000000000").unwrap()
     );
     assert_ne!(
-        app_state.perpcity_registry_address,
+        app_state.contracts.perpcity_registry,
         Address::from_str("0x0000000000000000000000000000000000000000").unwrap()
     );
-    assert!(!app_state.access_token.is_empty());
+    assert!(!app_state.auth.access_token.is_empty());
 }
 
 #[tokio::test]
 async fn test_register_beacon_with_registry_helper() {
     let app_state = crate::test_utils::create_simple_test_app_state().await;
     let beacon_address = Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
-    let registry_address = app_state.perpcity_registry_address;
+    let registry_address = app_state.contracts.perpcity_registry;
 
     // This will fail without a real network, but tests the function signature
     let result = register_beacon_with_registry(&app_state, beacon_address, registry_address).await;
@@ -172,7 +172,7 @@ async fn test_transaction_confirmation_timeout_handling() {
 async fn test_beacon_registration_check() {
     let app_state = crate::test_utils::create_simple_test_app_state().await;
     let beacon_address = Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
-    let registry_address = app_state.perpcity_registry_address;
+    let registry_address = app_state.contracts.perpcity_registry;
 
     // Test beacon registration check
     let result = is_beacon_registered(&app_state, beacon_address, registry_address).await;

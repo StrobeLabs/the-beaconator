@@ -40,7 +40,8 @@ pub async fn create_identity_beacon(
 ) -> Result<(Address, Address), String> {
     // Acquire a wallet from the pool
     let wallet_handle = state
-        .wallet_manager
+        .wallets
+        .manager
         .acquire_any_wallet()
         .await
         .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
@@ -75,7 +76,12 @@ pub async fn is_transaction_confirmed(
         tx_hash
     );
 
-    match state.read_provider.get_transaction_receipt(tx_hash).await {
+    match state
+        .provider
+        .read_provider
+        .get_transaction_receipt(tx_hash)
+        .await
+    {
         Ok(Some(receipt)) => {
             tracing::info!(
                 "Transaction {} is confirmed in block {}",
@@ -111,7 +117,7 @@ pub async fn is_beacon_registered(
     );
 
     // Create contract instance and call isBeaconRegistered(address) using read provider
-    let contract = IBeaconRegistry::new(registry_address, &*state.read_provider);
+    let contract = IBeaconRegistry::new(registry_address, &*state.provider.read_provider);
 
     match contract.isBeaconRegistered(beacon_address).call().await {
         Ok(is_registered) => {
@@ -166,7 +172,12 @@ pub async fn register_beacon_with_registry(
 
     // Validate beacon contract exists and has code
     tracing::info!("Validating beacon contract...");
-    match state.read_provider.get_code_at(beacon_address).await {
+    match state
+        .provider
+        .read_provider
+        .get_code_at(beacon_address)
+        .await
+    {
         Ok(code) => {
             if code.is_empty() {
                 let error_msg = format!("Beacon address {beacon_address} has no deployed code");
@@ -184,10 +195,12 @@ pub async fn register_beacon_with_registry(
     }
 
     // If Safe is configured, propose via Safe instead of direct execution
-    if let (Some(safe_addr), Some(safe_url)) = (&state.safe_address, &state.safe_tx_service_url) {
+    if let Some(safe) = &state.contracts.safe
+        && let Some(safe_url) = &safe.tx_service_url
+    {
         tracing::info!(
             "Safe configured at {}, proposing multisig transaction",
-            safe_addr
+            safe.address
         );
 
         // Build registerBeacon(address) calldata
@@ -198,10 +211,10 @@ pub async fn register_beacon_with_registry(
 
         // Preflight: simulate the registerBeacon call from the Safe to catch reverts early
         let tx_request = alloy::rpc::types::TransactionRequest::default()
-            .from(*safe_addr)
+            .from(safe.address)
             .to(registry_address)
             .input(alloy::primitives::Bytes::from(calldata.clone()).into());
-        match state.read_provider.estimate_gas(tx_request).await {
+        match state.provider.read_provider.estimate_gas(tx_request).await {
             Ok(_) => {
                 tracing::info!("Preflight estimate_gas succeeded for registerBeacon");
             }
@@ -216,16 +229,16 @@ pub async fn register_beacon_with_registry(
         }
 
         let safe_service = SafeTransactionService::new(safe_url);
-        let nonce = safe_service.get_nonce(*safe_addr).await?;
+        let nonce = safe_service.get_nonce(safe.address).await?;
 
         let safe_tx_hash = safe_service
             .propose_transaction(
-                *safe_addr,
-                state.chain_id,
+                safe.address,
+                state.provider.chain_id,
                 registry_address,
                 &calldata,
                 nonce,
-                &state.signer,
+                &state.wallets.signer,
             )
             .await?;
 
@@ -246,7 +259,8 @@ pub async fn register_beacon_with_registry(
 
     // Acquire a wallet from the pool
     let wallet_handle = state
-        .wallet_manager
+        .wallets
+        .manager
         .acquire_any_wallet()
         .await
         .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
@@ -256,7 +270,7 @@ pub async fn register_beacon_with_registry(
 
     // Build provider with the acquired wallet
     let provider = wallet_handle
-        .build_provider(&state.rpc_url)
+        .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
     // Create contract instance using the wallet's provider
@@ -301,7 +315,10 @@ pub async fn register_beacon_with_registry(
             // Try to get the receipt directly from the read provider with timeout
             match timeout(
                 Duration::from_secs(30),
-                state.read_provider.get_transaction_receipt(tx_hash),
+                state
+                    .provider
+                    .read_provider
+                    .get_transaction_receipt(tx_hash),
             )
             .await
             {
@@ -470,7 +487,8 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
 
     // Acquire a wallet from the pool (prefer wallet designated for this beacon)
     let wallet_handle = state
-        .wallet_manager
+        .wallets
+        .manager
         .acquire_for_beacon(&beacon_address)
         .await
         .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
@@ -480,7 +498,7 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
 
     // Build provider with the acquired wallet
     let provider = wallet_handle
-        .build_provider(&state.rpc_url)
+        .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
     // Create contract instance using the wallet's provider
@@ -529,7 +547,10 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
             // Try to get the receipt directly from the read provider with timeout
             match timeout(
                 Duration::from_secs(30),
-                state.read_provider.get_transaction_receipt(tx_hash),
+                state
+                    .provider
+                    .read_provider
+                    .get_transaction_receipt(tx_hash),
             )
             .await
             {

@@ -75,7 +75,7 @@ pub async fn fund_guest_wallet(
     };
 
     // Check transfer limits
-    if usdc_amount > state.usdc_transfer_limit {
+    if usdc_amount > state.wallets.usdc_transfer_limit {
         return Err((
             Status::BadRequest,
             Json(ApiResponse {
@@ -84,13 +84,13 @@ pub async fn fund_guest_wallet(
                 message: format!(
                     "USDC amount exceeds limit. Requested: {} USDC, Limit: {} USDC",
                     usdc_amount / 1_000_000,
-                    state.usdc_transfer_limit / 1_000_000
+                    state.wallets.usdc_transfer_limit / 1_000_000
                 ),
             }),
         ));
     }
 
-    if eth_amount > state.eth_transfer_limit {
+    if eth_amount > state.wallets.eth_transfer_limit {
         return Err((
             Status::BadRequest,
             Json(ApiResponse {
@@ -99,7 +99,9 @@ pub async fn fund_guest_wallet(
                 message: format!(
                     "ETH amount exceeds limit. Requested: {} ETH, Limit: {} ETH",
                     alloy::primitives::utils::format_ether(U256::from(eth_amount)),
-                    alloy::primitives::utils::format_ether(U256::from(state.eth_transfer_limit))
+                    alloy::primitives::utils::format_ether(U256::from(
+                        state.wallets.eth_transfer_limit
+                    ))
                 ),
             }),
         ));
@@ -114,8 +116,9 @@ pub async fn fund_guest_wallet(
 
     // Check funding wallet ETH balance using read provider
     let eth_balance = match state
+        .provider
         .read_provider
-        .get_balance(state.funding_wallet_address)
+        .get_balance(state.wallets.funding_address)
         .await
     {
         Ok(balance) => balance,
@@ -140,7 +143,7 @@ pub async fn fund_guest_wallet(
     if eth_balance < U256::from(eth_amount) {
         tracing::warn!(
             "Insufficient ETH balance in funding wallet {}. Have: {} ETH, Need: {} ETH",
-            state.funding_wallet_address,
+            state.wallets.funding_address,
             alloy::primitives::utils::format_ether(eth_balance),
             alloy::primitives::utils::format_ether(U256::from(eth_amount))
         );
@@ -167,9 +170,9 @@ pub async fn fund_guest_wallet(
     }
 
     // Check USDC balance using read provider
-    let usdc_read_contract = IERC20::new(state.usdc_address, &*state.read_provider);
+    let usdc_read_contract = IERC20::new(state.contracts.usdc, &*state.provider.read_provider);
     let usdc_balance = match usdc_read_contract
-        .balanceOf(state.funding_wallet_address)
+        .balanceOf(state.wallets.funding_address)
         .call()
         .await
     {
@@ -195,7 +198,7 @@ pub async fn fund_guest_wallet(
     if usdc_balance < U256::from(usdc_amount) {
         tracing::warn!(
             "Insufficient USDC balance in funding wallet {}. Have: {} USDC, Need: {} USDC",
-            state.funding_wallet_address,
+            state.wallets.funding_address,
             usdc_balance / U256::from(1_000_000),
             usdc_amount / 1_000_000
         );
@@ -224,8 +227,9 @@ pub async fn fund_guest_wallet(
     // Acquire distributed lock on funding wallet to prevent nonce conflicts
     // across concurrent requests and multiple beaconator instances
     let _funding_lock = state
-        .wallet_manager
-        .acquire_lock(&state.funding_wallet_address)
+        .wallets
+        .manager
+        .acquire_lock(&state.wallets.funding_address)
         .await
         .map_err(|e| {
             tracing::error!("Failed to acquire funding wallet lock: {}", e);
@@ -244,10 +248,14 @@ pub async fn fund_guest_wallet(
         })?;
 
     // Build a fresh provider per-request to avoid stale nonce caching
-    let funding_wallet = EthereumWallet::from(state.signer.clone());
-    let funding_provider = ProviderBuilder::new()
-        .wallet(funding_wallet)
-        .connect_http(state.rpc_url.parse().expect("Invalid RPC URL in AppState"));
+    let funding_wallet = EthereumWallet::from(state.wallets.signer.clone());
+    let funding_provider = ProviderBuilder::new().wallet(funding_wallet).connect_http(
+        state
+            .provider
+            .rpc_url
+            .parse()
+            .expect("Invalid RPC URL in AppState"),
+    );
 
     // Send ETH using funding provider
     let tx_request = TransactionRequest::default()
@@ -290,7 +298,7 @@ pub async fn fund_guest_wallet(
     tracing::info!("ETH transfer hash: {:?}", eth_tx_hash);
 
     // Send USDC using funding provider
-    let usdc_send_contract = IERC20::new(state.usdc_address, &funding_provider);
+    let usdc_send_contract = IERC20::new(state.contracts.usdc, &funding_provider);
     let usdc_receipt = match usdc_send_contract
         .transfer(wallet_address, U256::from(usdc_amount))
         .send()

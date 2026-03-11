@@ -14,7 +14,7 @@ pub async fn list_recipes(
     _token: ApiToken,
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<BeaconRecipe>>>, Status> {
-    match state.recipe_registry.list_recipes().await {
+    match state.registries.recipes.list_recipes().await {
         Ok(recipes) => Ok(Json(ApiResponse {
             success: true,
             data: Some(recipes),
@@ -43,7 +43,7 @@ pub async fn get_recipe(
     _token: ApiToken,
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<BeaconRecipe>>, Status> {
-    match state.recipe_registry.get_recipe(slug).await {
+    match state.registries.recipes.get_recipe(slug).await {
         Ok(Some(recipe)) => Ok(Json(ApiResponse {
             success: true,
             data: Some(recipe),
@@ -76,7 +76,7 @@ pub async fn list_component_factories(
     _token: ApiToken,
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<ComponentFactoryConfig>>>, Status> {
-    match state.component_factory_registry.list_factories().await {
+    match state.registries.component_factories.list_factories().await {
         Ok(factories) => Ok(Json(ApiResponse {
             success: true,
             data: Some(factories),

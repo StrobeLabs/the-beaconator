@@ -14,7 +14,7 @@ use crate::services::wallet::WalletHandle;
 /// Creates an ECDSAVerifier via the ECDSAVerifierFactory contract.
 ///
 /// Uses the provided wallet handle's provider to send the factory call.
-/// The created verifier will only accept signatures from `state.signer.address()`.
+/// The created verifier will only accept signatures from `state.wallets.signer.address()`.
 ///
 /// Strategy: simulate with .call() first to get the deterministic return address,
 /// then execute with .send() to actually create the contract on-chain.
@@ -22,7 +22,7 @@ pub async fn create_ecdsa_verifier(
     state: &AppState,
     wallet_handle: &WalletHandle,
 ) -> Result<Address, String> {
-    let signer_address = state.signer.address();
+    let signer_address = state.wallets.signer.address();
     tracing::info!(
         "Creating ECDSAVerifier via factory with signer={}",
         signer_address
@@ -30,10 +30,10 @@ pub async fn create_ecdsa_verifier(
 
     // Build provider from wallet handle
     let provider = wallet_handle
-        .build_provider(&state.rpc_url)
+        .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider for verifier creation: {e}"))?;
 
-    let factory = IEcdsaVerifierFactory::new(state.ecdsa_verifier_factory_address, &provider);
+    let factory = IEcdsaVerifierFactory::new(state.contracts.ecdsa_verifier_factory, &provider);
 
     // Simulate the call first to get the return address (deterministic via CREATE opcode)
     let simulated = factory

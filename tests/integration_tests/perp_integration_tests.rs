@@ -7,13 +7,9 @@ use rocket::{State, http::Status};
 use serial_test::serial;
 use std::str::FromStr;
 use the_beaconator::guards::ApiToken;
-use the_beaconator::models::{
-    BatchDepositLiquidityForPerpsRequest, DeployPerpForBeaconRequest,
-    DepositLiquidityForPerpRequest,
-};
+use the_beaconator::models::{DeployPerpForBeaconRequest, DepositLiquidityForPerpRequest};
 use the_beaconator::routes::perp::{
-    batch_deposit_liquidity_for_perps, deploy_perp_for_beacon_endpoint,
-    deposit_liquidity_for_perp_endpoint,
+    deploy_perp_for_beacon_endpoint, deposit_liquidity_for_perp_endpoint,
 };
 
 #[tokio::test]
@@ -129,65 +125,6 @@ async fn test_deploy_perp_short_beacon_address() {
     let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);
-}
-
-#[tokio::test]
-#[serial]
-async fn test_batch_deposit_liquidity_mixed_validity() {
-    let token = ApiToken("test_token".to_string());
-    let app_state = create_simple_test_app_state().await;
-    let state = State::from(&app_state);
-
-    // Mix of valid and invalid perp IDs
-    let request = Json(BatchDepositLiquidityForPerpsRequest {
-        liquidity_deposits: vec![
-            DepositLiquidityForPerpRequest {
-                perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234"
-                    .to_string(),
-                margin_amount_usdc: "500000000".to_string(),
-                holder: None,
-                max_amt0_in: None,
-                max_amt1_in: None,
-                tick_spacing: None,
-                tick_lower: None,
-                tick_upper: None,
-            },
-            DepositLiquidityForPerpRequest {
-                perp_id: "invalid_perp_id".to_string(), // This should fail
-                margin_amount_usdc: "500000000".to_string(),
-                holder: None,
-                max_amt0_in: None,
-                max_amt1_in: None,
-                tick_spacing: None,
-                tick_lower: None,
-                tick_upper: None,
-            },
-        ],
-    });
-
-    let result = batch_deposit_liquidity_for_perps(request, token, state).await;
-
-    // Endpoint not implemented - should return Err(NotImplemented)
-    assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), Status::NotImplemented);
-}
-
-#[tokio::test]
-#[serial]
-async fn test_batch_deposit_liquidity_invalid_count() {
-    let token = ApiToken("test_token".to_string());
-    let app_state = create_simple_test_app_state().await;
-    let state = State::from(&app_state);
-
-    // Empty deposits array
-    let request = Json(BatchDepositLiquidityForPerpsRequest {
-        liquidity_deposits: vec![],
-    });
-
-    let result = batch_deposit_liquidity_for_perps(request, token, state).await;
-    // Endpoint not implemented - should return Err(NotImplemented) regardless of input
-    assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), Status::NotImplemented);
 }
 
 #[test]

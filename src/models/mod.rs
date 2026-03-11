@@ -6,12 +6,14 @@ pub mod requests;
 pub mod responses;
 pub mod wallet;
 
-pub use app_state::{ApiEndpoints, ApiSummary, AppState, EndpointInfo, EndpointStatus};
+pub use app_state::{
+    ApiEndpoints, ApiSummary, AppState, AuthConfig, ContractAddresses, EndpointInfo,
+    EndpointStatus, ProviderConfig, Registries, SafeConfig, WalletConfig,
+};
 pub use beacon_type::{BeaconTypeConfig, FactoryType, SeedResult};
 pub use component_factory::{ComponentFactoryConfig, ComponentFactoryType};
 pub use recipe::{BeaconKind, BeaconRecipe};
 pub use requests::{
-    BatchDeployPerpsForBeaconsRequest, BatchDepositLiquidityForPerpsRequest,
     BatchUpdateBeaconRequest, BeaconCreationParams, BeaconUpdateData, CreateBeaconByTypeRequest,
     CreateBeaconWithEcdsaRequest, CreateLBCGBMBeaconRequest,
     CreateWeightedSumCompositeBeaconRequest, DeployPerpForBeaconRequest,
@@ -21,8 +23,7 @@ pub use requests::{
 };
 pub use requests::{CreateModularBeaconRequest, ModularBeaconParams};
 pub use responses::{
-    ApiResponse, BatchDeployPerpsForBeaconsResponse, BatchDepositLiquidityForPerpsResponse,
-    BatchUpdateBeaconResponse, BeaconComponentAddresses, BeaconTypeListResponse,
+    ApiResponse, BatchUpdateBeaconResponse, BeaconComponentAddresses, BeaconTypeListResponse,
     BeaconUpdateResult, CreateBeaconResponse, CreateBeaconWithEcdsaResponse,
     CreateModularBeaconResponse, DeployPerpForBeaconResponse, DepositLiquidityForPerpResponse,
 };

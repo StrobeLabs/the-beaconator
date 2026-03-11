@@ -35,7 +35,8 @@ pub async fn execute_multicall(
 
     // Acquire a wallet from the pool for the multicall transaction
     let wallet_handle = state
-        .wallet_manager
+        .wallets
+        .manager
         .acquire_any_wallet()
         .await
         .map_err(|e| format!("Failed to acquire wallet for multicall: {e}"))?;
@@ -45,7 +46,7 @@ pub async fn execute_multicall(
 
     // Build provider with the acquired wallet
     let provider = wallet_handle
-        .build_provider(&state.rpc_url)
+        .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
     // Create multicall contract instance

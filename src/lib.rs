@@ -1,5 +1,4 @@
 use alloy::{
-    json_abi::JsonAbi,
     primitives::{Address, Bytes, utils::format_ether},
     providers::Provider,
     signers::{Signer, local::PrivateKeySigner},
@@ -15,9 +14,11 @@ pub mod models;
 pub mod routes;
 pub mod services;
 
-use crate::models::AppState;
 use crate::models::beacon_type::{BeaconTypeConfig, FactoryType};
 use crate::models::wallet::WalletManagerConfig;
+use crate::models::{
+    AppState, AuthConfig, ContractAddresses, ProviderConfig, Registries, SafeConfig, WalletConfig,
+};
 use crate::services::beacon::BeaconTypeRegistry;
 use crate::services::beacon::ComponentFactoryRegistry;
 use crate::services::beacon::RecipeRegistry;
@@ -65,17 +66,6 @@ pub type ReadOnlyProvider = alloy::providers::fillers::FillProvider<
     alloy::network::Ethereum,
 >;
 
-/// Loads a contract ABI from a JSON file.
-///
-/// Reads the ABI file from the `abis/` directory and parses it into a JsonAbi struct.
-fn load_abi(name: &str) -> JsonAbi {
-    let abi_path = format!("abis/{name}.json");
-    let abi_content = std::fs::read_to_string(&abi_path)
-        .unwrap_or_else(|_| panic!("Failed to read ABI file: {abi_path}"));
-    serde_json::from_str(&abi_content)
-        .unwrap_or_else(|_| panic!("Failed to parse ABI file: {abi_path}"))
-}
-
 /// Serves the OpenAPI JSON specification at /openapi.json
 #[rocket::get("/openapi.json")]
 fn serve_openapi_spec(
@@ -102,11 +92,6 @@ pub async fn create_rocket() -> Rocket<Build> {
     let access_token = env::var("BEACONATOR_ACCESS_TOKEN")
         .expect("BEACONATOR_ACCESS_TOKEN environment variable not set");
 
-    // Load ABIs from files
-    let beacon_registry_abi = load_abi("BeaconRegistry");
-    let perp_manager_abi = load_abi("PerpManager");
-    let multicall3_abi = load_abi("Multicall3");
-
     // Load contract addresses
     let perpcity_registry_address = Address::from_str(
         &env::var("PERPCITY_REGISTRY_ADDRESS")
@@ -126,9 +111,11 @@ pub async fn create_rocket() -> Rocket<Build> {
     .expect("Failed to parse USDC address");
 
     // Optional multicall3 address for batch operations
-    let multicall3_address = env::var("MULTICALL3_ADDRESS")
-        .ok()
-        .map(|addr_str| Address::from_str(&addr_str).expect("Failed to parse MULTICALL3_ADDRESS"));
+    let multicall3_address = env::var("MULTICALL3_ADDRESS").ok().and_then(|addr_str| {
+        Address::from_str(&addr_str)
+            .map_err(|e| tracing::warn!("Invalid MULTICALL3_ADDRESS '{}': {}", addr_str, e))
+            .ok()
+    });
 
     if let Some(multicall_addr) = multicall3_address {
         tracing::info!("Multicall3 address configured: {:?}", multicall_addr);
@@ -149,19 +136,30 @@ pub async fn create_rocket() -> Rocket<Build> {
     );
 
     // Load optional factory addresses for other beacon types
-    let lbcgbm_factory_address = env::var("LBCGBM_FACTORY_ADDRESS")
-        .ok()
-        .map(|s| Address::from_str(&s).expect("Failed to parse LBCGBM_FACTORY_ADDRESS"));
+    let lbcgbm_factory_address = env::var("LBCGBM_FACTORY_ADDRESS").ok().and_then(|s| {
+        Address::from_str(&s)
+            .map_err(|e| tracing::warn!("Invalid LBCGBM_FACTORY_ADDRESS '{}': {}", s, e))
+            .ok()
+    });
 
     if let Some(addr) = lbcgbm_factory_address {
         tracing::info!("LBCGBM factory address: {:?}", addr);
     }
 
-    let weighted_sum_composite_factory_address = env::var("WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS")
-        .ok()
-        .map(|s| {
-            Address::from_str(&s).expect("Failed to parse WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS")
-        });
+    let weighted_sum_composite_factory_address =
+        env::var("WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS")
+            .ok()
+            .and_then(|s| {
+                Address::from_str(&s)
+                    .map_err(|e| {
+                        tracing::warn!(
+                            "Invalid WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS '{}': {}",
+                            s,
+                            e
+                        )
+                    })
+                    .ok()
+            });
 
     if let Some(addr) = weighted_sum_composite_factory_address {
         tracing::info!("WeightedSumComposite factory address: {:?}", addr);
@@ -176,46 +174,6 @@ pub async fn create_rocket() -> Rocket<Build> {
         .unwrap_or_else(|_| "10000000000000000".to_string()) // Default 0.01 ETH
         .parse::<u128>()
         .expect("Failed to parse ETH_TRANSFER_LIMIT");
-
-    // Load perp module addresses
-    let fees_module_address = Address::from_str(
-        &env::var("FEES_MODULE_ADDRESS").expect("FEES_MODULE_ADDRESS environment variable not set"),
-    )
-    .expect("Failed to parse FEES_MODULE_ADDRESS");
-
-    let margin_ratios_module_address = Address::from_str(
-        &env::var("MARGIN_RATIOS_MODULE_ADDRESS")
-            .expect("MARGIN_RATIOS_MODULE_ADDRESS environment variable not set"),
-    )
-    .expect("Failed to parse MARGIN_RATIOS_MODULE_ADDRESS");
-
-    let lockup_period_module_address = Address::from_str(
-        &env::var("LOCKUP_PERIOD_MODULE_ADDRESS")
-            .expect("LOCKUP_PERIOD_MODULE_ADDRESS environment variable not set"),
-    )
-    .expect("Failed to parse LOCKUP_PERIOD_MODULE_ADDRESS");
-
-    let sqrt_price_impact_limit_module_address = Address::from_str(
-        &env::var("SQRT_PRICE_IMPACT_LIMIT_MODULE_ADDRESS")
-            .expect("SQRT_PRICE_IMPACT_LIMIT_MODULE_ADDRESS environment variable not set"),
-    )
-    .expect("Failed to parse SQRT_PRICE_IMPACT_LIMIT_MODULE_ADDRESS");
-
-    // Log loaded module addresses for debugging
-    tracing::info!("Perp module addresses loaded:");
-    tracing::info!("  - Fees module: {:?}", fees_module_address);
-    tracing::info!(
-        "  - Margin ratios module: {:?}",
-        margin_ratios_module_address
-    );
-    tracing::info!(
-        "  - Lockup period module: {:?}",
-        lockup_period_module_address
-    );
-    tracing::info!(
-        "  - Price impact limit module: {:?}",
-        sqrt_price_impact_limit_module_address
-    );
 
     // Get environment configuration and chain ID
     let env_type = &rpc_config.env_type;
@@ -509,74 +467,59 @@ pub async fn create_rocket() -> Rocket<Build> {
     }
 
     // Optional Safe multisig configuration for beacon registration
-    let safe_address = env::var("SAFE_ADDRESS")
-        .ok()
-        .map(|addr_str| Address::from_str(&addr_str).expect("Failed to parse SAFE_ADDRESS"));
-
-    let safe_tx_service_url = if let Some(safe_addr) = safe_address {
-        let url = env::var("SAFE_TX_SERVICE_URL")
+    let safe_config = env::var("SAFE_ADDRESS").ok().and_then(|addr_str| {
+        let address = match Address::from_str(&addr_str) {
+            Ok(addr) => addr,
+            Err(e) => {
+                tracing::warn!("Invalid SAFE_ADDRESS '{}': {}", addr_str, e);
+                return None;
+            }
+        };
+        let tx_service_url = env::var("SAFE_TX_SERVICE_URL")
             .ok()
             .or_else(|| services::safe::SafeTransactionService::default_url_for_chain(chain_id));
-        if let Some(ref url) = url {
+        if let Some(ref url) = tx_service_url {
             tracing::info!("Safe multisig configured:");
-            tracing::info!("  - Safe address: {:?}", safe_addr);
+            tracing::info!("  - Safe address: {:?}", address);
             tracing::info!("  - TX Service URL: {}", url);
         }
-        url
-    } else {
-        None
-    };
+        Some(SafeConfig {
+            address,
+            tx_service_url,
+        })
+    });
 
     let app_state = AppState {
-        // Provider
-        read_provider,
-        funding_wallet_address,
-        wallet_manager: std::sync::Arc::new(wallet_manager),
-        rpc_url,
-        chain_id,
-        signer,
-
-        // ABIs
-        beacon_registry_abi,
-        perp_manager_abi,
-        multicall3_abi,
-
-        // Addresses
-        perpcity_registry_address,
-        perp_manager_address,
-        usdc_address,
-        ecdsa_verifier_factory_address,
-
-        // Limits
-        usdc_transfer_limit,
-        eth_transfer_limit,
-
-        // Auth
-        access_token,
-        admin_token,
-
-        // Beacon type registry
-        beacon_type_registry: std::sync::Arc::new(beacon_type_registry),
-
-        // Component factory registry
-        component_factory_registry: std::sync::Arc::new(component_factory_registry),
-
-        // Recipe registry
-        recipe_registry: std::sync::Arc::new(recipe_registry),
-
-        // IdentityBeacon bytecode
-        identity_beacon_bytecode,
-
-        // Perp modules
-        fees_module_address,
-        margin_ratios_module_address,
-        lockup_period_module_address,
-        sqrt_price_impact_limit_module_address,
-        multicall3_address,
-
-        // Safe multisig
-        safe_address,
-        safe_tx_service_url,
+        provider: ProviderConfig {
+            read_provider,
+            rpc_url,
+            chain_id,
+        },
+        wallets: WalletConfig {
+            manager: std::sync::Arc::new(wallet_manager),
+            funding_address: funding_wallet_address,
+            signer,
+            usdc_transfer_limit,
+            eth_transfer_limit,
+        },
+        contracts: ContractAddresses {
+            perpcity_registry: perpcity_registry_address,
+            perp_manager: perp_manager_address,
+            usdc: usdc_address,
+            ecdsa_verifier_factory: ecdsa_verifier_factory_address,
+            multicall3: multicall3_address,
+            identity_beacon_bytecode,
+            safe: safe_config,
+        },
+        auth: AuthConfig {
+            access_token,
+            admin_token,
+        },
+        registries: Registries {
+            beacon_types: std::sync::Arc::new(beacon_type_registry),
+            component_factories: std::sync::Arc::new(component_factory_registry),
+            recipes: std::sync::Arc::new(recipe_registry),
+        },
     };
 
     // Configure OpenAPI settings
@@ -586,7 +529,6 @@ pub async fn create_rocket() -> Rocket<Build> {
     let (routes, openapi_spec) = openapi_get_routes_spec![
         openapi_settings:
         routes::info::index,
-        routes::info::all_beacons,
         routes::beacon::create_beacon,
         routes::beacon::create_beacon_with_ecdsa,
         routes::beacon::register_beacon,
@@ -596,9 +538,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::beacon::create_lbcgbm_beacon_endpoint,
         routes::beacon::create_weighted_sum_composite_beacon_endpoint,
         routes::perp::deploy_perp_for_beacon_endpoint,
-        routes::perp::batch_deploy_perps_for_beacons,
         routes::perp::deposit_liquidity_for_perp_endpoint,
-        routes::perp::batch_deposit_liquidity_for_perps,
         routes::wallet::fund_guest_wallet,
         routes::beacon_type::list_beacon_types,
         routes::beacon_type::get_beacon_type,

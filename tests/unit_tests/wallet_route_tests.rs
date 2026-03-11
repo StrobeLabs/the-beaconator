@@ -124,7 +124,7 @@ async fn test_fund_wallet_negative_eth() {
 #[tokio::test]
 async fn test_fund_wallet_usdc_exceeds_limit() {
     let mut state = create_test_state().await;
-    state.usdc_transfer_limit = 10_000_000; // 10 USDC
+    state.wallets.usdc_transfer_limit = 10_000_000; // 10 USDC
     let state = State::from(&state);
     let token = ApiToken("test_token".to_string());
 
@@ -144,7 +144,7 @@ async fn test_fund_wallet_usdc_exceeds_limit() {
 #[tokio::test]
 async fn test_fund_wallet_eth_exceeds_limit() {
     let mut state = create_test_state().await;
-    state.eth_transfer_limit = 1_000_000_000_000_000; // 0.001 ETH
+    state.wallets.eth_transfer_limit = 1_000_000_000_000_000; // 0.001 ETH
     let state = State::from(&state);
     let token = ApiToken("test_token".to_string());
 

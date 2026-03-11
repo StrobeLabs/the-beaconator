@@ -52,7 +52,8 @@ pub async fn create_beacon(
 
     // Look up beacon type config from registry
     let config = match state
-        .beacon_type_registry
+        .registries
+        .beacon_types
         .get_type(&request.beacon_type)
         .await
     {
@@ -150,7 +151,7 @@ pub async fn create_beacon_with_ecdsa(
         };
 
     // Register with the perpcity registry
-    let registry_address = state.perpcity_registry_address;
+    let registry_address = state.contracts.perpcity_registry;
     let (registered, safe_proposal_hash) = match register_beacon_with_registry(
         state.inner(),
         beacon_address,
@@ -531,7 +532,7 @@ pub async fn create_lbcgbm_beacon_endpoint(
     let beacon_address = result.beacon_address;
 
     // Register with perpcity registry
-    let registry_address = state.perpcity_registry_address;
+    let registry_address = state.contracts.perpcity_registry;
     let (registered, safe_proposal_hash) = match register_beacon_with_registry(
         state.inner(),
         beacon_address,
@@ -567,7 +568,8 @@ pub async fn create_lbcgbm_beacon_endpoint(
 
     // Get the StandaloneBeaconFactory address used for LBCGBM creation
     let factory_address = state
-        .component_factory_registry
+        .registries
+        .component_factories
         .get_factory_address(&ComponentFactoryType::StandaloneBeaconFactory)
         .await
         .map(|a| format!("{a:#x}"))
@@ -616,7 +618,8 @@ pub async fn create_weighted_sum_composite_beacon_endpoint(
 
     // Look up the WeightedSumComposite beacon type config from registry
     let config = match state
-        .beacon_type_registry
+        .registries
+        .beacon_types
         .get_type("weighted-sum-composite")
         .await
     {
@@ -730,7 +733,7 @@ pub async fn create_modular_beacon(
     });
 
     // Look up recipe from registry
-    let recipe = match state.recipe_registry.get_recipe(&request.recipe).await {
+    let recipe = match state.registries.recipes.get_recipe(&request.recipe).await {
         Ok(Some(recipe)) => recipe,
         Ok(None) => {
             let msg = format!("Unknown recipe: '{}'", request.recipe);
@@ -781,7 +784,7 @@ pub async fn create_modular_beacon(
     let beacon_address = result.beacon_address;
 
     // Register with perpcity registry
-    let registry_address = state.perpcity_registry_address;
+    let registry_address = state.contracts.perpcity_registry;
     let (registered, safe_proposal_hash) = match register_beacon_with_registry(
         state.inner(),
         beacon_address,
