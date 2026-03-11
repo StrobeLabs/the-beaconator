@@ -24,8 +24,8 @@ pub async fn fund_guest_wallet(
     _token: ApiToken,
 ) -> Result<Json<ApiResponse<String>>, (Status, Json<ApiResponse<String>>)> {
     tracing::info!("Received request: POST /fund_guest_wallet");
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/fund_guest_wallet");
         scope.set_extra("wallet_address", request.wallet_address.clone().into());
         scope.set_extra("usdc_amount", request.usdc_amount.clone().into());
@@ -124,7 +124,7 @@ pub async fn fund_guest_wallet(
         Ok(balance) => balance,
         Err(e) => {
             tracing::error!("Failed to get ETH balance: {}", e);
-            sentry::capture_message(
+            hub.capture_message(
                 &format!("Failed to get ETH balance: {e}"),
                 sentry::Level::Error,
             );
@@ -147,7 +147,7 @@ pub async fn fund_guest_wallet(
             alloy::primitives::utils::format_ether(eth_balance),
             alloy::primitives::utils::format_ether(U256::from(eth_amount))
         );
-        sentry::capture_message(
+        hub.capture_message(
             &format!(
                 "Insufficient ETH balance in funding wallet. Have: {} ETH, Need: {} ETH",
                 alloy::primitives::utils::format_ether(eth_balance),
@@ -179,7 +179,7 @@ pub async fn fund_guest_wallet(
         Ok(result) => result,
         Err(e) => {
             tracing::error!("Failed to get USDC balance: {}", e);
-            sentry::capture_message(
+            hub.capture_message(
                 &format!("Failed to get USDC balance: {e}"),
                 sentry::Level::Error,
             );
@@ -202,7 +202,7 @@ pub async fn fund_guest_wallet(
             usdc_balance / U256::from(1_000_000),
             usdc_amount / 1_000_000
         );
-        sentry::capture_message(
+        hub.capture_message(
             &format!(
                 "Insufficient USDC balance in funding wallet. Have: {} USDC, Need: {} USDC",
                 usdc_balance / U256::from(1_000_000),
@@ -233,7 +233,7 @@ pub async fn fund_guest_wallet(
         .await
         .map_err(|e| {
             tracing::error!("Failed to acquire funding wallet lock: {}", e);
-            sentry::capture_message(
+            hub.capture_message(
                 &format!("Failed to acquire funding wallet lock: {e}"),
                 sentry::Level::Error,
             );
@@ -267,7 +267,7 @@ pub async fn fund_guest_wallet(
             Ok(receipt) => receipt.transaction_hash,
             Err(e) => {
                 tracing::error!("Failed to get ETH transaction receipt: {}", e);
-                sentry::capture_message(
+                hub.capture_message(
                     &format!("Failed to get ETH transaction receipt: {e}"),
                     sentry::Level::Error,
                 );
@@ -283,7 +283,7 @@ pub async fn fund_guest_wallet(
         },
         Err(e) => {
             tracing::error!("Failed to send ETH: {}", e);
-            sentry::capture_message(&format!("Failed to send ETH: {e}"), sentry::Level::Error);
+            hub.capture_message(&format!("Failed to send ETH: {e}"), sentry::Level::Error);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
@@ -308,7 +308,7 @@ pub async fn fund_guest_wallet(
             Ok(receipt) => receipt,
             Err(e) => {
                 tracing::error!("Failed to get USDC transaction receipt: {}", e);
-                sentry::capture_message(
+                hub.capture_message(
                     &format!("Failed to get USDC transaction receipt: {e}"),
                     sentry::Level::Error,
                 );
@@ -324,7 +324,7 @@ pub async fn fund_guest_wallet(
         },
         Err(e) => {
             tracing::error!("Failed to send USDC: {}", e);
-            sentry::capture_message(&format!("Failed to send USDC: {e}"), sentry::Level::Error);
+            hub.capture_message(&format!("Failed to send USDC: {e}"), sentry::Level::Error);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
