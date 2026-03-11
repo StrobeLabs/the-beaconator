@@ -56,7 +56,8 @@ pub async fn create_modular_beacon(
 
     // Acquire wallet from pool
     let wallet_handle = state
-        .wallet_manager
+        .wallets
+        .manager
         .acquire_any_wallet()
         .await
         .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
@@ -69,7 +70,7 @@ pub async fn create_modular_beacon(
 
     // Build provider from wallet handle
     let provider = wallet_handle
-        .build_provider(&state.rpc_url)
+        .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
     match &recipe.beacon_kind {
@@ -115,7 +116,8 @@ async fn create_identity_beacon_modular(
 
     // Step 2: Create identity beacon via factory
     let beacon_factory_addr = state
-        .component_factory_registry
+        .registries
+        .component_factories
         .get_factory_address(&ComponentFactoryType::IdentityBeaconFactory)
         .await?;
 
@@ -199,7 +201,8 @@ async fn create_standalone_beacon_modular(
 
     // Step 5: Create standalone beacon
     let beacon_factory_addr = state
-        .component_factory_registry
+        .registries
+        .component_factories
         .get_factory_address(&ComponentFactoryType::StandaloneBeaconFactory)
         .await?;
 
@@ -299,7 +302,8 @@ async fn create_composite_beacon_modular(
 
     // Step 3: Create composite beacon
     let beacon_factory_addr = state
-        .component_factory_registry
+        .registries
+        .component_factories
         .get_factory_address(&ComponentFactoryType::CompositeBeaconFactory)
         .await?;
 
@@ -373,7 +377,8 @@ async fn create_group_beacon_modular(
 
     // Step 4: Create group manager
     let beacon_factory_addr = state
-        .component_factory_registry
+        .registries
+        .component_factories
         .get_factory_address(&ComponentFactoryType::GroupManagerFactory)
         .await?;
 
@@ -455,14 +460,15 @@ async fn create_group_beacon_modular(
 
 /// Create an ECDSA verifier via the ECDSAVerifierFactory.
 async fn create_verifier(state: &AppState, provider: &AlloyProvider) -> Result<Address, String> {
-    let signer_address = state.signer.address();
+    let signer_address = state.wallets.signer.address();
     tracing::info!(
         "Creating ECDSAVerifier via factory with signer={}",
         signer_address
     );
 
     let verifier_factory_addr = state
-        .component_factory_registry
+        .registries
+        .component_factories
         .get_factory_address(&ComponentFactoryType::ECDSAVerifierFactory)
         .await?;
 
@@ -503,7 +509,8 @@ async fn create_preprocessor(
     spec: &PreprocessorSpec,
 ) -> Result<Address, String> {
     let factory_addr = state
-        .component_factory_registry
+        .registries
+        .component_factories
         .get_factory_address(&spec.factory_type())
         .await?;
 
@@ -653,7 +660,8 @@ async fn create_base_fn(
     spec: &BaseFnSpec,
 ) -> Result<Address, String> {
     let factory_addr = state
-        .component_factory_registry
+        .registries
+        .component_factories
         .get_factory_address(&spec.factory_type())
         .await?;
 
@@ -762,7 +770,8 @@ async fn create_transform(
     spec: &TransformSpec,
 ) -> Result<Address, String> {
     let factory_addr = state
-        .component_factory_registry
+        .registries
+        .component_factories
         .get_factory_address(&spec.factory_type())
         .await?;
 
@@ -846,7 +855,8 @@ async fn create_composer(
     spec: &ComposerSpec,
 ) -> Result<Address, String> {
     let factory_addr = state
-        .component_factory_registry
+        .registries
+        .component_factories
         .get_factory_address(&spec.factory_type())
         .await?;
 
@@ -895,7 +905,8 @@ async fn create_group_fn(
     spec: &GroupFnSpec,
 ) -> Result<Address, String> {
     let factory_addr = state
-        .component_factory_registry
+        .registries
+        .component_factories
         .get_factory_address(&spec.factory_type())
         .await?;
 
@@ -1107,7 +1118,8 @@ async fn create_group_transform(
     spec: &GroupTransformSpec,
 ) -> Result<Address, String> {
     let factory_addr = state
-        .component_factory_registry
+        .registries
+        .component_factories
         .get_factory_address(&spec.factory_type())
         .await?;
 

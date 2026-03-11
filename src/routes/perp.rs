@@ -7,9 +7,8 @@ use tracing;
 
 use crate::guards::ApiToken;
 use crate::models::{
-    ApiResponse, AppState, BatchDeployPerpsForBeaconsRequest, BatchDepositLiquidityForPerpsRequest,
-    DeployPerpForBeaconRequest, DeployPerpForBeaconResponse, DepositLiquidityForPerpRequest,
-    DepositLiquidityForPerpResponse,
+    ApiResponse, AppState, DeployPerpForBeaconRequest, DeployPerpForBeaconResponse,
+    DepositLiquidityForPerpRequest, DepositLiquidityForPerpResponse,
 };
 use crate::services::perp::{
     deploy_perp_for_beacon, deposit_liquidity_for_perp, validate_module_address,
@@ -35,7 +34,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
         scope.set_extra(
             "perp_manager_address",
-            state.perp_manager_address.to_string().into(),
+            state.contracts.perp_manager.to_string().into(),
         );
         scope.set_extra("wallet_source", "WalletManager pool".into());
     });
@@ -108,14 +107,15 @@ pub async fn deploy_perp_for_beacon_endpoint(
     // Validate all module addresses have deployed code
     tracing::info!("Validating module addresses...");
 
-    if let Err(e) = validate_module_address(&state.read_provider, fees_module, "Fees module").await
+    if let Err(e) =
+        validate_module_address(&state.provider.read_provider, fees_module, "Fees module").await
     {
         sentry::capture_message(&e, sentry::Level::Error);
         return Err(Status::BadRequest);
     }
 
     if let Err(e) = validate_module_address(
-        &state.read_provider,
+        &state.provider.read_provider,
         margin_ratios_module,
         "Margin ratios module",
     )
@@ -126,7 +126,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
     }
 
     if let Err(e) = validate_module_address(
-        &state.read_provider,
+        &state.provider.read_provider,
         lockup_period_module,
         "Lockup period module",
     )
@@ -137,7 +137,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
     }
 
     if let Err(e) = validate_module_address(
-        &state.read_provider,
+        &state.provider.read_provider,
         sqrt_price_impact_limit_module,
         "Sqrt price impact limit module",
     )
@@ -184,8 +184,8 @@ pub async fn deploy_perp_for_beacon_endpoint(
             tracing::error!("{}", error_msg);
             tracing::error!("Error context:");
             tracing::error!("  - Beacon address: {}", beacon_address);
-            tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
-            tracing::error!("  - USDC address: {}", state.usdc_address);
+            tracing::error!("  - PerpManager address: {}", state.contracts.perp_manager);
+            tracing::error!("  - USDC address: {}", state.contracts.usdc);
             tracing::error!("  - Wallet source: WalletManager pool");
 
             // Provide actionable next steps based on error
@@ -193,7 +193,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
             if e.contains("execution reverted") {
                 tracing::error!(
                     "  1. Verify PerpManager contract is deployed at {}",
-                    state.perp_manager_address
+                    state.contracts.perp_manager
                 );
                 tracing::error!(
                     "  2. Check beacon address {} exists and is valid",
@@ -309,7 +309,7 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             tracing::error!("Error context:");
             tracing::error!("  - Perp ID: {}", request.perp_id);
             tracing::error!("  - Margin amount: {} USDC", request.margin_amount_usdc);
-            tracing::error!("  - PerpManager address: {}", state.perp_manager_address);
+            tracing::error!("  - PerpManager address: {}", state.contracts.perp_manager);
             tracing::error!("  - Wallet source: WalletManager pool");
 
             // Provide actionable next steps
@@ -339,36 +339,6 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             Err(Status::InternalServerError)
         }
     }
-}
-
-/// Deposits liquidity for multiple perpetual contracts in a batch operation.
-///
-/// NOTE: This endpoint is not yet implemented. Batch operations using Multicall3
-/// will be implemented in a future update for gas efficiency.
-#[openapi(tag = "Perpetual")]
-#[post("/batch_deposit_liquidity_for_perps", data = "<request>")]
-pub async fn batch_deposit_liquidity_for_perps(
-    #[allow(unused_variables)] request: Json<BatchDepositLiquidityForPerpsRequest>,
-    _token: ApiToken,
-    _state: &State<AppState>,
-) -> Result<Json<ApiResponse<()>>, Status> {
-    tracing::warn!("Batch deposit liquidity endpoint called but not yet implemented");
-    Err(Status::NotImplemented)
-}
-
-/// Deploys perpetual contracts for multiple beacons in a batch operation.
-///
-/// NOTE: This endpoint is not yet implemented. Batch operations using Multicall3
-/// will be implemented in a future update for gas efficiency.
-#[openapi(tag = "Perpetual")]
-#[post("/batch_deploy_perps_for_beacons", data = "<request>")]
-pub async fn batch_deploy_perps_for_beacons(
-    #[allow(unused_variables)] request: Json<BatchDeployPerpsForBeaconsRequest>,
-    _token: ApiToken,
-    _state: &State<AppState>,
-) -> Result<Json<ApiResponse<()>>, Status> {
-    tracing::warn!("Batch deploy perps endpoint called but not yet implemented");
-    Err(Status::NotImplemented)
 }
 
 // Tests moved to tests/unit_tests/perp_route_tests.rs

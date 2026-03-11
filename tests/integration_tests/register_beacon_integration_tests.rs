@@ -30,7 +30,7 @@ async fn test_register_beacon_with_anvil() {
         return;
     };
 
-    let registry_address = app_state.perpcity_registry_address;
+    let registry_address = app_state.contracts.perpcity_registry;
     let register_result =
         register_beacon_with_registry(&app_state, beacon_address, registry_address).await;
 
@@ -61,7 +61,7 @@ async fn test_register_beacon_idempotency() {
         return;
     };
 
-    let registry_address = app_state.perpcity_registry_address;
+    let registry_address = app_state.contracts.perpcity_registry;
 
     let first_register =
         register_beacon_with_registry(&app_state, beacon_address, registry_address).await;
@@ -92,7 +92,7 @@ async fn test_register_beacon_with_different_registries() {
         return;
     };
 
-    let registry1 = app_state.perpcity_registry_address;
+    let registry1 = app_state.contracts.perpcity_registry;
     let register1 = register_beacon_with_registry(&app_state, beacon_address, registry1).await;
     assert!(
         register1.is_ok(),
@@ -106,7 +106,7 @@ async fn test_register_beacon_with_different_registries() {
     // Use ecdsa_verifier_factory_address as a non-registry contract stand-in.
     // register_beacon_with_registry should fail because registry2 is not a
     // BeaconRegistry and won't have the registerBeacon(address) method.
-    let registry2 = app_state.ecdsa_verifier_factory_address;
+    let registry2 = app_state.contracts.ecdsa_verifier_factory;
     let register2_result =
         register_beacon_with_registry(&app_state, beacon_address, registry2).await;
 
@@ -126,7 +126,7 @@ async fn test_register_beacon_with_different_registries() {
 async fn test_register_multiple_beacons_sequentially() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
-    let registry_address = app_state.perpcity_registry_address;
+    let registry_address = app_state.contracts.perpcity_registry;
     let mut registered_beacons = Vec::new();
 
     for i in 0..3u128 {
@@ -171,7 +171,7 @@ async fn test_register_zero_beacon_address() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
     let zero_address = Address::ZERO;
-    let registry_address = app_state.perpcity_registry_address;
+    let registry_address = app_state.contracts.perpcity_registry;
 
     let result = register_beacon_with_registry(&app_state, zero_address, registry_address).await;
 
@@ -190,7 +190,7 @@ async fn test_registration_check_unregistered_beacon() {
 
     let unregistered_beacon =
         Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let registry_address = app_state.perpcity_registry_address;
+    let registry_address = app_state.contracts.perpcity_registry;
 
     let is_registered =
         is_beacon_registered(&app_state, unregistered_beacon, registry_address).await;
@@ -209,7 +209,7 @@ async fn test_registration_check_unregistered_beacon() {
 async fn test_concurrent_beacon_registrations() {
     let (app_state, _manager) = crate::test_utils::create_isolated_test_app_state().await;
 
-    let registry_address = app_state.perpcity_registry_address;
+    let registry_address = app_state.contracts.perpcity_registry;
 
     let mut beacon_addresses = Vec::new();
     for i in 0..3u128 {
@@ -265,17 +265,17 @@ async fn test_registration_error_handling() {
     let test_cases = vec![
         (
             Address::ZERO,
-            app_state.perpcity_registry_address,
+            app_state.contracts.perpcity_registry,
             "Zero beacon address",
         ),
         (
-            app_state.funding_wallet_address,
+            app_state.wallets.funding_address,
             Address::ZERO,
             "Zero registry address",
         ),
         (
             Address::from_str("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF").unwrap(),
-            app_state.perpcity_registry_address,
+            app_state.contracts.perpcity_registry,
             "Max address beacon",
         ),
     ];
@@ -303,7 +303,7 @@ async fn test_registration_with_timeout() {
         return;
     };
 
-    let registry_address = app_state.perpcity_registry_address;
+    let registry_address = app_state.contracts.perpcity_registry;
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(30),

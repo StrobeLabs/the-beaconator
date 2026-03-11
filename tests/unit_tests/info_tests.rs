@@ -27,5 +27,5 @@ fn test_index_detailed_output() {
     let api_summary = response.data.unwrap();
     assert_eq!(api_summary.total_endpoints, api_summary.endpoints.len());
     assert!(api_summary.working_endpoints > 0);
-    assert!(api_summary.not_implemented > 0);
+    assert_eq!(api_summary.not_implemented, 0);
 }

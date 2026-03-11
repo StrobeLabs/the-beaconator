@@ -116,7 +116,7 @@ async fn test_deploy_identity_beacon_empty_bytecode_in_test_state() {
     let app_state = crate::test_utils::create_simple_test_app_state().await;
     // Test app state should have empty bytecode (deploy_identity_beacon would reject this)
     assert!(
-        app_state.identity_beacon_bytecode.is_empty(),
+        app_state.contracts.identity_beacon_bytecode.is_empty(),
         "Test app state should have empty bytecode"
     );
 }

@@ -28,7 +28,7 @@ impl<'r> FromRequest<'r> for ApiToken {
                 match auth_header {
                     Some(header) if header.starts_with("Bearer ") => {
                         let token = &header[7..]; // Remove "Bearer " prefix
-                        if token == state.access_token {
+                        if token == state.auth.access_token {
                             Outcome::Success(ApiToken(token.to_string()))
                         } else {
                             tracing::warn!("Invalid API token provided for: {}", endpoint);
@@ -125,7 +125,7 @@ impl<'r> FromRequest<'r> for AdminToken {
                 match auth_header {
                     Some(header) if header.starts_with("Bearer ") => {
                         let token = &header[7..];
-                        if token == state.admin_token {
+                        if token == state.auth.admin_token {
                             Outcome::Success(AdminToken(token.to_string()))
                         } else {
                             tracing::warn!("Invalid admin token provided for: {}", endpoint);

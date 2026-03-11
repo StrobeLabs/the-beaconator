@@ -16,7 +16,7 @@ use crate::services::wallet::WalletHandle;
 
 /// Deploys an IdentityBeacon contract with the given verifier and initial index.
 ///
-/// Uses bytecode from `state.identity_beacon_bytecode` with ABI-encoded constructor args.
+/// Uses bytecode from `state.contracts.identity_beacon_bytecode` with ABI-encoded constructor args.
 pub async fn deploy_identity_beacon(
     state: &AppState,
     wallet_handle: &WalletHandle,
@@ -31,10 +31,10 @@ pub async fn deploy_identity_beacon(
 
     // Build provider from wallet handle
     let provider = wallet_handle
-        .build_provider(&state.rpc_url)
+        .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider for beacon deployment: {e}"))?;
 
-    if state.identity_beacon_bytecode.is_empty() {
+    if state.contracts.identity_beacon_bytecode.is_empty() {
         return Err(
             "IdentityBeacon bytecode is empty - check abis/IdentityBeacon.bytecode".to_string(),
         );
@@ -44,7 +44,7 @@ pub async fn deploy_identity_beacon(
     let constructor_args = (verifier_address, U256::from(initial_index)).abi_encode();
 
     // Concatenate bytecode + constructor args
-    let mut deploy_data = state.identity_beacon_bytecode.to_vec();
+    let mut deploy_data = state.contracts.identity_beacon_bytecode.to_vec();
     deploy_data.extend_from_slice(&constructor_args);
 
     // Build deployment transaction using with_deploy_code for proper contract creation

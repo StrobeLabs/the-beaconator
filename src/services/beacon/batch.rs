@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use crate::AlloyProvider;
 use crate::models::{AppState, BatchUpdateBeaconResponse, BeaconUpdateData, BeaconUpdateResult};
-use crate::routes::{IBeacon, IBeaconRegistry, IMulticall3};
+use crate::routes::{IBeacon, IMulticall3};
 
 /// Execute batch updates of beacon data with multicall3
 ///
@@ -41,7 +41,7 @@ pub async fn batch_update_beacon(
         match Address::from_str(&update.beacon_address) {
             Ok(beacon_addr) => {
                 // Get the wallet that owns this beacon (or any available wallet if no owner set)
-                match state.wallet_manager.acquire_for_beacon(&beacon_addr).await {
+                match state.wallets.manager.acquire_for_beacon(&beacon_addr).await {
                     Ok(handle) => {
                         let wallet_addr = handle.address();
                         // Release the handle immediately - we just need to know which wallet to use
@@ -80,7 +80,8 @@ pub async fn batch_update_beacon(
     for (wallet_addr, wallet_updates) in updates_by_wallet {
         // Acquire the specific wallet for this batch
         let wallet_handle = match state
-            .wallet_manager
+            .wallets
+            .manager
             .acquire_specific_wallet(&wallet_addr)
             .await
         {
@@ -103,7 +104,7 @@ pub async fn batch_update_beacon(
         );
 
         // Build provider with the acquired wallet
-        let provider = match wallet_handle.build_provider(&state.rpc_url) {
+        let provider = match wallet_handle.build_provider(&state.provider.rpc_url) {
             Ok(p) => p,
             Err(e) => {
                 let error_msg = format!("Failed to build provider for wallet {wallet_addr}: {e}");
@@ -116,7 +117,7 @@ pub async fn batch_update_beacon(
         };
 
         // Process this wallet's updates using multicall
-        if let Some(multicall_address) = state.multicall3_address {
+        if let Some(multicall_address) = state.contracts.multicall3 {
             // Convert &[&BeaconUpdateData] to &[BeaconUpdateData] for the function call
             let updates_slice: Vec<BeaconUpdateData> =
                 wallet_updates.iter().map(|u| (*u).clone()).collect();
@@ -212,7 +213,7 @@ async fn batch_update_with_multicall3(
         let inputs_bytes = update_data.public_signals.clone();
 
         // Create the update call data using the IBeacon interface (read provider for calldata generation)
-        let beacon_contract = IBeacon::new(beacon_address, &*state.read_provider);
+        let beacon_contract = IBeacon::new(beacon_address, &*state.provider.read_provider);
         let call_data = beacon_contract
             .update(proof_bytes, inputs_bytes)
             .calldata()
@@ -329,67 +330,5 @@ async fn batch_update_with_multicall3(
             }
             results
         }
-    }
-}
-
-/// Register multiple beacons using multicall3
-///
-/// This function is idempotent - calling registerBeacon multiple times on the same
-/// beacon is safe.
-pub async fn register_beacons_with_multicall3(
-    state: &AppState,
-    provider: &AlloyProvider,
-    multicall_address: Address,
-    registry_address: Address,
-    beacon_addresses: &[String],
-) -> Result<(), String> {
-    tracing::info!(
-        "Using Multicall3 for batch registration of {} beacons with registry {}",
-        beacon_addresses.len(),
-        registry_address
-    );
-
-    let mut calls = Vec::new();
-    let registry_contract = IBeaconRegistry::new(registry_address, &*state.read_provider);
-
-    for beacon_addr_str in beacon_addresses {
-        let beacon_address = Address::from_str(beacon_addr_str)
-            .map_err(|e| format!("Invalid beacon address {beacon_addr_str}: {e}"))?;
-
-        let call_data = registry_contract
-            .registerBeacon(beacon_address)
-            .calldata()
-            .clone();
-
-        let call = IMulticall3::Call3 {
-            target: registry_address,
-            allowFailure: false,
-            callData: call_data,
-        };
-
-        calls.push(call);
-    }
-
-    // Execute the multicall3 registration transaction
-    let multicall_contract = IMulticall3::new(multicall_address, provider);
-
-    match multicall_contract.aggregate3(calls).send().await {
-        Ok(pending_tx) => match pending_tx.get_receipt().await {
-            Ok(receipt) => {
-                if !receipt.status() {
-                    let tx_hash = format!("{:?}", receipt.transaction_hash);
-                    return Err(format!(
-                        "Beacon registration transaction reverted (tx: {tx_hash})"
-                    ));
-                }
-                tracing::info!(
-                    "Multicall3 beacon registration confirmed: {:?}",
-                    receipt.transaction_hash
-                );
-                Ok(())
-            }
-            Err(e) => Err(format!("Failed to get registration receipt: {e}")),
-        },
-        Err(e) => Err(format!("Failed to send registration transaction: {e}")),
     }
 }

@@ -29,7 +29,7 @@ async fn test_example() {
     // - Deterministic contract addresses
 
     // Test blockchain connection
-    let block_number = TestUtils::get_block_number(&app_state.read_provider).await;
+    let block_number = TestUtils::get_block_number(&app_state.provider.read_provider).await;
     assert!(block_number.is_ok());
 }
 ```
@@ -45,7 +45,7 @@ async fn test_with_different_account() {
     let app_state = create_test_app_state_with_account(1).await;
 
     // This account has different address but same balance
-    assert_ne!(app_state.funding_wallet_address, Address::ZERO);
+    assert_ne!(app_state.wallets.funding_address, Address::ZERO);
 }
 ```
 
@@ -59,15 +59,11 @@ async fn test_blockchain_operations() {
     let app_state = create_test_app_state().await;
 
     // Check balance
-    let balance = TestUtils::get_balance(&app_state.read_provider, app_state.funding_wallet_address).await?;
+    let balance = TestUtils::get_balance(&app_state.provider.read_provider, app_state.wallets.funding_address).await?;
     assert!(balance > U256::ZERO);
 
     // Get block number
-    let block_number = TestUtils::get_block_number(&app_state.read_provider).await?;
-
-    // Time manipulation (for contract testing)
-    TestUtils::fast_forward_time(&app_state.provider, 3600).await?; // 1 hour
-    TestUtils::mine_blocks(&app_state.provider, 10).await?;
+    let block_number = TestUtils::get_block_number(&app_state.provider.read_provider).await?;
 }
 ```
 
@@ -136,8 +132,10 @@ use alloy::{
 use std::str::FromStr;
 use std::sync::Arc;
 use the_beaconator::ReadOnlyProvider;
-use the_beaconator::models::AppState;
 use the_beaconator::models::wallet::{WalletInfo, WalletStatus};
+use the_beaconator::models::{
+    AppState, AuthConfig, ContractAddresses, ProviderConfig, Registries, WalletConfig,
+};
 use the_beaconator::services::beacon::BeaconTypeRegistry;
 use the_beaconator::services::beacon::ComponentFactoryRegistry;
 use the_beaconator::services::beacon::RecipeRegistry;
@@ -549,10 +547,6 @@ pub async fn create_test_app_state() -> AppState {
         .await
         .expect("Failed to deploy test contracts");
 
-    // Load real ABIs from test fixtures
-    let beacon_registry_abi = load_test_abi("BeaconRegistry");
-    let perp_manager_abi = load_test_abi("PerpManager");
-
     // Create signer for ECDSA operations (using Anvil's first deterministic test key)
     let test_signer = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
         .parse::<PrivateKeySigner>()
@@ -563,50 +557,39 @@ pub async fn create_test_app_state() -> AppState {
     let read_provider = build_test_read_only_provider(&anvil.rpc_url);
 
     AppState {
-        read_provider,
-        funding_wallet_address: deployment.deployer,
-        rpc_url: anvil.rpc_url.clone(),
-        chain_id: 31337,
-        signer: test_signer,
-        beacon_registry_abi,
-        perp_manager_abi,
-        multicall3_abi: load_test_abi("Multicall3"),
-        perpcity_registry_address: deployment.beacon_registry,
-        perp_manager_address: deployment.perp_hook,
-        usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
-        ecdsa_verifier_factory_address: Address::from_str(
-            "0x8901234567890123456789012345678901234567",
-        )
-        .unwrap(), // Mock factory address
-        identity_beacon_bytecode: Bytes::new(),
-        usdc_transfer_limit: 1_000_000_000,         // 1000 USDC
-        eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
-        access_token: "test_token".to_string(),
-        fees_module_address: Address::from_str("0x4567890123456789012345678901234567890123")
-            .unwrap(),
-        margin_ratios_module_address: Address::from_str(
-            "0x5678901234567890123456789012345678901234",
-        )
-        .unwrap(),
-        lockup_period_module_address: Address::from_str(
-            "0x6789012345678901234567890123456789012345",
-        )
-        .unwrap(),
-        sqrt_price_impact_limit_module_address: Address::from_str(
-            "0x7890123456789012345678901234567890123456",
-        )
-        .unwrap(),
-
-        multicall3_address: Some(
-            Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
-        ), // Standard multicall3 address for tests
-        wallet_manager: Arc::new(WalletManager::test_stub()),
-        admin_token: "test_admin_token".to_string(),
-        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
-        component_factory_registry: Arc::new(ComponentFactoryRegistry::test_stub()),
-        recipe_registry: Arc::new(RecipeRegistry::test_stub()),
-        safe_address: None,
-        safe_tx_service_url: None,
+        provider: ProviderConfig {
+            read_provider,
+            rpc_url: anvil.rpc_url.clone(),
+            chain_id: 31337,
+        },
+        wallets: WalletConfig {
+            manager: Arc::new(WalletManager::test_stub()),
+            funding_address: deployment.deployer,
+            signer: test_signer,
+            usdc_transfer_limit: 1_000_000_000, // 1000 USDC
+            eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
+        },
+        contracts: ContractAddresses {
+            perpcity_registry: deployment.beacon_registry,
+            perp_manager: deployment.perp_hook,
+            usdc: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
+            ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
+                .unwrap(), // Mock factory address
+            multicall3: Some(
+                Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
+            ), // Standard multicall3 address for tests
+            identity_beacon_bytecode: Bytes::new(),
+            safe: None,
+        },
+        auth: AuthConfig {
+            access_token: "test_token".to_string(),
+            admin_token: "test_admin_token".to_string(),
+        },
+        registries: Registries {
+            beacon_types: Arc::new(BeaconTypeRegistry::test_stub()),
+            component_factories: Arc::new(ComponentFactoryRegistry::test_stub()),
+            recipes: Arc::new(RecipeRegistry::test_stub()),
+        },
     }
 }
 
@@ -621,10 +604,6 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
         .await
         .expect("Failed to deploy test contracts");
 
-    // Load real ABIs from test fixtures
-    let beacon_registry_abi = load_test_abi("BeaconRegistry");
-    let perp_manager_abi = load_test_abi("PerpManager");
-
     // Create signer for ECDSA operations (using Anvil's first deterministic test key)
     let test_signer = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
         .parse::<PrivateKeySigner>()
@@ -635,50 +614,39 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
     let read_provider = build_test_read_only_provider(anvil.rpc_url());
 
     let app_state = AppState {
-        read_provider,
-        funding_wallet_address: deployment.deployer,
-        rpc_url: anvil.rpc_url().to_string(),
-        chain_id: 31337,
-        signer: test_signer,
-        beacon_registry_abi,
-        perp_manager_abi,
-        multicall3_abi: load_test_abi("Multicall3"),
-        perpcity_registry_address: deployment.beacon_registry,
-        perp_manager_address: deployment.perp_hook,
-        usdc_address: deployment.usdc,
-        ecdsa_verifier_factory_address: Address::from_str(
-            "0x8901234567890123456789012345678901234567",
-        )
-        .unwrap(),
-        identity_beacon_bytecode: Bytes::new(),
-        usdc_transfer_limit: 1_000_000_000,         // 1000 USDC
-        eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
-        access_token: "test_token".to_string(),
-        fees_module_address: Address::from_str("0x4567890123456789012345678901234567890123")
-            .unwrap(),
-        margin_ratios_module_address: Address::from_str(
-            "0x5678901234567890123456789012345678901234",
-        )
-        .unwrap(),
-        lockup_period_module_address: Address::from_str(
-            "0x6789012345678901234567890123456789012345",
-        )
-        .unwrap(),
-        sqrt_price_impact_limit_module_address: Address::from_str(
-            "0x7890123456789012345678901234567890123456",
-        )
-        .unwrap(),
-
-        multicall3_address: Some(
-            Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
-        ), // Standard multicall3 address for tests
-        wallet_manager: create_test_wallet_manager().await,
-        admin_token: "test_admin_token".to_string(),
-        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
-        component_factory_registry: Arc::new(ComponentFactoryRegistry::test_stub()),
-        recipe_registry: Arc::new(RecipeRegistry::test_stub()),
-        safe_address: None,
-        safe_tx_service_url: None,
+        provider: ProviderConfig {
+            read_provider,
+            rpc_url: anvil.rpc_url().to_string(),
+            chain_id: 31337,
+        },
+        wallets: WalletConfig {
+            manager: create_test_wallet_manager().await,
+            funding_address: deployment.deployer,
+            signer: test_signer,
+            usdc_transfer_limit: 1_000_000_000, // 1000 USDC
+            eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
+        },
+        contracts: ContractAddresses {
+            perpcity_registry: deployment.beacon_registry,
+            perp_manager: deployment.perp_hook,
+            usdc: deployment.usdc,
+            ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
+                .unwrap(),
+            multicall3: Some(
+                Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
+            ), // Standard multicall3 address for tests
+            identity_beacon_bytecode: Bytes::new(),
+            safe: None,
+        },
+        auth: AuthConfig {
+            access_token: "test_token".to_string(),
+            admin_token: "test_admin_token".to_string(),
+        },
+        registries: Registries {
+            beacon_types: Arc::new(BeaconTypeRegistry::test_stub()),
+            component_factories: Arc::new(ComponentFactoryRegistry::test_stub()),
+            recipes: Arc::new(RecipeRegistry::test_stub()),
+        },
     };
 
     (app_state, anvil)
@@ -715,10 +683,6 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
         .await
         .expect("Failed to deploy test contracts");
 
-    // Load real ABIs from test fixtures
-    let beacon_registry_abi = load_test_abi("BeaconRegistry");
-    let perp_manager_abi = load_test_abi("PerpManager");
-
     // Create signer for ECDSA operations (using Anvil's first deterministic test key)
     let test_signer = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
         .parse::<PrivateKeySigner>()
@@ -732,49 +696,39 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
     let wallet_manager = create_test_wallet_manager().await;
 
     let app_state = AppState {
-        read_provider,
-        funding_wallet_address: deployment.deployer,
-        rpc_url: anvil.rpc_url().to_string(),
-        chain_id: 31337,
-        signer: test_signer,
-        beacon_registry_abi,
-        perp_manager_abi,
-        multicall3_abi: load_test_abi("Multicall3"),
-        perpcity_registry_address: deployment.beacon_registry,
-        perp_manager_address: deployment.perp_hook,
-        usdc_address: deployment.usdc,
-        ecdsa_verifier_factory_address: Address::from_str(
-            "0x8901234567890123456789012345678901234567",
-        )
-        .unwrap(),
-        identity_beacon_bytecode: Bytes::new(),
-        usdc_transfer_limit: 1_000_000_000,
-        eth_transfer_limit: 10_000_000_000_000_000,
-        access_token: "test_token".to_string(),
-        fees_module_address: Address::from_str("0x4567890123456789012345678901234567890123")
-            .unwrap(),
-        margin_ratios_module_address: Address::from_str(
-            "0x5678901234567890123456789012345678901234",
-        )
-        .unwrap(),
-        lockup_period_module_address: Address::from_str(
-            "0x6789012345678901234567890123456789012345",
-        )
-        .unwrap(),
-        sqrt_price_impact_limit_module_address: Address::from_str(
-            "0x7890123456789012345678901234567890123456",
-        )
-        .unwrap(),
-        multicall3_address: Some(
-            Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
-        ),
-        wallet_manager,
-        admin_token: "test_admin_token".to_string(),
-        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
-        component_factory_registry: Arc::new(ComponentFactoryRegistry::test_stub()),
-        recipe_registry: Arc::new(RecipeRegistry::test_stub()),
-        safe_address: None,
-        safe_tx_service_url: None,
+        provider: ProviderConfig {
+            read_provider,
+            rpc_url: anvil.rpc_url().to_string(),
+            chain_id: 31337,
+        },
+        wallets: WalletConfig {
+            manager: wallet_manager,
+            funding_address: deployment.deployer,
+            signer: test_signer,
+            usdc_transfer_limit: 1_000_000_000,
+            eth_transfer_limit: 10_000_000_000_000_000,
+        },
+        contracts: ContractAddresses {
+            perpcity_registry: deployment.beacon_registry,
+            perp_manager: deployment.perp_hook,
+            usdc: deployment.usdc,
+            ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
+                .unwrap(),
+            multicall3: Some(
+                Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
+            ),
+            identity_beacon_bytecode: Bytes::new(),
+            safe: None,
+        },
+        auth: AuthConfig {
+            access_token: "test_token".to_string(),
+            admin_token: "test_admin_token".to_string(),
+        },
+        registries: Registries {
+            beacon_types: Arc::new(BeaconTypeRegistry::test_stub()),
+            component_factories: Arc::new(ComponentFactoryRegistry::test_stub()),
+            recipes: Arc::new(RecipeRegistry::test_stub()),
+        },
     };
 
     (app_state, anvil)
@@ -796,50 +750,39 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
     let read_provider = build_test_read_only_provider(&anvil.rpc_url);
 
     AppState {
-        read_provider,
-        funding_wallet_address: anvil.accounts[account_index],
-        rpc_url: anvil.rpc_url.clone(),
-        chain_id: 31337,
-        signer,
-        beacon_registry_abi: load_test_abi("BeaconRegistry"),
-        perp_manager_abi: load_test_abi("PerpManager"),
-        multicall3_abi: load_test_abi("Multicall3"),
-        perpcity_registry_address: deployment.beacon_registry,
-        perp_manager_address: deployment.perp_hook,
-        usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
-        ecdsa_verifier_factory_address: Address::from_str(
-            "0x8901234567890123456789012345678901234567",
-        )
-        .unwrap(),
-        identity_beacon_bytecode: Bytes::new(),
-        usdc_transfer_limit: 1_000_000_000,         // 1000 USDC
-        eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
-        access_token: "test_token".to_string(),
-        fees_module_address: Address::from_str("0x4567890123456789012345678901234567890123")
-            .unwrap(),
-        margin_ratios_module_address: Address::from_str(
-            "0x5678901234567890123456789012345678901234",
-        )
-        .unwrap(),
-        lockup_period_module_address: Address::from_str(
-            "0x6789012345678901234567890123456789012345",
-        )
-        .unwrap(),
-        sqrt_price_impact_limit_module_address: Address::from_str(
-            "0x7890123456789012345678901234567890123456",
-        )
-        .unwrap(),
-
-        multicall3_address: Some(
-            Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
-        ), // Standard multicall3 address for tests
-        wallet_manager: Arc::new(WalletManager::test_stub()),
-        admin_token: "test_admin_token".to_string(),
-        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
-        component_factory_registry: Arc::new(ComponentFactoryRegistry::test_stub()),
-        recipe_registry: Arc::new(RecipeRegistry::test_stub()),
-        safe_address: None,
-        safe_tx_service_url: None,
+        provider: ProviderConfig {
+            read_provider,
+            rpc_url: anvil.rpc_url.clone(),
+            chain_id: 31337,
+        },
+        wallets: WalletConfig {
+            manager: Arc::new(WalletManager::test_stub()),
+            funding_address: anvil.accounts[account_index],
+            signer,
+            usdc_transfer_limit: 1_000_000_000, // 1000 USDC
+            eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
+        },
+        contracts: ContractAddresses {
+            perpcity_registry: deployment.beacon_registry,
+            perp_manager: deployment.perp_hook,
+            usdc: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
+            ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
+                .unwrap(),
+            multicall3: Some(
+                Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
+            ), // Standard multicall3 address for tests
+            identity_beacon_bytecode: Bytes::new(),
+            safe: None,
+        },
+        auth: AuthConfig {
+            access_token: "test_token".to_string(),
+            admin_token: "test_admin_token".to_string(),
+        },
+        registries: Registries {
+            beacon_types: Arc::new(BeaconTypeRegistry::test_stub()),
+            component_factories: Arc::new(ComponentFactoryRegistry::test_stub()),
+            recipes: Arc::new(RecipeRegistry::test_stub()),
+        },
     }
 }
 
@@ -910,53 +853,41 @@ pub async fn create_simple_test_app_state() -> AppState {
     let wallet_manager = create_test_wallet_manager().await;
 
     AppState {
-        read_provider,
-        funding_wallet_address: Address::from_str("0x1111111111111111111111111111111111111111")
-            .unwrap(),
-        rpc_url: "http://localhost:8545".to_string(),
-        chain_id: 31337,
-        signer,
-        beacon_registry_abi: JsonAbi::new(),
-        perp_manager_abi: JsonAbi::new(),
-        multicall3_abi: JsonAbi::new(),
-        perpcity_registry_address: Address::from_str("0x2345678901234567890123456789012345678901")
-            .unwrap(),
-        perp_manager_address: Address::from_str("0x3456789012345678901234567890123456789012")
-            .unwrap(),
-        usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
-        ecdsa_verifier_factory_address: Address::from_str(
-            "0x8901234567890123456789012345678901234567",
-        )
-        .unwrap(),
-        identity_beacon_bytecode: Bytes::new(),
-        usdc_transfer_limit: 1_000_000_000,         // 1000 USDC
-        eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
-        access_token: "test_token".to_string(),
-        fees_module_address: Address::from_str("0x4567890123456789012345678901234567890123")
-            .unwrap(),
-        margin_ratios_module_address: Address::from_str(
-            "0x5678901234567890123456789012345678901234",
-        )
-        .unwrap(),
-        lockup_period_module_address: Address::from_str(
-            "0x6789012345678901234567890123456789012345",
-        )
-        .unwrap(),
-        sqrt_price_impact_limit_module_address: Address::from_str(
-            "0x7890123456789012345678901234567890123456",
-        )
-        .unwrap(),
-
-        multicall3_address: Some(
-            Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
-        ), // Standard multicall3 address for tests
-        wallet_manager,
-        admin_token: "test_admin_token".to_string(),
-        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
-        component_factory_registry: Arc::new(ComponentFactoryRegistry::test_stub()),
-        recipe_registry: Arc::new(RecipeRegistry::test_stub()),
-        safe_address: None,
-        safe_tx_service_url: None,
+        provider: ProviderConfig {
+            read_provider,
+            rpc_url: "http://localhost:8545".to_string(),
+            chain_id: 31337,
+        },
+        wallets: WalletConfig {
+            manager: wallet_manager,
+            funding_address: Address::from_str("0x1111111111111111111111111111111111111111")
+                .unwrap(),
+            signer,
+            usdc_transfer_limit: 1_000_000_000, // 1000 USDC
+            eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
+        },
+        contracts: ContractAddresses {
+            perpcity_registry: Address::from_str("0x2345678901234567890123456789012345678901")
+                .unwrap(),
+            perp_manager: Address::from_str("0x3456789012345678901234567890123456789012").unwrap(),
+            usdc: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
+            ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
+                .unwrap(),
+            multicall3: Some(
+                Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
+            ), // Standard multicall3 address for tests
+            identity_beacon_bytecode: Bytes::new(),
+            safe: None,
+        },
+        auth: AuthConfig {
+            access_token: "test_token".to_string(),
+            admin_token: "test_admin_token".to_string(),
+        },
+        registries: Registries {
+            beacon_types: Arc::new(BeaconTypeRegistry::test_stub()),
+            component_factories: Arc::new(ComponentFactoryRegistry::test_stub()),
+            recipes: Arc::new(RecipeRegistry::test_stub()),
+        },
     }
 }
 
@@ -976,53 +907,41 @@ pub async fn create_test_app_state_with_provider(
     let wallet_manager = create_test_wallet_manager().await;
 
     AppState {
-        read_provider,
-        funding_wallet_address: Address::from_str("0x1111111111111111111111111111111111111111")
-            .unwrap(),
-        rpc_url: "http://localhost:8545".to_string(),
-        chain_id: 31337,
-        signer,
-        beacon_registry_abi: JsonAbi::new(),
-        perp_manager_abi: JsonAbi::new(),
-        multicall3_abi: JsonAbi::new(),
-        perpcity_registry_address: Address::from_str("0x2345678901234567890123456789012345678901")
-            .unwrap(),
-        perp_manager_address: Address::from_str("0x3456789012345678901234567890123456789012")
-            .unwrap(),
-        usdc_address: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
-        ecdsa_verifier_factory_address: Address::from_str(
-            "0x8901234567890123456789012345678901234567",
-        )
-        .unwrap(),
-        identity_beacon_bytecode: Bytes::new(),
-        usdc_transfer_limit: 1_000_000_000,         // 1000 USDC
-        eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
-        access_token: "test_token".to_string(),
-        fees_module_address: Address::from_str("0x4567890123456789012345678901234567890123")
-            .unwrap(),
-        margin_ratios_module_address: Address::from_str(
-            "0x5678901234567890123456789012345678901234",
-        )
-        .unwrap(),
-        lockup_period_module_address: Address::from_str(
-            "0x6789012345678901234567890123456789012345",
-        )
-        .unwrap(),
-        sqrt_price_impact_limit_module_address: Address::from_str(
-            "0x7890123456789012345678901234567890123456",
-        )
-        .unwrap(),
-
-        multicall3_address: Some(
-            Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
-        ), // Standard multicall3 address for tests
-        wallet_manager,
-        admin_token: "test_admin_token".to_string(),
-        beacon_type_registry: Arc::new(BeaconTypeRegistry::test_stub()),
-        component_factory_registry: Arc::new(ComponentFactoryRegistry::test_stub()),
-        recipe_registry: Arc::new(RecipeRegistry::test_stub()),
-        safe_address: None,
-        safe_tx_service_url: None,
+        provider: ProviderConfig {
+            read_provider,
+            rpc_url: "http://localhost:8545".to_string(),
+            chain_id: 31337,
+        },
+        wallets: WalletConfig {
+            manager: wallet_manager,
+            funding_address: Address::from_str("0x1111111111111111111111111111111111111111")
+                .unwrap(),
+            signer,
+            usdc_transfer_limit: 1_000_000_000, // 1000 USDC
+            eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
+        },
+        contracts: ContractAddresses {
+            perpcity_registry: Address::from_str("0x2345678901234567890123456789012345678901")
+                .unwrap(),
+            perp_manager: Address::from_str("0x3456789012345678901234567890123456789012").unwrap(),
+            usdc: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
+            ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
+                .unwrap(),
+            multicall3: Some(
+                Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
+            ), // Standard multicall3 address for tests
+            identity_beacon_bytecode: Bytes::new(),
+            safe: None,
+        },
+        auth: AuthConfig {
+            access_token: "test_token".to_string(),
+            admin_token: "test_admin_token".to_string(),
+        },
+        registries: Registries {
+            beacon_types: Arc::new(BeaconTypeRegistry::test_stub()),
+            component_factories: Arc::new(ComponentFactoryRegistry::test_stub()),
+            recipes: Arc::new(RecipeRegistry::test_stub()),
+        },
     }
 }
 
@@ -1067,9 +986,9 @@ mod tests {
     async fn test_app_state_creation() {
         #[allow(deprecated)]
         let app_state = create_test_app_state().await;
-        assert_ne!(app_state.funding_wallet_address, Address::ZERO);
-        assert_ne!(app_state.ecdsa_verifier_factory_address, Address::ZERO);
-        assert_ne!(app_state.perp_manager_address, Address::ZERO);
+        assert_ne!(app_state.wallets.funding_address, Address::ZERO);
+        assert_ne!(app_state.contracts.ecdsa_verifier_factory, Address::ZERO);
+        assert_ne!(app_state.contracts.perp_manager, Address::ZERO);
     }
 
     #[tokio::test]
@@ -1091,13 +1010,15 @@ mod tests {
         let app_state = create_test_app_state().await;
 
         // Test block number
-        let block_number = TestUtils::get_block_number(&app_state.read_provider).await;
+        let block_number = TestUtils::get_block_number(&app_state.provider.read_provider).await;
         assert!(block_number.is_ok());
 
         // Test balance
-        let balance =
-            TestUtils::get_balance(&app_state.read_provider, app_state.funding_wallet_address)
-                .await;
+        let balance = TestUtils::get_balance(
+            &app_state.provider.read_provider,
+            app_state.wallets.funding_address,
+        )
+        .await;
         assert!(balance.is_ok());
         let balance = balance.unwrap();
         assert!(balance > U256::ZERO);

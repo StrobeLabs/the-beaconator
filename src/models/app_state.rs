@@ -1,5 +1,4 @@
 use alloy::{
-    json_abi::JsonAbi,
     primitives::{Address, Bytes},
     signers::local::PrivateKeySigner,
 };
@@ -44,13 +43,6 @@ impl ApiEndpoints {
                 status: EndpointStatus::Working,
             },
             EndpointInfo {
-                method: "GET".to_string(),
-                path: "/all_beacons".to_string(),
-                description: "List all registered beacons".to_string(),
-                requires_auth: true,
-                status: EndpointStatus::NotImplemented,
-            },
-            EndpointInfo {
                 method: "POST".to_string(),
                 path: "/create_beacon".to_string(),
                 description: "Create a beacon by type slug (unified endpoint)".to_string(),
@@ -80,24 +72,10 @@ impl ApiEndpoints {
             },
             EndpointInfo {
                 method: "POST".to_string(),
-                path: "/batch_deploy_perps_for_beacons".to_string(),
-                description: "Batch deploy perpetuals for multiple beacons".to_string(),
-                requires_auth: true,
-                status: EndpointStatus::NotImplemented,
-            },
-            EndpointInfo {
-                method: "POST".to_string(),
                 path: "/deposit_liquidity_for_perp".to_string(),
                 description: "Deposit liquidity for a specific perpetual (min: 10 USDC due to wide tick range)".to_string(),
                 requires_auth: true,
                 status: EndpointStatus::Working,
-            },
-            EndpointInfo {
-                method: "POST".to_string(),
-                path: "/batch_deposit_liquidity_for_perps".to_string(),
-                description: "Batch deposit liquidity for multiple perpetuals".to_string(),
-                requires_auth: true,
-                status: EndpointStatus::NotImplemented,
             },
             EndpointInfo {
                 method: "POST".to_string(),
@@ -204,65 +182,58 @@ pub struct ApiSummary {
 
 #[derive(Clone)]
 pub struct AppState {
-    // Read-only provider for queries (no wallet)
+    pub provider: ProviderConfig,
+    pub wallets: WalletConfig,
+    pub contracts: ContractAddresses,
+    pub auth: AuthConfig,
+    pub registries: Registries,
+}
+
+#[derive(Clone)]
+pub struct ProviderConfig {
     pub read_provider: Arc<ReadOnlyProvider>,
-
-    // Funding wallet address (PRIVATE_KEY) - ONLY for fund_guest_wallet
-    pub funding_wallet_address: Address,
-
-    // WalletManager for contract operations (local wallets)
-    pub wallet_manager: Arc<WalletManager>,
-
-    // RPC configuration for building providers from WalletHandle
     pub rpc_url: String,
     pub chain_id: u64,
+}
 
+#[derive(Clone)]
+pub struct WalletConfig {
+    pub manager: Arc<WalletManager>,
+    pub funding_address: Address,
     /// Signer from PRIVATE_KEY - used for ECDSA beacon signatures.
     /// This wallet's address must match the designated signer configured
     /// in each ECDSA beacon's verifier adapter.
     pub signer: PrivateKeySigner,
-
-    // Contract ABIs
-    pub beacon_registry_abi: JsonAbi,
-    pub perp_manager_abi: JsonAbi,
-    pub multicall3_abi: JsonAbi,
-
-    // Contract addresses
-    pub perpcity_registry_address: Address,
-    pub perp_manager_address: Address,
-    pub usdc_address: Address,
-    pub ecdsa_verifier_factory_address: Address,
-
-    // Transfer limits
     pub usdc_transfer_limit: u128,
     pub eth_transfer_limit: u128,
+}
 
-    // Authentication
+#[derive(Clone)]
+pub struct ContractAddresses {
+    pub perpcity_registry: Address,
+    pub perp_manager: Address,
+    pub usdc: Address,
+    pub ecdsa_verifier_factory: Address,
+    pub multicall3: Option<Address>,
+    pub identity_beacon_bytecode: Bytes,
+    pub safe: Option<SafeConfig>,
+}
+
+#[derive(Clone)]
+pub struct SafeConfig {
+    pub address: Address,
+    pub tx_service_url: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct AuthConfig {
     pub access_token: String,
     pub admin_token: String,
+}
 
-    // Beacon type registry (Redis-backed)
-    pub beacon_type_registry: Arc<BeaconTypeRegistry>,
-
-    // Component factory registry (Redis-backed)
-    pub component_factory_registry: Arc<ComponentFactoryRegistry>,
-
-    // Recipe registry (Redis-backed)
-    pub recipe_registry: Arc<RecipeRegistry>,
-
-    // IdentityBeacon deployment bytecode
-    pub identity_beacon_bytecode: Bytes,
-
-    // Perp module addresses
-    pub fees_module_address: Address,
-    pub margin_ratios_module_address: Address,
-    pub lockup_period_module_address: Address,
-    pub sqrt_price_impact_limit_module_address: Address,
-
-    // Optional multicall3 contract for batch operations
-    pub multicall3_address: Option<Address>,
-
-    // Optional Safe multisig for beacon registration
-    pub safe_address: Option<Address>,
-    pub safe_tx_service_url: Option<String>,
+#[derive(Clone)]
+pub struct Registries {
+    pub beacon_types: Arc<BeaconTypeRegistry>,
+    pub component_factories: Arc<ComponentFactoryRegistry>,
+    pub recipes: Arc<RecipeRegistry>,
 }

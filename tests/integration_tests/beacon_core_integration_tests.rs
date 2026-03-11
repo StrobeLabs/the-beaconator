@@ -30,7 +30,7 @@ async fn test_create_identity_beacon_with_anvil() {
             let is_registered = is_beacon_registered(
                 &app_state,
                 beacon_address,
-                app_state.perpcity_registry_address,
+                app_state.contracts.perpcity_registry,
             )
             .await;
             assert!(is_registered.is_ok());
@@ -64,7 +64,7 @@ async fn test_register_beacon_with_registry_integration() {
         }
     };
 
-    let registry_address = app_state.perpcity_registry_address;
+    let registry_address = app_state.contracts.perpcity_registry;
     let register_result =
         register_beacon_with_registry(&app_state, beacon_address, registry_address).await;
 
@@ -150,7 +150,7 @@ async fn test_beacon_registration_check_integration() {
 
     let unregistered_beacon =
         Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let registry_address = app_state.perpcity_registry_address;
+    let registry_address = app_state.contracts.perpcity_registry;
 
     let is_registered =
         is_beacon_registered(&app_state, unregistered_beacon, registry_address).await;

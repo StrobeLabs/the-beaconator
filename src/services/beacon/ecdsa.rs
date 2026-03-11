@@ -40,7 +40,7 @@ pub async fn update_beacon_with_ecdsa(
     );
 
     // 2. Get verifier address from beacon using read provider
-    let beacon_read = IBeacon::new(beacon_address, &*state.read_provider);
+    let beacon_read = IBeacon::new(beacon_address, &*state.provider.read_provider);
     let verifier_address_raw = beacon_read
         .verifier()
         .call()
@@ -51,7 +51,7 @@ pub async fn update_beacon_with_ecdsa(
     tracing::info!("Beacon verifier: {}", verifier_address);
 
     // Get the designated signer from the verifier using read provider
-    let verifier = IEcdsaVerifier::new(verifier_address, &*state.read_provider);
+    let verifier = IEcdsaVerifier::new(verifier_address, &*state.provider.read_provider);
     let designated_signer_raw = verifier
         .SIGNER()
         .call()
@@ -62,7 +62,7 @@ pub async fn update_beacon_with_ecdsa(
     tracing::info!("Designated signer for this beacon: {}", designated_signer);
 
     // 3. Verify PRIVATE_KEY signer matches designated signer
-    let signer_address = state.signer.address();
+    let signer_address = state.wallets.signer.address();
     if signer_address != designated_signer {
         return Err(format!(
             "PRIVATE_KEY wallet {signer_address} does not match designated signer {designated_signer} for beacon {beacon_address}. \
@@ -78,7 +78,8 @@ pub async fn update_beacon_with_ecdsa(
 
     // 4. Acquire any available wallet from pool for sending the transaction
     let wallet_handle = state
-        .wallet_manager
+        .wallets
+        .manager
         .acquire_any_wallet()
         .await
         .map_err(|e| format!("Failed to acquire wallet for transaction: {e}"))?;
@@ -91,7 +92,7 @@ pub async fn update_beacon_with_ecdsa(
 
     // Build provider with the acquired wallet for sending transactions
     let provider = wallet_handle
-        .build_provider(&state.rpc_url)
+        .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
     // 5. Generate nonce from high-resolution timestamp (nanoseconds) to avoid collisions
@@ -115,8 +116,9 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Got EIP-712 digest: {:?}", digest);
 
-    // 7. Sign the digest with PRIVATE_KEY signer (state.signer)
+    // 7. Sign the digest with PRIVATE_KEY signer (state.wallets.signer)
     let signature = state
+        .wallets
         .signer
         .sign_hash(&digest)
         .await

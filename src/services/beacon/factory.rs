@@ -22,7 +22,7 @@ pub async fn create_lbcgbm_beacon(
     config: &BeaconTypeConfig,
     request: &CreateLBCGBMBeaconRequest,
 ) -> Result<Address, String> {
-    let signer_address = state.signer.address();
+    let signer_address = state.wallets.signer.address();
     tracing::info!(
         "Creating LBCGBM beacon via factory {} with signer={}",
         config.factory_address,
@@ -30,7 +30,8 @@ pub async fn create_lbcgbm_beacon(
     );
 
     let wallet_handle = state
-        .wallet_manager
+        .wallets
+        .manager
         .acquire_any_wallet()
         .await
         .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
@@ -41,7 +42,7 @@ pub async fn create_lbcgbm_beacon(
     );
 
     let provider = wallet_handle
-        .build_provider(&state.rpc_url)
+        .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
     let factory = ILBCGBMFactory::new(config.factory_address, &provider);
@@ -155,7 +156,8 @@ pub async fn create_weighted_sum_composite_beacon(
     );
 
     let wallet_handle = state
-        .wallet_manager
+        .wallets
+        .manager
         .acquire_any_wallet()
         .await
         .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
@@ -166,7 +168,7 @@ pub async fn create_weighted_sum_composite_beacon(
     );
 
     let provider = wallet_handle
-        .build_provider(&state.rpc_url)
+        .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
     let factory = IWeightedSumCompositeFactory::new(config.factory_address, &provider);
