@@ -146,20 +146,19 @@ pub async fn create_rocket() -> Rocket<Build> {
         tracing::info!("LBCGBM factory address: {:?}", addr);
     }
 
-    let weighted_sum_composite_factory_address =
-        env::var("WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS")
-            .ok()
-            .and_then(|s| {
-                Address::from_str(&s)
-                    .map_err(|e| {
-                        tracing::warn!(
-                            "Invalid WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS '{}': {}",
-                            s,
-                            e
-                        )
-                    })
-                    .ok()
-            });
+    let weighted_sum_composite_factory_address = env::var("WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS")
+        .ok()
+        .and_then(|s| {
+            Address::from_str(&s)
+                .map_err(|e| {
+                    tracing::warn!(
+                        "Invalid WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS '{}': {}",
+                        s,
+                        e
+                    )
+                })
+                .ok()
+        });
 
     if let Some(addr) = weighted_sum_composite_factory_address {
         tracing::info!("WeightedSumComposite factory address: {:?}", addr);
