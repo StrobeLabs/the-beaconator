@@ -57,7 +57,10 @@ async fn rocket() -> _ {
                 location.column()
             );
         }
-        sentry::capture_message(&format!("Panic: {panic_info:?}"), sentry::Level::Fatal);
+        let msg = format!("Panic: {panic_info:?}");
+        let _ = std::panic::catch_unwind(|| {
+            sentry::capture_message(&msg, sentry::Level::Fatal);
+        });
     }));
 
     create_rocket().await

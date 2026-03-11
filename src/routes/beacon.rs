@@ -44,8 +44,8 @@ pub async fn create_beacon(
         "Received request: POST /create_beacon (type={})",
         request.beacon_type
     );
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_beacon");
         scope.set_extra("beacon_type", request.beacon_type.clone().into());
     });
@@ -89,7 +89,7 @@ pub async fn create_beacon(
                 config.slug,
                 response.beacon_address
             );
-            sentry::capture_message(
+            hub.capture_message(
                 &format!(
                     "Beacon created: {} (type={})",
                     response.beacon_address, config.slug
@@ -104,7 +104,7 @@ pub async fn create_beacon(
         }
         Err(e) => {
             tracing::error!("Failed to create '{}' beacon: {}", config.slug, e);
-            sentry::capture_message(
+            hub.capture_message(
                 &format!("Failed to create beacon (type={}): {e}", config.slug),
                 sentry::Level::Error,
             );
@@ -128,8 +128,8 @@ pub async fn create_beacon_with_ecdsa(
         "Received request: POST /create_beacon_with_ecdsa (initial_index={})",
         request.initial_index
     );
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_beacon_with_ecdsa");
         scope.set_extra("initial_index", request.initial_index.to_string().into());
     });
@@ -141,7 +141,7 @@ pub async fn create_beacon_with_ecdsa(
             Err(e) => {
                 let error_msg = format!("ECDSA beacon creation failed: {e}");
                 tracing::error!("{}", error_msg);
-                sentry::capture_message(&error_msg, sentry::Level::Error);
+                hub.capture_message(&error_msg, sentry::Level::Error);
                 return Ok(Json(ApiResponse {
                     success: false,
                     data: None,
@@ -179,7 +179,7 @@ pub async fn create_beacon_with_ecdsa(
         Err(e) => {
             let warn_msg = format!("Beacon {beacon_address} created but registration failed: {e}");
             tracing::warn!("{}", warn_msg);
-            sentry::capture_message(&warn_msg, sentry::Level::Warning);
+            hub.capture_message(&warn_msg, sentry::Level::Warning);
             (false, None)
         }
     };
@@ -199,7 +199,7 @@ pub async fn create_beacon_with_ecdsa(
         registered,
     );
 
-    sentry::capture_message(
+    hub.capture_message(
         &format!(
             "ECDSA beacon created: {} with verifier {}",
             response.beacon_address, response.verifier_address
@@ -225,8 +225,8 @@ pub async fn register_beacon(
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<String>>, Status> {
     tracing::info!("Received request: POST /register_beacon");
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/register_beacon");
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
         scope.set_extra("registry_address", request.registry_address.clone().into());
@@ -239,7 +239,7 @@ pub async fn register_beacon(
             request.beacon_address
         );
         tracing::error!("{}", error_msg);
-        sentry::capture_message(&error_msg, sentry::Level::Error);
+        hub.capture_message(&error_msg, sentry::Level::Error);
         return Err(Status::BadRequest);
     }
 
@@ -249,7 +249,7 @@ pub async fn register_beacon(
         Err(e) => {
             let error_msg = format!("Invalid beacon address '{}': {}", request.beacon_address, e);
             tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
+            hub.capture_message(&error_msg, sentry::Level::Error);
             return Err(Status::BadRequest);
         }
     };
@@ -261,7 +261,7 @@ pub async fn register_beacon(
             request.registry_address
         );
         tracing::error!("{}", error_msg);
-        sentry::capture_message(&error_msg, sentry::Level::Error);
+        hub.capture_message(&error_msg, sentry::Level::Error);
         return Err(Status::BadRequest);
     }
 
@@ -274,7 +274,7 @@ pub async fn register_beacon(
                 request.registry_address, e
             );
             tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
+            hub.capture_message(&error_msg, sentry::Level::Error);
             return Err(Status::BadRequest);
         }
     };
@@ -302,7 +302,7 @@ pub async fn register_beacon(
                 beacon_address,
                 registry_address
             );
-            sentry::capture_message(
+            hub.capture_message(
                 &format!("Beacon registered: {beacon_address} at registry {registry_address}"),
                 sentry::Level::Info,
             );
@@ -315,7 +315,7 @@ pub async fn register_beacon(
         Err(e) => {
             let error_msg = format!("Failed to register beacon {beacon_address}: {e}");
             tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
+            hub.capture_message(&error_msg, sentry::Level::Error);
             Err(Status::InternalServerError)
         }
     }
@@ -333,8 +333,8 @@ pub async fn update_beacon(
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<String>>, Status> {
     tracing::info!("Received request: POST /update_beacon");
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/update_beacon");
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
         scope.set_extra("proof_length", request.proof.len().into());
@@ -344,7 +344,7 @@ pub async fn update_beacon(
     match service_update_beacon(state.inner(), request.into_inner()).await {
         Ok(tx_hash) => {
             tracing::info!("Successfully updated beacon. TX: {:?}", tx_hash);
-            sentry::capture_message(
+            hub.capture_message(
                 &format!("Beacon updated successfully. TX: {tx_hash:?}"),
                 sentry::Level::Info,
             );
@@ -356,7 +356,7 @@ pub async fn update_beacon(
         }
         Err(e) => {
             tracing::error!("Failed to update beacon: {}", e);
-            sentry::capture_message(
+            hub.capture_message(
                 &format!("Failed to update beacon: {e}"),
                 sentry::Level::Error,
             );
@@ -377,8 +377,8 @@ pub async fn batch_update_beacon(
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<BatchUpdateBeaconResponse>>, Status> {
     tracing::info!("Received request: POST /batch_update_beacon");
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/batch_update_beacon");
         scope.set_extra("update_count", request.updates.len().into());
     });
@@ -428,8 +428,8 @@ pub async fn update_beacon_with_ecdsa_adapter(
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<String>>, Status> {
     tracing::info!("Received request: POST /update_beacon_with_ecdsa_adapter");
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/update_beacon_with_ecdsa_adapter");
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
         scope.set_extra("measurement", request.measurement.clone().into());
@@ -441,7 +441,7 @@ pub async fn update_beacon_with_ecdsa_adapter(
                 "Successfully updated beacon with ECDSA signature. TX: {:?}",
                 tx_hash
             );
-            sentry::capture_message(
+            hub.capture_message(
                 &format!("Beacon updated with ECDSA signature. TX: {tx_hash:?}"),
                 sentry::Level::Info,
             );
@@ -453,7 +453,7 @@ pub async fn update_beacon_with_ecdsa_adapter(
         }
         Err(e) => {
             tracing::error!("Failed to update beacon with ECDSA signature: {}", e);
-            sentry::capture_message(
+            hub.capture_message(
                 &format!("Failed to update beacon with ECDSA signature: {e}"),
                 sentry::Level::Error,
             );
@@ -477,8 +477,8 @@ pub async fn create_lbcgbm_beacon_endpoint(
         "Received request: POST /create_lbcgbm_beacon (initial_index={})",
         request.initial_index
     );
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_lbcgbm_beacon");
     });
 
@@ -520,7 +520,7 @@ pub async fn create_lbcgbm_beacon_endpoint(
         Err(e) => {
             let error_msg = format!("LBCGBM beacon creation failed: {e}");
             tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
+            hub.capture_message(&error_msg, sentry::Level::Error);
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
@@ -561,7 +561,7 @@ pub async fn create_lbcgbm_beacon_endpoint(
             let warn_msg =
                 format!("LBCGBM beacon {beacon_address:#x} created but registration failed: {e}");
             tracing::warn!("{}", warn_msg);
-            sentry::capture_message(&warn_msg, sentry::Level::Warning);
+            hub.capture_message(&warn_msg, sentry::Level::Warning);
             (false, None)
         }
     };
@@ -611,8 +611,8 @@ pub async fn create_weighted_sum_composite_beacon_endpoint(
         "Received request: POST /create_weighted_sum_composite_beacon ({} reference beacons)",
         request.reference_beacons.len()
     );
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_weighted_sum_composite_beacon");
     });
 
@@ -631,7 +631,7 @@ pub async fn create_weighted_sum_composite_beacon_endpoint(
         Ok(Some(_)) => {
             let msg = "WeightedSumComposite beacon type is disabled or misconfigured";
             tracing::warn!("{}", msg);
-            sentry::capture_message(msg, sentry::Level::Warning);
+            hub.capture_message(msg, sentry::Level::Warning);
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
@@ -641,7 +641,7 @@ pub async fn create_weighted_sum_composite_beacon_endpoint(
         Ok(None) => {
             let msg = "WeightedSumComposite beacon type not registered. Set WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS env var.";
             tracing::warn!("{}", msg);
-            sentry::capture_message(msg, sentry::Level::Warning);
+            hub.capture_message(msg, sentry::Level::Warning);
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
@@ -651,7 +651,7 @@ pub async fn create_weighted_sum_composite_beacon_endpoint(
         Err(e) => {
             let msg = format!("Failed to look up WeightedSumComposite beacon type: {e}");
             tracing::error!("{}", msg);
-            sentry::capture_message(&msg, sentry::Level::Error);
+            hub.capture_message(&msg, sentry::Level::Error);
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
@@ -667,7 +667,7 @@ pub async fn create_weighted_sum_composite_beacon_endpoint(
             Err(e) => {
                 let error_msg = format!("WeightedSumComposite beacon creation failed: {e}");
                 tracing::error!("{}", error_msg);
-                sentry::capture_message(&error_msg, sentry::Level::Error);
+                hub.capture_message(&error_msg, sentry::Level::Error);
                 return Ok(Json(ApiResponse {
                     success: false,
                     data: None,
@@ -695,7 +695,7 @@ pub async fn create_weighted_sum_composite_beacon_endpoint(
                 "WeightedSumComposite beacon {beacon_address:#x} created but registration failed: {e}"
             );
             tracing::warn!("{}", warn_msg);
-            sentry::capture_message(&warn_msg, sentry::Level::Warning);
+            hub.capture_message(&warn_msg, sentry::Level::Warning);
             Ok(Json(ApiResponse {
                 success: true,
                 data: Some(CreateBeaconResponse {
@@ -726,8 +726,8 @@ pub async fn create_modular_beacon(
         "Received request: POST /create_modular_beacon (recipe={})",
         request.recipe
     );
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_modular_beacon");
         scope.set_extra("recipe", request.recipe.clone().into());
     });
@@ -746,7 +746,7 @@ pub async fn create_modular_beacon(
         }
         Err(e) => {
             tracing::error!("Failed to look up recipe: {}", e);
-            sentry::capture_message(
+            hub.capture_message(
                 &format!("Failed to look up recipe '{}': {e}", request.recipe),
                 sentry::Level::Error,
             );
@@ -772,7 +772,7 @@ pub async fn create_modular_beacon(
                 recipe.slug
             );
             tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
+            hub.capture_message(&error_msg, sentry::Level::Error);
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
@@ -813,7 +813,7 @@ pub async fn create_modular_beacon(
             let warn_msg =
                 format!("Modular beacon {beacon_address:#x} created but registration failed: {e}");
             tracing::warn!("{}", warn_msg);
-            sentry::capture_message(&warn_msg, sentry::Level::Warning);
+            hub.capture_message(&warn_msg, sentry::Level::Warning);
             (false, None)
         }
     };
@@ -834,7 +834,7 @@ pub async fn create_modular_beacon(
         registered,
     );
 
-    sentry::capture_message(
+    hub.capture_message(
         &format!(
             "Modular beacon created: {} (recipe={})",
             response.beacon_address, recipe.slug

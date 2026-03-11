@@ -28,8 +28,8 @@ pub async fn deploy_perp_for_beacon_endpoint(
     tracing::info!("Received request: POST /deploy_perp_for_beacon");
     tracing::info!("Requested beacon address: {}", request.beacon_address);
 
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/deploy_perp_for_beacon");
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
         scope.set_extra(
@@ -45,7 +45,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
         Err(e) => {
             let error_msg = format!("Invalid beacon address '{}': {}", request.beacon_address, e);
             tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
+            hub.capture_message(&error_msg, sentry::Level::Error);
             return Err(Status::BadRequest);
         }
     };
@@ -59,7 +59,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
                 request.fees_module, e
             );
             tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
+            hub.capture_message(&error_msg, sentry::Level::Error);
             return Err(Status::BadRequest);
         }
     };
@@ -72,7 +72,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
                 request.margin_ratios_module, e
             );
             tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
+            hub.capture_message(&error_msg, sentry::Level::Error);
             return Err(Status::BadRequest);
         }
     };
@@ -85,7 +85,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
                 request.lockup_period_module, e
             );
             tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
+            hub.capture_message(&error_msg, sentry::Level::Error);
             return Err(Status::BadRequest);
         }
     };
@@ -99,7 +99,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
                     request.sqrt_price_impact_limit_module, e
                 );
                 tracing::error!("{}", error_msg);
-                sentry::capture_message(&error_msg, sentry::Level::Error);
+                hub.capture_message(&error_msg, sentry::Level::Error);
                 return Err(Status::BadRequest);
             }
         };
@@ -110,7 +110,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
     if let Err(e) =
         validate_module_address(&state.provider.read_provider, fees_module, "Fees module").await
     {
-        sentry::capture_message(&e, sentry::Level::Error);
+        hub.capture_message(&e, sentry::Level::Error);
         return Err(Status::BadRequest);
     }
 
@@ -121,7 +121,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
     )
     .await
     {
-        sentry::capture_message(&e, sentry::Level::Error);
+        hub.capture_message(&e, sentry::Level::Error);
         return Err(Status::BadRequest);
     }
 
@@ -132,7 +132,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
     )
     .await
     {
-        sentry::capture_message(&e, sentry::Level::Error);
+        hub.capture_message(&e, sentry::Level::Error);
         return Err(Status::BadRequest);
     }
 
@@ -143,7 +143,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
     )
     .await
     {
-        sentry::capture_message(&e, sentry::Level::Error);
+        hub.capture_message(&e, sentry::Level::Error);
         return Err(Status::BadRequest);
     }
 
@@ -166,7 +166,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
             tracing::info!("Perp ID: {}", response.perp_id);
             tracing::info!("PerpManager address: {}", response.perp_manager_address);
             tracing::info!("Transaction hash: {}", response.transaction_hash);
-            sentry::capture_message(
+            hub.capture_message(
                 &format!(
                     "Perp deployed successfully for beacon {beacon_address}, perp ID: {}",
                     response.perp_id
@@ -212,7 +212,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
                 tracing::error!("  3. Try the request again after a short delay");
             }
 
-            sentry::capture_message(&error_msg, sentry::Level::Error);
+            hub.capture_message(&error_msg, sentry::Level::Error);
             Err(Status::InternalServerError)
         }
     }
@@ -230,8 +230,8 @@ pub async fn deposit_liquidity_for_perp_endpoint(
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<DepositLiquidityForPerpResponse>>, Status> {
     tracing::info!("Received request: POST /deposit_liquidity_for_perp");
-    let _guard = sentry::Hub::current().push_scope();
-    sentry::configure_scope(|scope| {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/deposit_liquidity_for_perp");
         scope.set_extra("perp_id", request.perp_id.clone().into());
         scope.set_extra("margin_amount", request.margin_amount_usdc.clone().into());
@@ -243,7 +243,7 @@ pub async fn deposit_liquidity_for_perp_endpoint(
         Err(e) => {
             let error_msg = format!("Invalid perp ID '{}': {e}", request.perp_id);
             tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
+            hub.capture_message(&error_msg, sentry::Level::Error);
             return Err(Status::BadRequest);
         }
     };
@@ -259,7 +259,7 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             tracing::error!("{}", error_msg);
             tracing::error!("Margin amount must be a valid number in USDC with 6 decimals");
             tracing::error!("  Examples: '1000000' = 1 USDC, '500000000' = 500 USDC");
-            sentry::capture_message(&error_msg, sentry::Level::Error);
+            hub.capture_message(&error_msg, sentry::Level::Error);
             return Err(Status::BadRequest);
         }
     };
@@ -335,7 +335,7 @@ pub async fn deposit_liquidity_for_perp_endpoint(
                 tracing::error!("  3. Try the request again after a short delay");
             }
 
-            sentry::capture_message(&error_msg, sentry::Level::Error);
+            hub.capture_message(&error_msg, sentry::Level::Error);
             Err(Status::InternalServerError)
         }
     }
