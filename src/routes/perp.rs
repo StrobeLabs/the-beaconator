@@ -154,6 +154,7 @@ pub async fn deploy_perp_for_beacon_endpoint(
     if let Err(e) =
         validate_module_address(&state.provider.read_provider, fees_module, "Fees module").await
     {
+        tracing::error!("fees_module ({}) failed validation: {}", fees_module, e);
         sentry_error(
             &hub,
             "ValidationError",
@@ -170,6 +171,11 @@ pub async fn deploy_perp_for_beacon_endpoint(
     )
     .await
     {
+        tracing::error!(
+            "margin_ratios_module ({}) failed validation: {}",
+            margin_ratios_module,
+            e
+        );
         sentry_error(
             &hub,
             "ValidationError",
@@ -189,6 +195,11 @@ pub async fn deploy_perp_for_beacon_endpoint(
     )
     .await
     {
+        tracing::error!(
+            "lockup_period_module ({}) failed validation: {}",
+            lockup_period_module,
+            e
+        );
         sentry_error(
             &hub,
             "ValidationError",
@@ -208,6 +219,11 @@ pub async fn deploy_perp_for_beacon_endpoint(
     )
     .await
     {
+        tracing::error!(
+            "sqrt_price_impact_limit_module ({}) failed validation: {}",
+            sqrt_price_impact_limit_module,
+            e
+        );
         sentry_error(
             &hub,
             "ValidationError",

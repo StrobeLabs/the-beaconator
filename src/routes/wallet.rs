@@ -239,13 +239,13 @@ pub async fn fund_guest_wallet(
         .map_err(|e| {
             let error_msg = format!("Failed to acquire funding wallet lock: {e}");
             tracing::error!("{}", error_msg);
-            sentry_error(&hub, "WalletError", error_msg, vec![]);
+            sentry_error(&hub, "WalletError", error_msg.clone(), vec![]);
             (
                 Status::ServiceUnavailable,
                 Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: format!("Funding wallet temporarily unavailable: {e}"),
+                    message: error_msg,
                 }),
             )
         })?;

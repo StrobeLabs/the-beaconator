@@ -491,7 +491,7 @@ pub async fn batch_update_beacon(
             let error_msg = format!("Batch update beacon failed: {error}");
             tracing::error!("{}", error_msg);
             sentry_error(&hub, "InternalError", error_msg, vec![]);
-            Err(Status::BadRequest)
+            Err(Status::InternalServerError)
         }
     }
 }

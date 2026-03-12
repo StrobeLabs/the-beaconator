@@ -16,6 +16,12 @@ pub async fn list_recipes(
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<BeaconRecipe>>>, Status> {
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some("GET /recipes".into()),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/recipes");
     });
@@ -47,6 +53,12 @@ pub async fn get_recipe(
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<BeaconRecipe>>, Status> {
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some(format!("GET /recipes/{slug}")),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/recipes/:slug");
         scope.set_extra("slug", slug.into());
@@ -83,6 +95,12 @@ pub async fn list_component_factories(
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<ComponentFactoryConfig>>>, Status> {
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some("GET /component_factories".into()),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/component_factories");
     });
