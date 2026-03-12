@@ -160,18 +160,18 @@ pub async fn create_beacon_with_ecdsa(
         match create_identity_beacon(state.inner(), request.initial_index).await {
             Ok(result) => result,
             Err(e) => {
-                let error_msg = format!("ECDSA beacon creation failed: {e}");
-                tracing::error!("{}", error_msg);
+                let detailed_error = format!("ECDSA beacon creation failed: {e}");
+                tracing::error!("{}", detailed_error);
                 sentry_error(
                     &hub,
                     "ContractError",
-                    error_msg.clone(),
+                    detailed_error,
                     vec![("initial_index", request.initial_index.to_string().into())],
                 );
                 return Ok(Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: error_msg,
+                    message: "Beacon creation failed".to_string(),
                 }));
             }
         };
@@ -618,13 +618,13 @@ pub async fn create_lbcgbm_beacon_endpoint(
     {
         Ok(result) => result,
         Err(e) => {
-            let error_msg = format!("LBCGBM beacon creation failed: {e}");
-            tracing::error!("{}", error_msg);
-            sentry_error(&hub, "ContractError", error_msg.clone(), vec![]);
+            let detailed_error = format!("LBCGBM beacon creation failed: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "ContractError", detailed_error, vec![]);
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: error_msg,
+                message: "Beacon creation failed".to_string(),
             }));
         }
     };
@@ -774,13 +774,13 @@ pub async fn create_weighted_sum_composite_beacon_endpoint(
         match create_weighted_sum_composite_beacon(state.inner(), &config, &request).await {
             Ok(addr) => addr,
             Err(e) => {
-                let error_msg = format!("WeightedSumComposite beacon creation failed: {e}");
-                tracing::error!("{}", error_msg);
-                sentry_error(&hub, "ContractError", error_msg.clone(), vec![]);
+                let detailed_error = format!("WeightedSumComposite beacon creation failed: {e}");
+                tracing::error!("{}", detailed_error);
+                sentry_error(&hub, "ContractError", detailed_error, vec![]);
                 return Ok(Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: error_msg,
+                    message: "Beacon creation failed".to_string(),
                 }));
             }
         };
@@ -888,21 +888,21 @@ pub async fn create_modular_beacon(
     {
         Ok(result) => result,
         Err(e) => {
-            let error_msg = format!(
+            let detailed_error = format!(
                 "Modular beacon creation failed (recipe={}): {e}",
                 recipe.slug
             );
-            tracing::error!("{}", error_msg);
+            tracing::error!("{}", detailed_error);
             sentry_error(
                 &hub,
                 "ContractError",
-                error_msg.clone(),
+                detailed_error,
                 vec![("recipe", recipe.slug.clone().into())],
             );
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: error_msg,
+                message: "Beacon creation failed".to_string(),
             }));
         }
     };

@@ -132,15 +132,15 @@ pub async fn fund_guest_wallet(
     {
         Ok(balance) => balance,
         Err(e) => {
-            let error_msg = format!("Failed to get ETH balance: {e}");
-            tracing::error!("{}", error_msg);
-            sentry_error(&hub, "RpcError", error_msg.clone(), vec![]);
+            let detailed_error = format!("Failed to get ETH balance: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "RpcError", detailed_error, vec![]);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: error_msg,
+                    message: "Failed to retrieve ETH balance".to_string(),
                 }),
             ));
         }
@@ -185,15 +185,15 @@ pub async fn fund_guest_wallet(
     {
         Ok(result) => result,
         Err(e) => {
-            let error_msg = format!("Failed to get USDC balance: {e}");
-            tracing::error!("{}", error_msg);
-            sentry_error(&hub, "RpcError", error_msg.clone(), vec![]);
+            let detailed_error = format!("Failed to get USDC balance: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "RpcError", detailed_error, vec![]);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: error_msg,
+                    message: "Failed to retrieve USDC balance".to_string(),
                 }),
             ));
         }
@@ -237,15 +237,15 @@ pub async fn fund_guest_wallet(
         .acquire_lock(&state.wallets.funding_address)
         .await
         .map_err(|e| {
-            let error_msg = format!("Failed to acquire funding wallet lock: {e}");
-            tracing::error!("{}", error_msg);
-            sentry_error(&hub, "WalletError", error_msg.clone(), vec![]);
+            let detailed_error = format!("Failed to acquire funding wallet lock: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "WalletError", detailed_error, vec![]);
             (
                 Status::ServiceUnavailable,
                 Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: error_msg,
+                    message: "Funding wallet temporarily unavailable".to_string(),
                 }),
             )
         })?;
@@ -269,29 +269,29 @@ pub async fn fund_guest_wallet(
         Ok(pending) => match pending.get_receipt().await {
             Ok(receipt) => receipt.transaction_hash,
             Err(e) => {
-                let error_msg = format!("Failed to get ETH transaction receipt: {e}");
-                tracing::error!("{}", error_msg);
-                sentry_error(&hub, "TransactionError", error_msg, vec![]);
+                let detailed_error = format!("Failed to get ETH transaction receipt: {e}");
+                tracing::error!("{}", detailed_error);
+                sentry_error(&hub, "TransactionError", detailed_error, vec![]);
                 return Err((
                     Status::InternalServerError,
                     Json(ApiResponse {
                         success: false,
                         data: None,
-                        message: format!("Failed to confirm ETH transaction: {e}"),
+                        message: "Failed to confirm ETH transaction".to_string(),
                     }),
                 ));
             }
         },
         Err(e) => {
-            let error_msg = format!("Failed to send ETH: {e}");
-            tracing::error!("{}", error_msg);
-            sentry_error(&hub, "TransactionError", error_msg, vec![]);
+            let detailed_error = format!("Failed to send ETH: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "TransactionError", detailed_error, vec![]);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: format!("Failed to send ETH: {e}"),
+                    message: "Failed to send ETH".to_string(),
                 }),
             ));
         }
@@ -309,29 +309,29 @@ pub async fn fund_guest_wallet(
         Ok(pending) => match pending.get_receipt().await {
             Ok(receipt) => receipt,
             Err(e) => {
-                let error_msg = format!("Failed to get USDC transaction receipt: {e}");
-                tracing::error!("{}", error_msg);
-                sentry_error(&hub, "TransactionError", error_msg, vec![]);
+                let detailed_error = format!("Failed to get USDC transaction receipt: {e}");
+                tracing::error!("{}", detailed_error);
+                sentry_error(&hub, "TransactionError", detailed_error, vec![]);
                 return Err((
                     Status::InternalServerError,
                     Json(ApiResponse {
                         success: false,
                         data: None,
-                        message: format!("Failed to get USDC transaction receipt: {e}"),
+                        message: "Failed to confirm USDC transaction".to_string(),
                     }),
                 ));
             }
         },
         Err(e) => {
-            let error_msg = format!("Failed to send USDC: {e}");
-            tracing::error!("{}", error_msg);
-            sentry_error(&hub, "TransactionError", error_msg, vec![]);
+            let detailed_error = format!("Failed to send USDC: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "TransactionError", detailed_error, vec![]);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: format!("Failed to send USDC: {e}"),
+                    message: "Failed to send USDC".to_string(),
                 }),
             ));
         }
