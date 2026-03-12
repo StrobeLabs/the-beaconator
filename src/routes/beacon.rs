@@ -5,6 +5,7 @@ use rocket_okapi::openapi;
 use std::str::FromStr;
 use tracing;
 
+use super::sentry_error;
 use crate::guards::ApiToken;
 use crate::models::beacon_type::FactoryType;
 use crate::models::component_factory::ComponentFactoryType;
@@ -45,6 +46,12 @@ pub async fn create_beacon(
         request.beacon_type
     );
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some(format!("POST /create_beacon type={}", request.beacon_type)),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_beacon");
         scope.set_extra("beacon_type", request.beacon_type.clone().into());
@@ -68,7 +75,9 @@ pub async fn create_beacon(
             }));
         }
         Err(e) => {
-            tracing::error!("Failed to look up beacon type: {}", e);
+            let error_msg = format!("Failed to look up beacon type: {e}");
+            tracing::error!("{}", error_msg);
+            sentry_error(&hub, "RegistryError", error_msg, vec![]);
             return Err(Status::InternalServerError);
         }
     };
@@ -103,10 +112,13 @@ pub async fn create_beacon(
             }))
         }
         Err(e) => {
+            let error_msg = format!("Failed to create beacon (type={}): {e}", config.slug);
             tracing::error!("Failed to create '{}' beacon: {}", config.slug, e);
-            hub.capture_message(
-                &format!("Failed to create beacon (type={}): {e}", config.slug),
-                sentry::Level::Error,
+            sentry_error(
+                &hub,
+                "ContractError",
+                error_msg,
+                vec![("beacon_type", config.slug.clone().into())],
             );
             Err(Status::InternalServerError)
         }
@@ -129,6 +141,15 @@ pub async fn create_beacon_with_ecdsa(
         request.initial_index
     );
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some(format!(
+            "POST /create_beacon_with_ecdsa initial_index={}",
+            request.initial_index
+        )),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_beacon_with_ecdsa");
         scope.set_extra("initial_index", request.initial_index.to_string().into());
@@ -139,13 +160,18 @@ pub async fn create_beacon_with_ecdsa(
         match create_identity_beacon(state.inner(), request.initial_index).await {
             Ok(result) => result,
             Err(e) => {
-                let error_msg = format!("ECDSA beacon creation failed: {e}");
-                tracing::error!("{}", error_msg);
-                hub.capture_message(&error_msg, sentry::Level::Error);
+                let detailed_error = format!("ECDSA beacon creation failed: {e}");
+                tracing::error!("{}", detailed_error);
+                sentry_error(
+                    &hub,
+                    "ContractError",
+                    detailed_error,
+                    vec![("initial_index", request.initial_index.to_string().into())],
+                );
                 return Ok(Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: error_msg,
+                    message: "Beacon creation failed".to_string(),
                 }));
             }
         };
@@ -226,6 +252,15 @@ pub async fn register_beacon(
 ) -> Result<Json<ApiResponse<String>>, Status> {
     tracing::info!("Received request: POST /register_beacon");
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some(format!(
+            "POST /register_beacon beacon={}",
+            request.beacon_address
+        )),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/register_beacon");
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
@@ -239,7 +274,12 @@ pub async fn register_beacon(
             request.beacon_address
         );
         tracing::error!("{}", error_msg);
-        hub.capture_message(&error_msg, sentry::Level::Error);
+        sentry_error(
+            &hub,
+            "ValidationError",
+            error_msg,
+            vec![("beacon_address", request.beacon_address.clone().into())],
+        );
         return Err(Status::BadRequest);
     }
 
@@ -249,7 +289,12 @@ pub async fn register_beacon(
         Err(e) => {
             let error_msg = format!("Invalid beacon address '{}': {}", request.beacon_address, e);
             tracing::error!("{}", error_msg);
-            hub.capture_message(&error_msg, sentry::Level::Error);
+            sentry_error(
+                &hub,
+                "ValidationError",
+                error_msg,
+                vec![("beacon_address", request.beacon_address.clone().into())],
+            );
             return Err(Status::BadRequest);
         }
     };
@@ -261,7 +306,12 @@ pub async fn register_beacon(
             request.registry_address
         );
         tracing::error!("{}", error_msg);
-        hub.capture_message(&error_msg, sentry::Level::Error);
+        sentry_error(
+            &hub,
+            "ValidationError",
+            error_msg,
+            vec![("registry_address", request.registry_address.clone().into())],
+        );
         return Err(Status::BadRequest);
     }
 
@@ -274,7 +324,12 @@ pub async fn register_beacon(
                 request.registry_address, e
             );
             tracing::error!("{}", error_msg);
-            hub.capture_message(&error_msg, sentry::Level::Error);
+            sentry_error(
+                &hub,
+                "ValidationError",
+                error_msg,
+                vec![("registry_address", request.registry_address.clone().into())],
+            );
             return Err(Status::BadRequest);
         }
     };
@@ -315,7 +370,15 @@ pub async fn register_beacon(
         Err(e) => {
             let error_msg = format!("Failed to register beacon {beacon_address}: {e}");
             tracing::error!("{}", error_msg);
-            hub.capture_message(&error_msg, sentry::Level::Error);
+            sentry_error(
+                &hub,
+                "ContractError",
+                error_msg,
+                vec![
+                    ("beacon_address", beacon_address.to_string().into()),
+                    ("registry_address", registry_address.to_string().into()),
+                ],
+            );
             Err(Status::InternalServerError)
         }
     }
@@ -334,6 +397,15 @@ pub async fn update_beacon(
 ) -> Result<Json<ApiResponse<String>>, Status> {
     tracing::info!("Received request: POST /update_beacon");
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some(format!(
+            "POST /update_beacon beacon={}",
+            request.beacon_address
+        )),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/update_beacon");
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
@@ -355,11 +427,9 @@ pub async fn update_beacon(
             }))
         }
         Err(e) => {
-            tracing::error!("Failed to update beacon: {}", e);
-            hub.capture_message(
-                &format!("Failed to update beacon: {e}"),
-                sentry::Level::Error,
-            );
+            let error_msg = format!("Failed to update beacon: {e}");
+            tracing::error!("{}", error_msg);
+            sentry_error(&hub, "TransactionError", error_msg, vec![]);
             Err(Status::InternalServerError)
         }
     }
@@ -378,6 +448,15 @@ pub async fn batch_update_beacon(
 ) -> Result<Json<ApiResponse<BatchUpdateBeaconResponse>>, Status> {
     tracing::info!("Received request: POST /batch_update_beacon");
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some(format!(
+            "POST /batch_update_beacon count={}",
+            request.updates.len()
+        )),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/batch_update_beacon");
         scope.set_extra("update_count", request.updates.len().into());
@@ -409,8 +488,10 @@ pub async fn batch_update_beacon(
             }))
         }
         Err(error) => {
-            tracing::error!("Batch update beacon failed: {}", error);
-            Err(Status::BadRequest)
+            let error_msg = format!("Batch update beacon failed: {error}");
+            tracing::error!("{}", error_msg);
+            sentry_error(&hub, "InternalError", error_msg, vec![]);
+            Err(Status::InternalServerError)
         }
     }
 }
@@ -429,12 +510,22 @@ pub async fn update_beacon_with_ecdsa_adapter(
 ) -> Result<Json<ApiResponse<String>>, Status> {
     tracing::info!("Received request: POST /update_beacon_with_ecdsa_adapter");
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some(format!(
+            "POST /update_beacon_with_ecdsa_adapter beacon={}",
+            request.beacon_address
+        )),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/update_beacon_with_ecdsa_adapter");
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
         scope.set_extra("measurement", request.measurement.clone().into());
     });
 
+    let beacon_address_str = request.beacon_address.clone();
     match service_update_beacon_with_ecdsa(state.inner(), request.into_inner()).await {
         Ok(tx_hash) => {
             tracing::info!(
@@ -452,10 +543,13 @@ pub async fn update_beacon_with_ecdsa_adapter(
             }))
         }
         Err(e) => {
-            tracing::error!("Failed to update beacon with ECDSA signature: {}", e);
-            hub.capture_message(
-                &format!("Failed to update beacon with ECDSA signature: {e}"),
-                sentry::Level::Error,
+            let error_msg = format!("Failed to update beacon with ECDSA signature: {e}");
+            tracing::error!("{}", error_msg);
+            sentry_error(
+                &hub,
+                "TransactionError",
+                error_msg,
+                vec![("beacon_address", beacon_address_str.into())],
             );
             Err(Status::InternalServerError)
         }
@@ -478,6 +572,12 @@ pub async fn create_lbcgbm_beacon_endpoint(
         request.initial_index
     );
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some("POST /create_lbcgbm_beacon".into()),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_lbcgbm_beacon");
     });
@@ -518,13 +618,13 @@ pub async fn create_lbcgbm_beacon_endpoint(
     {
         Ok(result) => result,
         Err(e) => {
-            let error_msg = format!("LBCGBM beacon creation failed: {e}");
-            tracing::error!("{}", error_msg);
-            hub.capture_message(&error_msg, sentry::Level::Error);
+            let detailed_error = format!("LBCGBM beacon creation failed: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "ContractError", detailed_error, vec![]);
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: error_msg,
+                message: "Beacon creation failed".to_string(),
             }));
         }
     };
@@ -612,6 +712,15 @@ pub async fn create_weighted_sum_composite_beacon_endpoint(
         request.reference_beacons.len()
     );
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some(format!(
+            "POST /create_weighted_sum_composite_beacon ref_beacons={}",
+            request.reference_beacons.len()
+        )),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_weighted_sum_composite_beacon");
     });
@@ -651,7 +760,7 @@ pub async fn create_weighted_sum_composite_beacon_endpoint(
         Err(e) => {
             let msg = format!("Failed to look up WeightedSumComposite beacon type: {e}");
             tracing::error!("{}", msg);
-            hub.capture_message(&msg, sentry::Level::Error);
+            sentry_error(&hub, "RegistryError", msg.clone(), vec![]);
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
@@ -665,13 +774,13 @@ pub async fn create_weighted_sum_composite_beacon_endpoint(
         match create_weighted_sum_composite_beacon(state.inner(), &config, &request).await {
             Ok(addr) => addr,
             Err(e) => {
-                let error_msg = format!("WeightedSumComposite beacon creation failed: {e}");
-                tracing::error!("{}", error_msg);
-                hub.capture_message(&error_msg, sentry::Level::Error);
+                let detailed_error = format!("WeightedSumComposite beacon creation failed: {e}");
+                tracing::error!("{}", detailed_error);
+                sentry_error(&hub, "ContractError", detailed_error, vec![]);
                 return Ok(Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: error_msg,
+                    message: "Beacon creation failed".to_string(),
                 }));
             }
         };
@@ -727,6 +836,15 @@ pub async fn create_modular_beacon(
         request.recipe
     );
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some(format!(
+            "POST /create_modular_beacon recipe={}",
+            request.recipe
+        )),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/create_modular_beacon");
         scope.set_extra("recipe", request.recipe.clone().into());
@@ -745,10 +863,13 @@ pub async fn create_modular_beacon(
             }));
         }
         Err(e) => {
-            tracing::error!("Failed to look up recipe: {}", e);
-            hub.capture_message(
-                &format!("Failed to look up recipe '{}': {e}", request.recipe),
-                sentry::Level::Error,
+            let error_msg = format!("Failed to look up recipe '{}': {e}", request.recipe);
+            tracing::error!("{}", error_msg);
+            sentry_error(
+                &hub,
+                "RegistryError",
+                error_msg,
+                vec![("recipe", request.recipe.clone().into())],
             );
             return Err(Status::InternalServerError);
         }
@@ -767,16 +888,21 @@ pub async fn create_modular_beacon(
     {
         Ok(result) => result,
         Err(e) => {
-            let error_msg = format!(
+            let detailed_error = format!(
                 "Modular beacon creation failed (recipe={}): {e}",
                 recipe.slug
             );
-            tracing::error!("{}", error_msg);
-            hub.capture_message(&error_msg, sentry::Level::Error);
+            tracing::error!("{}", detailed_error);
+            sentry_error(
+                &hub,
+                "ContractError",
+                detailed_error,
+                vec![("recipe", recipe.slug.clone().into())],
+            );
             return Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: error_msg,
+                message: "Beacon creation failed".to_string(),
             }));
         }
     };

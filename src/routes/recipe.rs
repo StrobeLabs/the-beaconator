@@ -2,6 +2,7 @@ use rocket::serde::json::Json;
 use rocket::{State, get, http::Status};
 use rocket_okapi::openapi;
 
+use super::sentry_error;
 use crate::guards::ApiToken;
 use crate::models::component_factory::ComponentFactoryConfig;
 use crate::models::recipe::BeaconRecipe;
@@ -14,6 +15,16 @@ pub async fn list_recipes(
     _token: ApiToken,
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<BeaconRecipe>>>, Status> {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some("GET /recipes".into()),
+        ..Default::default()
+    });
+    hub.configure_scope(|scope| {
+        scope.set_tag("endpoint", "/recipes");
+    });
     match state.registries.recipes.list_recipes().await {
         Ok(recipes) => Ok(Json(ApiResponse {
             success: true,
@@ -21,15 +32,13 @@ pub async fn list_recipes(
             message: "Recipes retrieved".to_string(),
         })),
         Err(e) => {
-            tracing::error!("Failed to list recipes: {}", e);
-            sentry::capture_message(
-                &format!("Failed to list recipes: {e}"),
-                sentry::Level::Error,
-            );
+            let detailed_error = format!("Failed to list recipes: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "RegistryError", detailed_error, vec![]);
             Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: format!("Failed to list recipes: {e}"),
+                message: "Internal server error while listing recipes".to_string(),
             }))
         }
     }
@@ -43,6 +52,17 @@ pub async fn get_recipe(
     _token: ApiToken,
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<BeaconRecipe>>, Status> {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some(format!("GET /recipes/{slug}")),
+        ..Default::default()
+    });
+    hub.configure_scope(|scope| {
+        scope.set_tag("endpoint", "/recipes/:slug");
+        scope.set_extra("slug", slug.into());
+    });
     match state.registries.recipes.get_recipe(slug).await {
         Ok(Some(recipe)) => Ok(Json(ApiResponse {
             success: true,
@@ -55,15 +75,13 @@ pub async fn get_recipe(
             message: format!("Recipe '{slug}' not found"),
         })),
         Err(e) => {
-            tracing::error!("Failed to get recipe '{}': {}", slug, e);
-            sentry::capture_message(
-                &format!("Failed to get recipe '{slug}': {e}"),
-                sentry::Level::Error,
-            );
+            let detailed_error = format!("Failed to get recipe '{slug}': {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "RegistryError", detailed_error, vec![]);
             Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: format!("Failed to get recipe: {e}"),
+                message: "Internal server error while fetching recipe".to_string(),
             }))
         }
     }
@@ -76,6 +94,16 @@ pub async fn list_component_factories(
     _token: ApiToken,
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<ComponentFactoryConfig>>>, Status> {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some("GET /component_factories".into()),
+        ..Default::default()
+    });
+    hub.configure_scope(|scope| {
+        scope.set_tag("endpoint", "/component_factories");
+    });
     match state.registries.component_factories.list_factories().await {
         Ok(factories) => Ok(Json(ApiResponse {
             success: true,
@@ -83,15 +111,13 @@ pub async fn list_component_factories(
             message: "Component factories retrieved".to_string(),
         })),
         Err(e) => {
-            tracing::error!("Failed to list component factories: {}", e);
-            sentry::capture_message(
-                &format!("Failed to list component factories: {e}"),
-                sentry::Level::Error,
-            );
+            let detailed_error = format!("Failed to list component factories: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "RegistryError", detailed_error, vec![]);
             Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: format!("Failed to list component factories: {e}"),
+                message: "Internal server error while listing component factories".to_string(),
             }))
         }
     }

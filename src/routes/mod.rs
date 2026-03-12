@@ -298,3 +298,46 @@ pub use component_factories::*;
 
 // Re-export transaction utilities from services module
 pub use crate::services::transaction::execution::is_nonce_error;
+
+/// Capture a structured Sentry error event via the per-request hub.
+///
+/// Use this instead of `hub.capture_message()` so each Sentry issue shows a
+/// typed exception that an AI agent can classify and diagnose without additional
+/// context.
+///
+/// Error type strings to use:
+/// - `"ContractError"`    — EVM execution reverted or contract call failed
+/// - `"TransactionError"` — tx submission or confirmation failed
+/// - `"WalletError"`      — wallet pool exhausted or provider build failure
+/// - `"RegistryError"`    — Redis / registry lookup failure
+/// - `"ValidationError"`  — bad request input (address format, missing fields)
+/// - `"RpcError"`         — network or RPC connectivity issue
+/// - `"InternalError"`    — unexpected or unclassified error
+pub fn sentry_error(
+    hub: &sentry::Hub,
+    error_type: &str,
+    message: String,
+    extras: Vec<(&'static str, serde_json::Value)>,
+) {
+    use sentry::protocol::{Event, Exception, Values};
+    use std::collections::BTreeMap;
+
+    let extra: BTreeMap<String, sentry::protocol::Value> = extras
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+
+    hub.capture_event(Event {
+        level: sentry::Level::Error,
+        message: Some(message.clone()),
+        exception: Values {
+            values: vec![Exception {
+                ty: error_type.to_string(),
+                value: Some(message),
+                ..Default::default()
+            }],
+        },
+        extra,
+        ..Default::default()
+    });
+}

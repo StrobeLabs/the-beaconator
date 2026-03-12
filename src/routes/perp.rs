@@ -5,6 +5,7 @@ use rocket_okapi::openapi;
 use std::str::FromStr;
 use tracing;
 
+use super::sentry_error;
 use crate::guards::ApiToken;
 use crate::models::{
     ApiResponse, AppState, DeployPerpForBeaconRequest, DeployPerpForBeaconResponse,
@@ -29,6 +30,15 @@ pub async fn deploy_perp_for_beacon_endpoint(
     tracing::info!("Requested beacon address: {}", request.beacon_address);
 
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some(format!(
+            "POST /deploy_perp_for_beacon beacon={}",
+            request.beacon_address
+        )),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/deploy_perp_for_beacon");
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
@@ -45,7 +55,12 @@ pub async fn deploy_perp_for_beacon_endpoint(
         Err(e) => {
             let error_msg = format!("Invalid beacon address '{}': {}", request.beacon_address, e);
             tracing::error!("{}", error_msg);
-            hub.capture_message(&error_msg, sentry::Level::Error);
+            sentry_error(
+                &hub,
+                "ValidationError",
+                error_msg,
+                vec![("beacon_address", request.beacon_address.clone().into())],
+            );
             return Err(Status::BadRequest);
         }
     };
@@ -59,7 +74,12 @@ pub async fn deploy_perp_for_beacon_endpoint(
                 request.fees_module, e
             );
             tracing::error!("{}", error_msg);
-            hub.capture_message(&error_msg, sentry::Level::Error);
+            sentry_error(
+                &hub,
+                "ValidationError",
+                error_msg,
+                vec![("fees_module", request.fees_module.clone().into())],
+            );
             return Err(Status::BadRequest);
         }
     };
@@ -72,7 +92,15 @@ pub async fn deploy_perp_for_beacon_endpoint(
                 request.margin_ratios_module, e
             );
             tracing::error!("{}", error_msg);
-            hub.capture_message(&error_msg, sentry::Level::Error);
+            sentry_error(
+                &hub,
+                "ValidationError",
+                error_msg,
+                vec![(
+                    "margin_ratios_module",
+                    request.margin_ratios_module.clone().into(),
+                )],
+            );
             return Err(Status::BadRequest);
         }
     };
@@ -85,7 +113,15 @@ pub async fn deploy_perp_for_beacon_endpoint(
                 request.lockup_period_module, e
             );
             tracing::error!("{}", error_msg);
-            hub.capture_message(&error_msg, sentry::Level::Error);
+            sentry_error(
+                &hub,
+                "ValidationError",
+                error_msg,
+                vec![(
+                    "lockup_period_module",
+                    request.lockup_period_module.clone().into(),
+                )],
+            );
             return Err(Status::BadRequest);
         }
     };
@@ -99,7 +135,15 @@ pub async fn deploy_perp_for_beacon_endpoint(
                     request.sqrt_price_impact_limit_module, e
                 );
                 tracing::error!("{}", error_msg);
-                hub.capture_message(&error_msg, sentry::Level::Error);
+                sentry_error(
+                    &hub,
+                    "ValidationError",
+                    error_msg,
+                    vec![(
+                        "sqrt_price_impact_limit_module",
+                        request.sqrt_price_impact_limit_module.clone().into(),
+                    )],
+                );
                 return Err(Status::BadRequest);
             }
         };
@@ -110,7 +154,13 @@ pub async fn deploy_perp_for_beacon_endpoint(
     if let Err(e) =
         validate_module_address(&state.provider.read_provider, fees_module, "Fees module").await
     {
-        hub.capture_message(&e, sentry::Level::Error);
+        tracing::error!("fees_module ({}) failed validation: {}", fees_module, e);
+        sentry_error(
+            &hub,
+            "ValidationError",
+            e,
+            vec![("fees_module", fees_module.to_string().into())],
+        );
         return Err(Status::BadRequest);
     }
 
@@ -121,7 +171,20 @@ pub async fn deploy_perp_for_beacon_endpoint(
     )
     .await
     {
-        hub.capture_message(&e, sentry::Level::Error);
+        tracing::error!(
+            "margin_ratios_module ({}) failed validation: {}",
+            margin_ratios_module,
+            e
+        );
+        sentry_error(
+            &hub,
+            "ValidationError",
+            e,
+            vec![(
+                "margin_ratios_module",
+                margin_ratios_module.to_string().into(),
+            )],
+        );
         return Err(Status::BadRequest);
     }
 
@@ -132,7 +195,20 @@ pub async fn deploy_perp_for_beacon_endpoint(
     )
     .await
     {
-        hub.capture_message(&e, sentry::Level::Error);
+        tracing::error!(
+            "lockup_period_module ({}) failed validation: {}",
+            lockup_period_module,
+            e
+        );
+        sentry_error(
+            &hub,
+            "ValidationError",
+            e,
+            vec![(
+                "lockup_period_module",
+                lockup_period_module.to_string().into(),
+            )],
+        );
         return Err(Status::BadRequest);
     }
 
@@ -143,7 +219,20 @@ pub async fn deploy_perp_for_beacon_endpoint(
     )
     .await
     {
-        hub.capture_message(&e, sentry::Level::Error);
+        tracing::error!(
+            "sqrt_price_impact_limit_module ({}) failed validation: {}",
+            sqrt_price_impact_limit_module,
+            e
+        );
+        sentry_error(
+            &hub,
+            "ValidationError",
+            e,
+            vec![(
+                "sqrt_price_impact_limit_module",
+                sqrt_price_impact_limit_module.to_string().into(),
+            )],
+        );
         return Err(Status::BadRequest);
     }
 
@@ -212,7 +301,12 @@ pub async fn deploy_perp_for_beacon_endpoint(
                 tracing::error!("  3. Try the request again after a short delay");
             }
 
-            hub.capture_message(&error_msg, sentry::Level::Error);
+            sentry_error(
+                &hub,
+                "ContractError",
+                error_msg,
+                vec![("beacon_address", beacon_address.to_string().into())],
+            );
             Err(Status::InternalServerError)
         }
     }
@@ -231,6 +325,15 @@ pub async fn deposit_liquidity_for_perp_endpoint(
 ) -> Result<Json<ApiResponse<DepositLiquidityForPerpResponse>>, Status> {
     tracing::info!("Received request: POST /deposit_liquidity_for_perp");
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some(format!(
+            "POST /deposit_liquidity_for_perp perp_id={}",
+            request.perp_id
+        )),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/deposit_liquidity_for_perp");
         scope.set_extra("perp_id", request.perp_id.clone().into());
@@ -243,7 +346,12 @@ pub async fn deposit_liquidity_for_perp_endpoint(
         Err(e) => {
             let error_msg = format!("Invalid perp ID '{}': {e}", request.perp_id);
             tracing::error!("{}", error_msg);
-            hub.capture_message(&error_msg, sentry::Level::Error);
+            sentry_error(
+                &hub,
+                "ValidationError",
+                error_msg,
+                vec![("perp_id", request.perp_id.clone().into())],
+            );
             return Err(Status::BadRequest);
         }
     };
@@ -259,7 +367,12 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             tracing::error!("{}", error_msg);
             tracing::error!("Margin amount must be a valid number in USDC with 6 decimals");
             tracing::error!("  Examples: '1000000' = 1 USDC, '500000000' = 500 USDC");
-            hub.capture_message(&error_msg, sentry::Level::Error);
+            sentry_error(
+                &hub,
+                "ValidationError",
+                error_msg,
+                vec![("margin_amount", request.margin_amount_usdc.clone().into())],
+            );
             return Err(Status::BadRequest);
         }
     };
@@ -335,7 +448,12 @@ pub async fn deposit_liquidity_for_perp_endpoint(
                 tracing::error!("  3. Try the request again after a short delay");
             }
 
-            hub.capture_message(&error_msg, sentry::Level::Error);
+            sentry_error(
+                &hub,
+                "ContractError",
+                error_msg,
+                vec![("perp_id", request.perp_id.clone().into())],
+            );
             Err(Status::InternalServerError)
         }
     }
