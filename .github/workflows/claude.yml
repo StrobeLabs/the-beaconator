@@ -20,8 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: ${{ github.workflow }}-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
-      cancel-in-progress: true
+      group: ${{ github.workflow }}
+      cancel-in-progress: false
     if: |
       (github.event_name == 'issues' &&
        contains(github.event.issue.labels.*.name, 'sentry-autofix') &&
@@ -39,6 +39,23 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+
+      - name: Skip if human is handling this
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ISSUE=$(gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }})
+          ASSIGNEE=$(echo "$ISSUE" | jq -r '.assignee.login // empty')
+          HAS_LABEL=$(echo "$ISSUE" | jq '[.labels[].name] | any(. == "sentry-autofix")')
+          if [ -n "$ASSIGNEE" ]; then
+            echo "Issue assigned to $ASSIGNEE - skipping autofix"
+            exit 1
+          fi
+          if [ "$HAS_LABEL" != "true" ]; then
+            echo "sentry-autofix label removed - skipping"
+            exit 1
+          fi
 
       - uses: anthropics/claude-code-action@26ec041249acb0a944c0a47b6c0c13f05dbc5b44 # v1
         with:
