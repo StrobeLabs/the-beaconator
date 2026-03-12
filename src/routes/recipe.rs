@@ -15,6 +15,10 @@ pub async fn list_recipes(
     _token: ApiToken,
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<BeaconRecipe>>>, Status> {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
+        scope.set_tag("endpoint", "/recipes");
+    });
     match state.registries.recipes.list_recipes().await {
         Ok(recipes) => Ok(Json(ApiResponse {
             success: true,
@@ -24,12 +28,7 @@ pub async fn list_recipes(
         Err(e) => {
             let error_msg = format!("Failed to list recipes: {e}");
             tracing::error!("{}", error_msg);
-            sentry_error(
-                &sentry::Hub::current(),
-                "RegistryError",
-                error_msg.clone(),
-                vec![],
-            );
+            sentry_error(&hub, "RegistryError", error_msg.clone(), vec![]);
             Ok(Json(ApiResponse {
                 success: false,
                 data: None,
@@ -47,6 +46,11 @@ pub async fn get_recipe(
     _token: ApiToken,
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<BeaconRecipe>>, Status> {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
+        scope.set_tag("endpoint", "/recipes/:slug");
+        scope.set_extra("slug", slug.into());
+    });
     match state.registries.recipes.get_recipe(slug).await {
         Ok(Some(recipe)) => Ok(Json(ApiResponse {
             success: true,
@@ -61,12 +65,7 @@ pub async fn get_recipe(
         Err(e) => {
             let error_msg = format!("Failed to get recipe '{slug}': {e}");
             tracing::error!("{}", error_msg);
-            sentry_error(
-                &sentry::Hub::current(),
-                "RegistryError",
-                error_msg.clone(),
-                vec![],
-            );
+            sentry_error(&hub, "RegistryError", error_msg.clone(), vec![]);
             Ok(Json(ApiResponse {
                 success: false,
                 data: None,
@@ -83,6 +82,10 @@ pub async fn list_component_factories(
     _token: ApiToken,
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<ComponentFactoryConfig>>>, Status> {
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.configure_scope(|scope| {
+        scope.set_tag("endpoint", "/component_factories");
+    });
     match state.registries.component_factories.list_factories().await {
         Ok(factories) => Ok(Json(ApiResponse {
             success: true,
@@ -92,12 +95,7 @@ pub async fn list_component_factories(
         Err(e) => {
             let error_msg = format!("Failed to list component factories: {e}");
             tracing::error!("{}", error_msg);
-            sentry_error(
-                &sentry::Hub::current(),
-                "RegistryError",
-                error_msg.clone(),
-                vec![],
-            );
+            sentry_error(&hub, "RegistryError", error_msg.clone(), vec![]);
             Ok(Json(ApiResponse {
                 success: false,
                 data: None,

@@ -154,7 +154,12 @@ pub async fn deploy_perp_for_beacon_endpoint(
     if let Err(e) =
         validate_module_address(&state.provider.read_provider, fees_module, "Fees module").await
     {
-        sentry_error(&hub, "ValidationError", e, vec![]);
+        sentry_error(
+            &hub,
+            "ValidationError",
+            e,
+            vec![("fees_module", fees_module.to_string().into())],
+        );
         return Err(Status::BadRequest);
     }
 
@@ -165,7 +170,15 @@ pub async fn deploy_perp_for_beacon_endpoint(
     )
     .await
     {
-        sentry_error(&hub, "ValidationError", e, vec![]);
+        sentry_error(
+            &hub,
+            "ValidationError",
+            e,
+            vec![(
+                "margin_ratios_module",
+                margin_ratios_module.to_string().into(),
+            )],
+        );
         return Err(Status::BadRequest);
     }
 
@@ -176,7 +189,15 @@ pub async fn deploy_perp_for_beacon_endpoint(
     )
     .await
     {
-        sentry_error(&hub, "ValidationError", e, vec![]);
+        sentry_error(
+            &hub,
+            "ValidationError",
+            e,
+            vec![(
+                "lockup_period_module",
+                lockup_period_module.to_string().into(),
+            )],
+        );
         return Err(Status::BadRequest);
     }
 
@@ -187,7 +208,15 @@ pub async fn deploy_perp_for_beacon_endpoint(
     )
     .await
     {
-        sentry_error(&hub, "ValidationError", e, vec![]);
+        sentry_error(
+            &hub,
+            "ValidationError",
+            e,
+            vec![(
+                "sqrt_price_impact_limit_module",
+                sqrt_price_impact_limit_module.to_string().into(),
+            )],
+        );
         return Err(Status::BadRequest);
     }
 

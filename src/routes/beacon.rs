@@ -75,7 +75,9 @@ pub async fn create_beacon(
             }));
         }
         Err(e) => {
-            tracing::error!("Failed to look up beacon type: {}", e);
+            let error_msg = format!("Failed to look up beacon type: {e}");
+            tracing::error!("{}", error_msg);
+            sentry_error(&hub, "RegistryError", error_msg, vec![]);
             return Err(Status::InternalServerError);
         }
     };
@@ -486,7 +488,9 @@ pub async fn batch_update_beacon(
             }))
         }
         Err(error) => {
-            tracing::error!("Batch update beacon failed: {}", error);
+            let error_msg = format!("Batch update beacon failed: {error}");
+            tracing::error!("{}", error_msg);
+            sentry_error(&hub, "InternalError", error_msg, vec![]);
             Err(Status::BadRequest)
         }
     }
