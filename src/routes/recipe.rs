@@ -2,6 +2,7 @@ use rocket::serde::json::Json;
 use rocket::{State, get, http::Status};
 use rocket_okapi::openapi;
 
+use super::sentry_error;
 use crate::guards::ApiToken;
 use crate::models::component_factory::ComponentFactoryConfig;
 use crate::models::recipe::BeaconRecipe;
@@ -21,15 +22,18 @@ pub async fn list_recipes(
             message: "Recipes retrieved".to_string(),
         })),
         Err(e) => {
-            tracing::error!("Failed to list recipes: {}", e);
-            sentry::capture_message(
-                &format!("Failed to list recipes: {e}"),
-                sentry::Level::Error,
+            let error_msg = format!("Failed to list recipes: {e}");
+            tracing::error!("{}", error_msg);
+            sentry_error(
+                &sentry::Hub::current(),
+                "RegistryError",
+                error_msg.clone(),
+                vec![],
             );
             Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: format!("Failed to list recipes: {e}"),
+                message: error_msg,
             }))
         }
     }
@@ -55,15 +59,18 @@ pub async fn get_recipe(
             message: format!("Recipe '{slug}' not found"),
         })),
         Err(e) => {
-            tracing::error!("Failed to get recipe '{}': {}", slug, e);
-            sentry::capture_message(
-                &format!("Failed to get recipe '{slug}': {e}"),
-                sentry::Level::Error,
+            let error_msg = format!("Failed to get recipe '{slug}': {e}");
+            tracing::error!("{}", error_msg);
+            sentry_error(
+                &sentry::Hub::current(),
+                "RegistryError",
+                error_msg.clone(),
+                vec![],
             );
             Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: format!("Failed to get recipe: {e}"),
+                message: error_msg,
             }))
         }
     }
@@ -83,15 +90,18 @@ pub async fn list_component_factories(
             message: "Component factories retrieved".to_string(),
         })),
         Err(e) => {
-            tracing::error!("Failed to list component factories: {}", e);
-            sentry::capture_message(
-                &format!("Failed to list component factories: {e}"),
-                sentry::Level::Error,
+            let error_msg = format!("Failed to list component factories: {e}");
+            tracing::error!("{}", error_msg);
+            sentry_error(
+                &sentry::Hub::current(),
+                "RegistryError",
+                error_msg.clone(),
+                vec![],
             );
             Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: format!("Failed to list component factories: {e}"),
+                message: error_msg,
             }))
         }
     }

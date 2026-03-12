@@ -8,7 +8,7 @@ use rocket_okapi::openapi;
 use std::str::FromStr;
 use tracing;
 
-use super::IERC20;
+use super::{IERC20, sentry_error};
 use crate::guards::ApiToken;
 use crate::models::{ApiResponse, AppState, FundGuestWalletRequest};
 
@@ -25,6 +25,15 @@ pub async fn fund_guest_wallet(
 ) -> Result<Json<ApiResponse<String>>, (Status, Json<ApiResponse<String>>)> {
     tracing::info!("Received request: POST /fund_guest_wallet");
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some(format!(
+            "POST /fund_guest_wallet wallet={}",
+            request.wallet_address
+        )),
+        ..Default::default()
+    });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/fund_guest_wallet");
         scope.set_extra("wallet_address", request.wallet_address.clone().into());
@@ -123,17 +132,15 @@ pub async fn fund_guest_wallet(
     {
         Ok(balance) => balance,
         Err(e) => {
-            tracing::error!("Failed to get ETH balance: {}", e);
-            hub.capture_message(
-                &format!("Failed to get ETH balance: {e}"),
-                sentry::Level::Error,
-            );
+            let error_msg = format!("Failed to get ETH balance: {e}");
+            tracing::error!("{}", error_msg);
+            sentry_error(&hub, "RpcError", error_msg.clone(), vec![]);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: format!("Failed to get ETH balance: {e}"),
+                    message: error_msg,
                 }),
             ));
         }
@@ -178,17 +185,15 @@ pub async fn fund_guest_wallet(
     {
         Ok(result) => result,
         Err(e) => {
-            tracing::error!("Failed to get USDC balance: {}", e);
-            hub.capture_message(
-                &format!("Failed to get USDC balance: {e}"),
-                sentry::Level::Error,
-            );
+            let error_msg = format!("Failed to get USDC balance: {e}");
+            tracing::error!("{}", error_msg);
+            sentry_error(&hub, "RpcError", error_msg.clone(), vec![]);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: format!("Failed to get USDC balance: {e}"),
+                    message: error_msg,
                 }),
             ));
         }
@@ -232,11 +237,9 @@ pub async fn fund_guest_wallet(
         .acquire_lock(&state.wallets.funding_address)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to acquire funding wallet lock: {}", e);
-            hub.capture_message(
-                &format!("Failed to acquire funding wallet lock: {e}"),
-                sentry::Level::Error,
-            );
+            let error_msg = format!("Failed to acquire funding wallet lock: {e}");
+            tracing::error!("{}", error_msg);
+            sentry_error(&hub, "WalletError", error_msg, vec![]);
             (
                 Status::ServiceUnavailable,
                 Json(ApiResponse {
@@ -266,11 +269,9 @@ pub async fn fund_guest_wallet(
         Ok(pending) => match pending.get_receipt().await {
             Ok(receipt) => receipt.transaction_hash,
             Err(e) => {
-                tracing::error!("Failed to get ETH transaction receipt: {}", e);
-                hub.capture_message(
-                    &format!("Failed to get ETH transaction receipt: {e}"),
-                    sentry::Level::Error,
-                );
+                let error_msg = format!("Failed to get ETH transaction receipt: {e}");
+                tracing::error!("{}", error_msg);
+                sentry_error(&hub, "TransactionError", error_msg, vec![]);
                 return Err((
                     Status::InternalServerError,
                     Json(ApiResponse {
@@ -282,8 +283,9 @@ pub async fn fund_guest_wallet(
             }
         },
         Err(e) => {
-            tracing::error!("Failed to send ETH: {}", e);
-            hub.capture_message(&format!("Failed to send ETH: {e}"), sentry::Level::Error);
+            let error_msg = format!("Failed to send ETH: {e}");
+            tracing::error!("{}", error_msg);
+            sentry_error(&hub, "TransactionError", error_msg, vec![]);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
@@ -307,11 +309,9 @@ pub async fn fund_guest_wallet(
         Ok(pending) => match pending.get_receipt().await {
             Ok(receipt) => receipt,
             Err(e) => {
-                tracing::error!("Failed to get USDC transaction receipt: {}", e);
-                hub.capture_message(
-                    &format!("Failed to get USDC transaction receipt: {e}"),
-                    sentry::Level::Error,
-                );
+                let error_msg = format!("Failed to get USDC transaction receipt: {e}");
+                tracing::error!("{}", error_msg);
+                sentry_error(&hub, "TransactionError", error_msg, vec![]);
                 return Err((
                     Status::InternalServerError,
                     Json(ApiResponse {
@@ -323,8 +323,9 @@ pub async fn fund_guest_wallet(
             }
         },
         Err(e) => {
-            tracing::error!("Failed to send USDC: {}", e);
-            hub.capture_message(&format!("Failed to send USDC: {e}"), sentry::Level::Error);
+            let error_msg = format!("Failed to send USDC: {e}");
+            tracing::error!("{}", error_msg);
+            sentry_error(&hub, "TransactionError", error_msg, vec![]);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
