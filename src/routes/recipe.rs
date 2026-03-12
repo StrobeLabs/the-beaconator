@@ -32,13 +32,13 @@ pub async fn list_recipes(
             message: "Recipes retrieved".to_string(),
         })),
         Err(e) => {
-            let error_msg = format!("Failed to list recipes: {e}");
-            tracing::error!("{}", error_msg);
-            sentry_error(&hub, "RegistryError", error_msg.clone(), vec![]);
+            let detailed_error = format!("Failed to list recipes: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "RegistryError", detailed_error, vec![]);
             Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: error_msg,
+                message: "Internal server error while listing recipes".to_string(),
             }))
         }
     }
@@ -75,13 +75,13 @@ pub async fn get_recipe(
             message: format!("Recipe '{slug}' not found"),
         })),
         Err(e) => {
-            let error_msg = format!("Failed to get recipe '{slug}': {e}");
-            tracing::error!("{}", error_msg);
-            sentry_error(&hub, "RegistryError", error_msg.clone(), vec![]);
+            let detailed_error = format!("Failed to get recipe '{slug}': {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "RegistryError", detailed_error, vec![]);
             Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: error_msg,
+                message: "Internal server error while fetching recipe".to_string(),
             }))
         }
     }
@@ -111,13 +111,13 @@ pub async fn list_component_factories(
             message: "Component factories retrieved".to_string(),
         })),
         Err(e) => {
-            let error_msg = format!("Failed to list component factories: {e}");
-            tracing::error!("{}", error_msg);
-            sentry_error(&hub, "RegistryError", error_msg.clone(), vec![]);
+            let detailed_error = format!("Failed to list component factories: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "RegistryError", detailed_error, vec![]);
             Ok(Json(ApiResponse {
                 success: false,
                 data: None,
-                message: error_msg,
+                message: "Internal server error while listing component factories".to_string(),
             }))
         }
     }
