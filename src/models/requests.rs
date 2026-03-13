@@ -252,8 +252,16 @@ pub struct UpdateBeaconWithEcdsaRequest {
     /// Measurement value(s) as uint256 decimal string(s).
     /// A single string is treated as a one-element array for backwards compatibility.
     #[serde(deserialize_with = "deserialize_measurement")]
-    #[schemars(with = "serde_json::Value")]
+    #[schemars(with = "MeasurementInput")]
     pub measurement: Vec<String>,
+}
+
+/// Schema type for the measurement field: accepts a single string or an array of strings.
+#[derive(Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum MeasurementInput {
+    Single(String),
+    Multiple(Vec<String>),
 }
 
 /// Deserialize measurement as either a single string or a vec of strings.
@@ -261,16 +269,9 @@ fn deserialize_measurement<'de, D>(deserializer: D) -> Result<Vec<String>, D::Er
 where
     D: Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum StringOrVec {
-        Single(String),
-        Multiple(Vec<String>),
-    }
-
-    match StringOrVec::deserialize(deserializer)? {
-        StringOrVec::Single(s) => Ok(vec![s]),
-        StringOrVec::Multiple(v) => Ok(v),
+    match MeasurementInput::deserialize(deserializer)? {
+        MeasurementInput::Single(s) => Ok(vec![s]),
+        MeasurementInput::Multiple(v) => Ok(v),
     }
 }
 
