@@ -26,17 +26,28 @@ pub async fn update_beacon_with_ecdsa(
     state: &AppState,
     request: UpdateBeaconWithEcdsaRequest,
 ) -> Result<B256, String> {
-    // 1. Parse beacon address and measurement
+    // 1. Parse beacon address and measurement(s)
     let beacon_address = Address::from_str(&request.beacon_address)
         .map_err(|e| format!("Invalid beacon address: {e}"))?;
 
-    let measurement = U256::from_str(&request.measurement)
-        .map_err(|e| format!("Invalid measurement value: {e}"))?;
+    let measurement_array: Vec<U256> = request
+        .measurement
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            U256::from_str(s).map_err(|e| format!("Invalid measurement value at index {i}: {e}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if measurement_array.is_empty() {
+        return Err("Measurement array must not be empty".to_string());
+    }
 
     tracing::info!(
-        "Updating beacon {} with ECDSA-signed measurement: {}",
+        "Updating beacon {} with ECDSA-signed measurement ({} element(s)): {:?}",
         beacon_address,
-        measurement
+        measurement_array.len(),
+        measurement_array
     );
 
     // 2. Get verifier address from beacon using read provider
@@ -105,8 +116,7 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Using nonce (timestamp_nanos): {}", nonce);
 
-    // 6. Get EIP-712 digest from verifier (measurement is now uint256[])
-    let measurement_array = vec![measurement];
+    // 6. Get EIP-712 digest from verifier (measurement is uint256[])
     let digest_raw = verifier
         .digest(measurement_array.clone(), nonce)
         .call()
@@ -146,8 +156,6 @@ pub async fn update_beacon_with_ecdsa(
 
     // 9. ABI-encode inputs as (uint256[] measurement, uint256 nonce)
     // Use abi_encode_params to match Solidity's abi.encode(uint256[], uint256)
-    // Note: SolValue::abi_encode() adds an extra tuple wrapper (160 bytes),
-    // but Solidity's abi.decode expects flat params encoding (128 bytes for 1-element array).
     let inputs = <(
         alloy::sol_types::sol_data::Array<alloy::sol_types::sol_data::Uint<256>>,
         alloy::sol_types::sol_data::Uint<256>,
@@ -162,8 +170,8 @@ pub async fn update_beacon_with_ecdsa(
         inputs_hash
     );
     tracing::debug!(
-        "Update raw values: measurement={}, nonce={}",
-        measurement,
+        "Update raw values: measurement={:?}, nonce={}",
+        measurement_array,
         nonce
     );
 
@@ -273,9 +281,9 @@ pub async fn update_beacon_with_ecdsa(
 
     if index_updated_found {
         tracing::info!(
-            "ECDSA beacon update succeeded - beacon {} updated with measurement {}",
+            "ECDSA beacon update succeeded - beacon {} updated with measurement ({} element(s))",
             beacon_address,
-            measurement
+            measurement_array.len()
         );
         Ok(tx_hash)
     } else {
@@ -308,6 +316,24 @@ mod tests {
 
         // Flat params encoding: offset(32) + nonce(32) + length(32) + element(32) = 128 bytes
         assert_eq!(inputs.len(), 128);
+    }
+
+    #[test]
+    fn test_abi_encode_inputs_multi_element() {
+        let measurements = vec![
+            U256::from(47941000000000000u128),
+            U256::from(226802000000000000u128),
+            U256::from(354746000000000000u128),
+        ];
+        let nonce = U256::from(1704067200u64);
+
+        let inputs = <(
+            alloy::sol_types::sol_data::Array<alloy::sol_types::sol_data::Uint<256>>,
+            alloy::sol_types::sol_data::Uint<256>,
+        )>::abi_encode_params(&(measurements, nonce));
+
+        // offset(32) + nonce(32) + length(32) + 3 elements(96) = 192 bytes
+        assert_eq!(inputs.len(), 192);
     }
 
     #[test]
