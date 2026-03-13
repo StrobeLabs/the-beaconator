@@ -1,6 +1,6 @@
 use alloy::primitives::Bytes;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Update an existing beacon with new data using a zero-knowledge proof
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -241,12 +241,37 @@ pub struct FundGuestWalletRequest {
 ///
 /// This endpoint signs the measurement with the beaconator wallet and submits
 /// it to a beacon that uses an ECDSAVerifierAdapter for verification.
+///
+/// The `measurement` field accepts either:
+/// - A single uint256 string: `"measurement": "1000000000000000000"` (standalone beacons)
+/// - An array of uint256 strings: `"measurement": ["47941000000000000", ...]` (group beacons)
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct UpdateBeaconWithEcdsaRequest {
     /// Ethereum address of the beacon contract (with or without 0x prefix)
     pub beacon_address: String,
-    /// The measurement value to update the beacon with (uint256 as decimal string)
-    pub measurement: String,
+    /// Measurement value(s) as uint256 decimal string(s).
+    /// A single string is treated as a one-element array for backwards compatibility.
+    #[serde(deserialize_with = "deserialize_measurement")]
+    #[schemars(with = "serde_json::Value")]
+    pub measurement: Vec<String>,
+}
+
+/// Deserialize measurement as either a single string or a vec of strings.
+fn deserialize_measurement<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrVec {
+        Single(String),
+        Multiple(Vec<String>),
+    }
+
+    match StringOrVec::deserialize(deserializer)? {
+        StringOrVec::Single(s) => Ok(vec![s]),
+        StringOrVec::Multiple(v) => Ok(v),
+    }
 }
 
 /// Create a modular beacon using a named recipe
