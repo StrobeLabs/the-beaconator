@@ -400,8 +400,10 @@ async fn create_group_beacon_modular(
 
     let initial_z_raw =
         require_param_vec(&params.initial_z_space_indices, "initial_z_space_indices")?;
-    let initial_z_space_indices: Vec<I256> =
-        initial_z_raw.iter().map(|v| wad_to_q96_signed(*v)).collect();
+    let initial_z_space_indices: Vec<I256> = initial_z_raw
+        .iter()
+        .map(|v| wad_to_q96_signed(*v))
+        .collect();
 
     let factory = IGroupManagerFactory::new(beacon_factory_addr, provider);
 
