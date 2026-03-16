@@ -1129,7 +1129,7 @@ async fn create_group_transform(
     let addr = match spec {
         GroupTransformSpec::Softmax => {
             let steepness = U256::from(require_param(&params.steepness, "steepness")?);
-            let index_scale = U256::from(require_param(&params.index_scale, "index_scale")?);
+            let index_scale = Q96;
 
             tracing::info!("Creating Softmax group transform");
             let factory = ISoftmaxFactory::new(factory_addr, provider);
@@ -1159,7 +1159,7 @@ async fn create_group_transform(
             addr
         }
         GroupTransformSpec::GMNormalize => {
-            let index_scale = U256::from(require_param(&params.index_scale, "index_scale")?);
+            let index_scale = Q96;
 
             tracing::info!("Creating GMNormalize group transform");
             let factory = IGMNormalizeFactory::new(factory_addr, provider);
