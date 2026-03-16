@@ -26,6 +26,27 @@ use crate::routes::{
     IWeightedSumComponentFactory,
 };
 
+/// WAD constant (10^18)
+const WAD: u128 = 1_000_000_000_000_000_000;
+
+/// Q96 constant (2^96)
+const Q96: U256 = U256::from_limbs([0, 0x1_0000_0000, 0, 0]);
+
+/// Convert a WAD-scaled u128 to Q96-scaled U256.
+/// On-chain beacon indices use Q96 fixed-point representation.
+fn wad_to_q96(wad_value: u128) -> U256 {
+    U256::from(wad_value) * Q96 / U256::from(WAD)
+}
+
+/// Convert a WAD-scaled i128 to Q96-scaled I256 (signed).
+fn wad_to_q96_signed(wad_value: i128) -> I256 {
+    let negative = wad_value < 0;
+    let abs = wad_value.unsigned_abs();
+    let q96_abs = U256::from(abs) * Q96 / U256::from(WAD);
+    let result = I256::try_from(q96_abs).unwrap_or(I256::ZERO);
+    if negative { -result } else { result }
+}
+
 /// Result of a modular beacon creation
 pub struct ModularCreationResult {
     /// Address of the created beacon
@@ -121,11 +142,7 @@ async fn create_identity_beacon_modular(
         .get_factory_address(&ComponentFactoryType::IdentityBeaconFactory)
         .await?;
 
-    let initial_index = U256::from(
-        params
-            .initial_index
-            .unwrap_or(1_000_000_000_000_000_000u128),
-    );
+    let initial_index = wad_to_q96(params.initial_index.unwrap_or(WAD));
 
     let factory = IIdentityBeaconFactory::new(beacon_factory_addr, provider);
 
@@ -206,11 +223,7 @@ async fn create_standalone_beacon_modular(
         .get_factory_address(&ComponentFactoryType::StandaloneBeaconFactory)
         .await?;
 
-    let initial_index = U256::from(
-        params
-            .initial_index
-            .unwrap_or(1_000_000_000_000_000_000u128),
-    );
+    let initial_index = wad_to_q96(params.initial_index.unwrap_or(WAD));
 
     let factory = IStandaloneBeaconFactory::new(beacon_factory_addr, provider);
 
@@ -383,22 +396,12 @@ async fn create_group_beacon_modular(
         .await?;
 
     let initial_indices_raw = require_param_vec(&params.initial_indices, "initial_indices")?;
-    let initial_indices: Vec<U256> = initial_indices_raw.iter().map(|v| U256::from(*v)).collect();
+    let initial_indices: Vec<U256> = initial_indices_raw.iter().map(|v| wad_to_q96(*v)).collect();
 
     let initial_z_raw =
         require_param_vec(&params.initial_z_space_indices, "initial_z_space_indices")?;
-    let initial_z_space_indices: Vec<I256> = initial_z_raw
-        .iter()
-        .map(|v| {
-            if *v >= 0 {
-                I256::try_from(*v as u128).unwrap_or(I256::ZERO)
-            } else {
-                // For negative values: negate the absolute value
-                let abs_val = v.unsigned_abs();
-                -I256::try_from(abs_val).unwrap_or(I256::ZERO)
-            }
-        })
-        .collect();
+    let initial_z_space_indices: Vec<I256> =
+        initial_z_raw.iter().map(|v| wad_to_q96_signed(*v)).collect();
 
     let factory = IGroupManagerFactory::new(beacon_factory_addr, provider);
 
@@ -809,7 +812,7 @@ async fn create_transform(
             addr
         }
         TransformSpec::Unbounded => {
-            let initial_index = U256::from(require_param(
+            let initial_index = wad_to_q96(require_param(
                 &params.initial_index,
                 "initial_index (for unbounded transform)",
             )?);
