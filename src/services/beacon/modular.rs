@@ -38,15 +38,6 @@ fn wad_to_q96(wad_value: u128) -> U256 {
     U256::from(wad_value) * Q96 / U256::from(WAD)
 }
 
-/// Convert a WAD-scaled i128 to Q96-scaled I256 (signed).
-fn wad_to_q96_signed(wad_value: i128) -> I256 {
-    let negative = wad_value < 0;
-    let abs = wad_value.unsigned_abs();
-    let q96_abs = U256::from(abs) * Q96 / U256::from(WAD);
-    let result = I256::try_from(q96_abs).unwrap_or(I256::ZERO);
-    if negative { -result } else { result }
-}
-
 /// Result of a modular beacon creation
 pub struct ModularCreationResult {
     /// Address of the created beacon
@@ -402,7 +393,14 @@ async fn create_group_beacon_modular(
         require_param_vec(&params.initial_z_space_indices, "initial_z_space_indices")?;
     let initial_z_space_indices: Vec<I256> = initial_z_raw
         .iter()
-        .map(|v| wad_to_q96_signed(*v))
+        .map(|v| {
+            if *v >= 0 {
+                I256::try_from(*v as u128).unwrap_or(I256::ZERO)
+            } else {
+                let abs_val = v.unsigned_abs();
+                -I256::try_from(abs_val).unwrap_or(I256::ZERO)
+            }
+        })
         .collect();
 
     let factory = IGroupManagerFactory::new(beacon_factory_addr, provider);
@@ -1257,12 +1255,5 @@ mod tests {
         let v = U256::from(64_800_000_000_000_000_000u128);
         let back = wad_to_q96(v.to::<u128>()) * U256::from(WAD) / Q96;
         assert!(v - back <= U256::from(1u64));
-    }
-
-    #[test]
-    fn test_wad_to_q96_signed() {
-        let q96_one = I256::try_from(Q96).unwrap();
-        assert_eq!(wad_to_q96_signed(WAD as i128), q96_one);
-        assert_eq!(wad_to_q96_signed(-(WAD as i128)), -q96_one);
     }
 }
