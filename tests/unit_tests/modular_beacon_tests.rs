@@ -108,7 +108,6 @@ fn test_modular_beacon_params_all_none_serialization() {
     assert!(deserialized.decay_slow.is_none());
     assert!(deserialized.initial_m_fast.is_none());
     assert!(deserialized.initial_m_slow.is_none());
-    assert!(deserialized.index_scale.is_none());
 
     // All null values in JSON
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -160,7 +159,6 @@ fn test_modular_beacon_params_standalone_cgbm_fields() {
     // Group fields remain None
     assert!(deserialized.num_classes.is_none());
     assert!(deserialized.initial_indices.is_none());
-    assert!(deserialized.index_scale.is_none());
 }
 
 #[test]
@@ -180,7 +178,6 @@ fn test_modular_beacon_params_group_fields() {
             1_000_000_000_000_000_000,
             1_000_000_000_000_000_000,
         ]),
-        index_scale: Some(1_000_000_000_000_000_000),
         ..Default::default()
     };
 
@@ -196,7 +193,6 @@ fn test_modular_beacon_params_group_fields() {
     assert_eq!(deserialized.alpha, Some(500_000_000_000_000_000));
     assert_eq!(deserialized.decay, Some(950_000_000_000_000_000));
     assert_eq!(deserialized.initial_ema.as_ref().unwrap().len(), 3);
-    assert_eq!(deserialized.index_scale, Some(1_000_000_000_000_000_000));
     // Standalone fields remain None
     assert!(deserialized.sigma_base.is_none());
     assert!(deserialized.scaling_factor.is_none());
