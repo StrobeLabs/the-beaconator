@@ -26,6 +26,18 @@ use crate::routes::{
     IWeightedSumComponentFactory,
 };
 
+/// WAD constant (10^18)
+const WAD: u128 = 1_000_000_000_000_000_000;
+
+/// Q96 constant (2^96)
+const Q96: U256 = U256::from_limbs([0, 0x1_0000_0000, 0, 0]);
+
+/// Convert a WAD-scaled u128 to Q96-scaled U256.
+/// On-chain beacon indices use Q96 fixed-point representation.
+fn wad_to_q96(wad_value: u128) -> U256 {
+    U256::from(wad_value) * Q96 / U256::from(WAD)
+}
+
 /// Result of a modular beacon creation
 pub struct ModularCreationResult {
     /// Address of the created beacon
@@ -121,11 +133,7 @@ async fn create_identity_beacon_modular(
         .get_factory_address(&ComponentFactoryType::IdentityBeaconFactory)
         .await?;
 
-    let initial_index = U256::from(
-        params
-            .initial_index
-            .unwrap_or(1_000_000_000_000_000_000u128),
-    );
+    let initial_index = wad_to_q96(params.initial_index.unwrap_or(WAD));
 
     let factory = IIdentityBeaconFactory::new(beacon_factory_addr, provider);
 
@@ -206,11 +214,7 @@ async fn create_standalone_beacon_modular(
         .get_factory_address(&ComponentFactoryType::StandaloneBeaconFactory)
         .await?;
 
-    let initial_index = U256::from(
-        params
-            .initial_index
-            .unwrap_or(1_000_000_000_000_000_000u128),
-    );
+    let initial_index = wad_to_q96(params.initial_index.unwrap_or(WAD));
 
     let factory = IStandaloneBeaconFactory::new(beacon_factory_addr, provider);
 
@@ -383,7 +387,7 @@ async fn create_group_beacon_modular(
         .await?;
 
     let initial_indices_raw = require_param_vec(&params.initial_indices, "initial_indices")?;
-    let initial_indices: Vec<U256> = initial_indices_raw.iter().map(|v| U256::from(*v)).collect();
+    let initial_indices: Vec<U256> = initial_indices_raw.iter().map(|v| wad_to_q96(*v)).collect();
 
     let initial_z_raw =
         require_param_vec(&params.initial_z_space_indices, "initial_z_space_indices")?;
@@ -393,7 +397,6 @@ async fn create_group_beacon_modular(
             if *v >= 0 {
                 I256::try_from(*v as u128).unwrap_or(I256::ZERO)
             } else {
-                // For negative values: negate the absolute value
                 let abs_val = v.unsigned_abs();
                 -I256::try_from(abs_val).unwrap_or(I256::ZERO)
             }
@@ -777,8 +780,8 @@ async fn create_transform(
 
     let addr = match spec {
         TransformSpec::Bounded => {
-            let min_index = U256::from(require_param(&params.min_index, "min_index")?);
-            let max_index = U256::from(require_param(&params.max_index, "max_index")?);
+            let min_index = wad_to_q96(require_param(&params.min_index, "min_index")?);
+            let max_index = wad_to_q96(require_param(&params.max_index, "max_index")?);
             let steepness = U256::from(require_param(&params.steepness, "steepness")?);
 
             tracing::info!("Creating Bounded transform");
@@ -809,7 +812,7 @@ async fn create_transform(
             addr
         }
         TransformSpec::Unbounded => {
-            let initial_index = U256::from(require_param(
+            let initial_index = wad_to_q96(require_param(
                 &params.initial_index,
                 "initial_index (for unbounded transform)",
             )?);
@@ -1238,4 +1241,19 @@ async fn wait_for_receipt(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wad_to_q96() {
+        // 1.0 WAD -> 2^96, and 64.8 WAD round-trips losslessly
+        assert_eq!(wad_to_q96(WAD), Q96);
+        // 64.8 WAD: round-trip within 1 wei of truncation
+        let v = U256::from(64_800_000_000_000_000_000u128);
+        let back = wad_to_q96(v.to::<u128>()) * U256::from(WAD) / Q96;
+        assert!(v - back <= U256::from(1u64));
+    }
 }
