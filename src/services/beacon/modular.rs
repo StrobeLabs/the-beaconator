@@ -780,8 +780,8 @@ async fn create_transform(
 
     let addr = match spec {
         TransformSpec::Bounded => {
-            let min_index = U256::from(require_param(&params.min_index, "min_index")?);
-            let max_index = U256::from(require_param(&params.max_index, "max_index")?);
+            let min_index = wad_to_q96(require_param(&params.min_index, "min_index")?);
+            let max_index = wad_to_q96(require_param(&params.max_index, "max_index")?);
             let steepness = U256::from(require_param(&params.steepness, "steepness")?);
 
             tracing::info!("Creating Bounded transform");
@@ -1241,4 +1241,26 @@ async fn wait_for_receipt(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wad_to_q96() {
+        // 1.0 WAD -> 2^96, and 64.8 WAD round-trips losslessly
+        assert_eq!(wad_to_q96(WAD), Q96);
+        // 64.8 WAD: round-trip within 1 wei of truncation
+        let v = U256::from(64_800_000_000_000_000_000u128);
+        let back = wad_to_q96(v.to::<u128>()) * U256::from(WAD) / Q96;
+        assert!(v - back <= U256::from(1u64));
+    }
+
+    #[test]
+    fn test_wad_to_q96_signed() {
+        let q96_one = I256::try_from(Q96).unwrap();
+        assert_eq!(wad_to_q96_signed(WAD as i128), q96_one);
+        assert_eq!(wad_to_q96_signed(-(WAD as i128)), -q96_one);
+    }
 }
