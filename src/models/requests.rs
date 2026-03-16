@@ -370,7 +370,4 @@ pub struct ModularBeaconParams {
     /// Initial slow EMA for RelativeDominance
     #[schemars(with = "Option<Vec<String>>")]
     pub initial_m_slow: Option<Vec<u128>>,
-    /// Index scale for group transforms (WAD-scaled)
-    #[schemars(with = "Option<String>")]
-    pub index_scale: Option<u128>,
 }
