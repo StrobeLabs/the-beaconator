@@ -236,8 +236,15 @@ async fn batch_update_with_multicall3(
     // First send the transaction
     match multicall_contract.aggregate3(calls.clone()).send().await {
         Ok(pending_tx) => {
+            let tx_hash_raw = *pending_tx.tx_hash();
             tracing::info!("Multicall3 batch update transaction sent, waiting for receipt...");
-            match pending_tx.get_receipt().await {
+            match crate::services::transaction::poll_for_receipt(
+                &*state.provider.read_provider,
+                tx_hash_raw,
+                120,
+            )
+            .await
+            {
                 Ok(receipt) => {
                     tracing::info!(
                         "Multicall3 batch update confirmed: {:?}",

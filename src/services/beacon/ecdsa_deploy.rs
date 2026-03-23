@@ -4,8 +4,6 @@
 //! setting the beaconator's PRIVATE_KEY signer as the designated signer.
 
 use alloy::primitives::Address;
-use std::time::Duration;
-use tokio::time::timeout;
 
 use crate::models::AppState;
 use crate::routes::IEcdsaVerifierFactory;
@@ -58,18 +56,13 @@ pub async fn create_ecdsa_verifier(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Verifier creation tx sent: {:?}", tx_hash);
 
-    // Wait for receipt
-    let receipt = match timeout(Duration::from_secs(120), pending_tx.get_receipt()).await {
-        Ok(Ok(receipt)) => receipt,
-        Ok(Err(e)) => {
-            return Err(format!("Failed to get verifier creation receipt: {e}"));
-        }
-        Err(_) => {
-            return Err(format!(
-                "Timeout waiting for verifier creation receipt (tx: {tx_hash})"
-            ));
-        }
-    };
+    // Wait for receipt with optimized polling
+    let receipt = crate::services::transaction::poll_for_receipt(
+        &*state.provider.read_provider,
+        tx_hash,
+        120,
+    )
+    .await?;
 
     // Check transaction status
     if !receipt.status() {

@@ -64,23 +64,17 @@ pub async fn execute_multicall(
             error_msg
         })?;
 
-    tracing::info!("Multicall transaction sent, awaiting confirmation...");
+    let tx_hash = *pending_tx.tx_hash();
+    tracing::info!("Multicall transaction sent (tx: {tx_hash}), awaiting confirmation...");
 
-    // Wait for transaction confirmation with timeout
+    // Wait for transaction confirmation with optimized polling
     let receipt =
-        tokio::time::timeout(std::time::Duration::from_secs(30), pending_tx.get_receipt())
+        crate::services::transaction::poll_for_receipt(&*state.provider.read_provider, tx_hash, 30)
             .await
-            .map_err(|_| {
-                let error_msg = "Timeout waiting for multicall transaction receipt";
-                tracing::error!("{}", error_msg);
-                sentry::capture_message(error_msg, sentry::Level::Warning);
-                error_msg.to_string()
-            })?
             .map_err(|e| {
-                let error_msg = format!("Failed to get multicall transaction receipt: {e}");
-                tracing::error!("{}", error_msg);
-                sentry::capture_message(&error_msg, sentry::Level::Error);
-                error_msg
+                tracing::error!("{}", e);
+                sentry::capture_message(&e, sentry::Level::Error);
+                e
             })?;
 
     let tx_hash = receipt.transaction_hash;

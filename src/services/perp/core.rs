@@ -1,7 +1,5 @@
 use alloy::primitives::{Address, FixedBytes, Signed, U256, Uint};
 use alloy::providers::Provider;
-use std::time::Duration;
-use tokio::time::timeout;
 use tracing;
 
 use super::super::transaction::events::{
@@ -277,62 +275,17 @@ pub async fn deploy_perp_for_beacon(
     let pending_tx_hash = *pending_tx.tx_hash();
     tracing::info!("Transaction hash (pending): {:?}", pending_tx_hash);
 
-    // Use get_receipt() with timeout and fallback like beacon endpoints
-    let receipt = match timeout(Duration::from_secs(120), pending_tx.get_receipt()).await {
-        Ok(Ok(receipt)) => {
-            tracing::info!("Perp deployment confirmed via get_receipt()");
-            receipt
-        }
-        Ok(Err(e)) => {
-            tracing::warn!("get_receipt() failed for perp deployment: {}", e);
-            tracing::info!("Falling back to on-chain perp deployment check...");
-
-            // Try to get the receipt directly from the read provider with timeout
-            match timeout(
-                Duration::from_secs(30),
-                state
-                    .provider
-                    .read_provider
-                    .get_transaction_receipt(pending_tx_hash),
-            )
-            .await
-            {
-                Ok(Ok(Some(receipt))) => {
-                    tracing::info!("Perp deployment confirmed via on-chain check");
-                    receipt
-                }
-                Ok(Ok(None)) => {
-                    let error_msg =
-                        format!("Perp deployment transaction {pending_tx_hash} not found on-chain");
-                    tracing::error!("{}", error_msg);
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
-                    return Err(error_msg);
-                }
-                Ok(Err(e)) => {
-                    let error_msg = format!(
-                        "Failed to check perp deployment transaction {pending_tx_hash} on-chain: {e}"
-                    );
-                    tracing::error!("{}", error_msg);
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
-                    return Err(error_msg);
-                }
-                Err(_) => {
-                    let error_msg = format!(
-                        "Timeout checking perp deployment transaction {pending_tx_hash} on-chain"
-                    );
-                    tracing::error!("{}", error_msg);
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
-                    return Err(error_msg);
-                }
-            }
-        }
-        Err(_) => {
-            let error_msg = "Timeout waiting for perp deployment receipt".to_string();
-            tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
-            return Err(error_msg);
-        }
-    };
+    let receipt = crate::services::transaction::poll_for_receipt(
+        &*state.provider.read_provider,
+        pending_tx_hash,
+        120,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("{}", e);
+        sentry::capture_message(&e, sentry::Level::Error);
+        e
+    })?;
 
     let tx_hash = receipt.transaction_hash;
     tracing::info!("Perp deployment transaction confirmed successfully!");
@@ -488,136 +441,17 @@ pub async fn deposit_liquidity_for_perp(
     let approval_tx_hash = *pending_approval.tx_hash();
     tracing::info!("USDC approval transaction hash: {:?}", approval_tx_hash);
 
-    // Use get_receipt() with extended timeout for USDC approvals (Base can be slow)
-    let approval_receipt = match timeout(Duration::from_secs(150), pending_approval.get_receipt())
-        .await
-    {
-        Ok(Ok(receipt)) => {
-            tracing::info!("USDC approval confirmed via get_receipt()");
-            receipt
-        }
-        Ok(Err(e)) => {
-            tracing::warn!("get_receipt() failed for USDC approval: {}", e);
-            tracing::info!("Falling back to on-chain approval check...");
-
-            // Try to get the receipt directly from the read provider with timeout
-            match timeout(
-                Duration::from_secs(60),
-                state
-                    .provider
-                    .read_provider
-                    .get_transaction_receipt(approval_tx_hash),
-            )
-            .await
-            {
-                Ok(Ok(Some(receipt))) => {
-                    tracing::info!("USDC approval confirmed via on-chain check");
-                    receipt
-                }
-                Ok(Ok(None)) => {
-                    let error_msg =
-                        format!("USDC approval transaction {approval_tx_hash} not found on-chain");
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-                Ok(Err(e)) => {
-                    let error_msg = format!(
-                        "Failed to check USDC approval transaction {approval_tx_hash} on-chain: {e}"
-                    );
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-                Err(_) => {
-                    let error_msg = format!(
-                        "Timeout checking USDC approval transaction {approval_tx_hash} on-chain"
-                    );
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-            }
-        }
-        Err(_) => {
-            tracing::warn!(
-                "Initial get_receipt() timed out for USDC approval, trying extended fallback..."
-            );
-            tracing::info!(
-                "Checking USDC approval transaction {} on-chain with extended timeout...",
-                approval_tx_hash
-            );
-
-            // Extended fallback: retry with progressive timeouts (15s, 30s, 60s) for Base network
-            let mut retry_count = 0;
-            let max_retries = 3;
-            let timeout_seconds = [15u64, 30u64, 60u64]; // Progressive timeout pattern
-
-            loop {
-                retry_count += 1;
-                let current_timeout = timeout_seconds[retry_count - 1];
-                tracing::info!(
-                    "USDC approval receipt attempt {}/{} ({}s timeout)",
-                    retry_count,
-                    max_retries,
-                    current_timeout
-                );
-
-                match timeout(
-                    Duration::from_secs(current_timeout),
-                    state
-                        .provider
-                        .read_provider
-                        .get_transaction_receipt(approval_tx_hash),
-                )
-                .await
-                {
-                    Ok(Ok(Some(receipt))) => {
-                        tracing::info!(
-                            "USDC approval found on-chain via extended fallback (attempt {})",
-                            retry_count
-                        );
-                        break receipt;
-                    }
-                    Ok(Ok(None)) => {
-                        if retry_count >= max_retries {
-                            let error_msg = format!(
-                                "USDC approval transaction {approval_tx_hash} not found on-chain after {max_retries} attempts"
-                            );
-                            tracing::error!("{}", error_msg);
-                            tracing::error!("This could indicate:");
-                            tracing::error!("  - USDC approval transaction was dropped/replaced");
-                            tracing::error!("  - Network issues prevented confirmation");
-                            tracing::error!("  - Transaction is still pending (check gas price)");
-                            tracing::error!("  - Base network congestion causing delays");
-                            return Err(error_msg);
-                        }
-                        tracing::warn!(
-                            "USDC approval not found on attempt {}, retrying...",
-                            retry_count
-                        );
-                        tokio::time::sleep(Duration::from_secs(5)).await; // Brief pause between retries
-                    }
-                    Ok(Err(e)) => {
-                        let error_msg = format!(
-                            "Failed to check USDC approval transaction {approval_tx_hash} on-chain: {e}"
-                        );
-                        tracing::error!("{}", error_msg);
-                        return Err(error_msg);
-                    }
-                    Err(_) => {
-                        if retry_count >= max_retries {
-                            let error_msg = format!(
-                                "Final timeout waiting for USDC approval receipt {approval_tx_hash} after {max_retries} attempts"
-                            );
-                            tracing::error!("{}", error_msg);
-                            tracing::error!("All fallback methods exhausted for USDC approval");
-                            return Err(error_msg);
-                        }
-                        tracing::warn!("Timeout on attempt {}, retrying...", retry_count);
-                        tokio::time::sleep(Duration::from_secs(5)).await; // Brief pause between retries
-                    }
-                }
-            }
-        }
-    };
+    let approval_receipt = crate::services::transaction::poll_for_receipt(
+        &*state.provider.read_provider,
+        approval_tx_hash,
+        150,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("{}", e);
+        sentry::capture_message(&e, sentry::Level::Error);
+        e
+    })?;
 
     // Send the openMakerPosition transaction
     tracing::info!("Opening maker position with wallet {}", wallet_address);
@@ -683,59 +517,17 @@ pub async fn deposit_liquidity_for_perp(
     let deposit_tx_hash = *pending_tx.tx_hash();
     tracing::info!("Liquidity deposit transaction hash: {:?}", deposit_tx_hash);
 
-    // Use get_receipt() with timeout and fallback like beacon endpoints
-    let receipt = match timeout(Duration::from_secs(90), pending_tx.get_receipt()).await {
-        Ok(Ok(receipt)) => {
-            tracing::info!("Liquidity deposit confirmed via get_receipt()");
-            receipt
-        }
-        Ok(Err(e)) => {
-            tracing::warn!("get_receipt() failed for liquidity deposit: {}", e);
-            tracing::info!("Falling back to on-chain deposit check...");
-
-            // Try to get the receipt directly from the read provider with timeout
-            match timeout(
-                Duration::from_secs(30),
-                state
-                    .provider
-                    .read_provider
-                    .get_transaction_receipt(deposit_tx_hash),
-            )
-            .await
-            {
-                Ok(Ok(Some(receipt))) => {
-                    tracing::info!("Liquidity deposit confirmed via on-chain check");
-                    receipt
-                }
-                Ok(Ok(None)) => {
-                    let error_msg = format!(
-                        "Liquidity deposit transaction {deposit_tx_hash} not found on-chain"
-                    );
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-                Ok(Err(e)) => {
-                    let error_msg = format!(
-                        "Failed to check liquidity deposit transaction {deposit_tx_hash} on-chain: {e}"
-                    );
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-                Err(_) => {
-                    let error_msg = format!(
-                        "Timeout checking liquidity deposit transaction {deposit_tx_hash} on-chain"
-                    );
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-            }
-        }
-        Err(_) => {
-            let error_msg = "Timeout waiting for liquidity deposit receipt".to_string();
-            tracing::error!("{}", error_msg);
-            return Err(error_msg);
-        }
-    };
+    let receipt = crate::services::transaction::poll_for_receipt(
+        &*state.provider.read_provider,
+        deposit_tx_hash,
+        90,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("{}", e);
+        sentry::capture_message(&e, sentry::Level::Error);
+        e
+    })?;
 
     tracing::info!(
         "Liquidity deposit transaction confirmed with hash: {:?}",

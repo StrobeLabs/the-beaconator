@@ -4,8 +4,6 @@
 
 use alloy::primitives::{Address, U256};
 use std::str::FromStr;
-use std::time::Duration;
-use tokio::time::timeout;
 
 use crate::models::AppState;
 use crate::models::beacon_type::BeaconTypeConfig;
@@ -96,21 +94,13 @@ pub async fn create_lbcgbm_beacon(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("LBCGBM beacon creation tx sent: {:?}", tx_hash);
 
-    let receipt = match timeout(Duration::from_secs(120), pending_tx.get_receipt()).await {
-        Ok(Ok(receipt)) => receipt,
-        Ok(Err(e)) => return Err(format!("Failed to get LBCGBM beacon creation receipt: {e}")),
-        Err(_) => {
-            return Err(format!(
-                "Timeout waiting for LBCGBM beacon creation receipt (tx: {tx_hash})"
-            ));
-        }
-    };
-
-    if !receipt.status() {
-        return Err(format!(
-            "LBCGBM beacon creation transaction {tx_hash} reverted"
-        ));
-    }
+    let _receipt = crate::services::transaction::poll_for_successful_receipt(
+        &*state.provider.read_provider,
+        tx_hash,
+        "LBCGBM beacon creation",
+        120,
+    )
+    .await?;
 
     tracing::info!("LBCGBM beacon created at {}", beacon_address);
     sentry::capture_message(
@@ -198,25 +188,13 @@ pub async fn create_weighted_sum_composite_beacon(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Composite beacon creation tx sent: {:?}", tx_hash);
 
-    let receipt = match timeout(Duration::from_secs(120), pending_tx.get_receipt()).await {
-        Ok(Ok(receipt)) => receipt,
-        Ok(Err(e)) => {
-            return Err(format!(
-                "Failed to get composite beacon creation receipt: {e}"
-            ));
-        }
-        Err(_) => {
-            return Err(format!(
-                "Timeout waiting for composite beacon creation receipt (tx: {tx_hash})"
-            ));
-        }
-    };
-
-    if !receipt.status() {
-        return Err(format!(
-            "Composite beacon creation transaction {tx_hash} reverted"
-        ));
-    }
+    let _receipt = crate::services::transaction::poll_for_successful_receipt(
+        &*state.provider.read_provider,
+        tx_hash,
+        "composite beacon creation",
+        120,
+    )
+    .await?;
 
     tracing::info!("WeightedSumComposite beacon created at {}", beacon_address);
     sentry::capture_message(

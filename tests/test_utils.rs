@@ -203,10 +203,10 @@ pub async fn create_test_wallet_manager() -> Arc<WalletManager> {
     }
 }
 
-/// Build a read-only provider (without wallet) for test purposes
+/// Build a read-only provider (without wallet or fillers) for test purposes
 fn build_test_read_only_provider(rpc_url: &str) -> Arc<ReadOnlyProvider> {
     Arc::new(
-        ProviderBuilder::new().connect_http(rpc_url.parse().expect("Invalid RPC URL for test")),
+        ProviderBuilder::default().connect_http(rpc_url.parse().expect("Invalid RPC URL for test")),
     )
 }
 
