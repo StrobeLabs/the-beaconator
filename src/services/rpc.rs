@@ -63,9 +63,11 @@ impl RpcConfig {
         Ok(provider)
     }
 
-    /// Build a read-only provider from a URL (no wallet, for queries only)
+    /// Build a read-only provider from a URL (no wallet or fillers, for queries only).
+    /// Uses ProviderBuilder::default() to skip recommended fillers (Gas, Nonce,
+    /// BlobGas, ChainId) since read operations don't need them.
     pub fn build_read_only_provider(url: &str) -> Result<ReadOnlyProvider, String> {
-        let provider = ProviderBuilder::new().connect_http(
+        let provider = ProviderBuilder::default().connect_http(
             url.parse()
                 .map_err(|e| format!("Invalid RPC URL '{url}': {e}"))?,
         );

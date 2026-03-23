@@ -47,24 +47,10 @@ pub type AlloyProvider = alloy::providers::fillers::FillProvider<
     alloy::network::Ethereum,
 >;
 
-// Read-only provider type without wallet (for queries only, cannot sign transactions)
-pub type ReadOnlyProvider = alloy::providers::fillers::FillProvider<
-    alloy::providers::fillers::JoinFill<
-        alloy::providers::Identity,
-        alloy::providers::fillers::JoinFill<
-            alloy::providers::fillers::GasFiller,
-            alloy::providers::fillers::JoinFill<
-                alloy::providers::fillers::BlobGasFiller,
-                alloy::providers::fillers::JoinFill<
-                    alloy::providers::fillers::NonceFiller,
-                    alloy::providers::fillers::ChainIdFiller,
-                >,
-            >,
-        >,
-    >,
-    alloy::providers::RootProvider<alloy::network::Ethereum>,
-    alloy::network::Ethereum,
->;
+// Read-only provider type without wallet or fillers (for queries only).
+// Uses no fillers (Gas, Nonce, BlobGas, ChainId) since read operations
+// don't need them, saving unnecessary RPC calls.
+pub type ReadOnlyProvider = alloy::providers::RootProvider<alloy::network::Ethereum>;
 
 /// Serves the OpenAPI JSON specification at /openapi.json
 #[rocket::get("/openapi.json")]

@@ -3,16 +3,13 @@
 //! Deploys IdentityBeacon contracts using pre-compiled bytecode with
 //! constructor args (IVerifier verifier, uint256 initialIndex).
 
+use crate::models::AppState;
+use crate::services::wallet::WalletHandle;
 use alloy::network::TransactionBuilder;
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::providers::Provider;
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol_types::SolValue;
-use std::time::Duration;
-use tokio::time::timeout;
-
-use crate::models::AppState;
-use crate::services::wallet::WalletHandle;
 
 /// Deploys an IdentityBeacon contract with the given verifier and initial index.
 ///
@@ -59,23 +56,14 @@ pub async fn deploy_identity_beacon(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Beacon deployment tx sent: {:?}", tx_hash);
 
-    // Wait for receipt
-    let receipt = match timeout(Duration::from_secs(120), pending_tx.get_receipt()).await {
-        Ok(Ok(receipt)) => receipt,
-        Ok(Err(e)) => {
-            return Err(format!("Failed to get beacon deployment receipt: {e}"));
-        }
-        Err(_) => {
-            return Err(format!(
-                "Timeout waiting for beacon deployment receipt (tx: {tx_hash})"
-            ));
-        }
-    };
-
-    // Check transaction status
-    if !receipt.status() {
-        return Err(format!("Beacon deployment transaction {tx_hash} reverted"));
-    }
+    // Wait for receipt with optimized polling
+    let receipt = crate::services::transaction::poll_for_successful_receipt(
+        &*state.provider.read_provider,
+        tx_hash,
+        "beacon deployment",
+        120,
+    )
+    .await?;
 
     // Extract deployed contract address
     let beacon_address = receipt.contract_address.ok_or_else(|| {

@@ -266,22 +266,31 @@ pub async fn fund_guest_wallet(
         .value(U256::from(eth_amount));
 
     let eth_tx_hash = match funding_provider.send_transaction(tx_request).await {
-        Ok(pending) => match pending.get_receipt().await {
-            Ok(receipt) => receipt.transaction_hash,
-            Err(e) => {
-                let detailed_error = format!("Failed to get ETH transaction receipt: {e}");
-                tracing::error!("{}", detailed_error);
-                sentry_error(&hub, "TransactionError", detailed_error, vec![]);
-                return Err((
-                    Status::InternalServerError,
-                    Json(ApiResponse {
-                        success: false,
-                        data: None,
-                        message: "Failed to confirm ETH transaction".to_string(),
-                    }),
-                ));
+        Ok(pending) => {
+            let tx_hash = *pending.tx_hash();
+            match crate::services::transaction::poll_for_receipt(
+                &*state.provider.read_provider,
+                tx_hash,
+                60,
+            )
+            .await
+            {
+                Ok(receipt) => receipt.transaction_hash,
+                Err(e) => {
+                    let detailed_error = format!("Failed to get ETH transaction receipt: {e}");
+                    tracing::error!("{}", detailed_error);
+                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
+                    return Err((
+                        Status::InternalServerError,
+                        Json(ApiResponse {
+                            success: false,
+                            data: None,
+                            message: "Failed to confirm ETH transaction".to_string(),
+                        }),
+                    ));
+                }
             }
-        },
+        }
         Err(e) => {
             let detailed_error = format!("Failed to send ETH: {e}");
             tracing::error!("{}", detailed_error);
@@ -306,22 +315,31 @@ pub async fn fund_guest_wallet(
         .send()
         .await
     {
-        Ok(pending) => match pending.get_receipt().await {
-            Ok(receipt) => receipt,
-            Err(e) => {
-                let detailed_error = format!("Failed to get USDC transaction receipt: {e}");
-                tracing::error!("{}", detailed_error);
-                sentry_error(&hub, "TransactionError", detailed_error, vec![]);
-                return Err((
-                    Status::InternalServerError,
-                    Json(ApiResponse {
-                        success: false,
-                        data: None,
-                        message: "Failed to confirm USDC transaction".to_string(),
-                    }),
-                ));
+        Ok(pending) => {
+            let tx_hash = *pending.tx_hash();
+            match crate::services::transaction::poll_for_receipt(
+                &*state.provider.read_provider,
+                tx_hash,
+                60,
+            )
+            .await
+            {
+                Ok(receipt) => receipt,
+                Err(e) => {
+                    let detailed_error = format!("Failed to get USDC transaction receipt: {e}");
+                    tracing::error!("{}", detailed_error);
+                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
+                    return Err((
+                        Status::InternalServerError,
+                        Json(ApiResponse {
+                            success: false,
+                            data: None,
+                            message: "Failed to confirm USDC transaction".to_string(),
+                        }),
+                    ));
+                }
             }
-        },
+        }
         Err(e) => {
             let detailed_error = format!("Failed to send USDC: {e}");
             tracing::error!("{}", detailed_error);

@@ -244,23 +244,14 @@ pub async fn update_beacon_with_ecdsa(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Transaction hash: {:?}", tx_hash);
 
-    // 12. Wait for confirmation with timeout
-    let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
-        Ok(Ok(receipt)) => {
-            tracing::info!("Transaction confirmed via get_receipt()");
-            receipt
-        }
-        Ok(Err(e)) => {
-            let error_msg = format!("Failed to get transaction receipt: {e}");
-            tracing::error!("{}", error_msg);
-            return Err(error_msg);
-        }
-        Err(_) => {
-            let error_msg = format!("Timeout waiting for transaction {tx_hash} receipt");
-            tracing::error!("{}", error_msg);
-            return Err(error_msg);
-        }
-    };
+    // 12. Wait for confirmation with optimized polling (tuned for Base ~2s blocks)
+    let receipt =
+        crate::services::transaction::poll_for_receipt(&*state.provider.read_provider, tx_hash, 60)
+            .await
+            .map_err(|e| {
+                tracing::error!("{}", e);
+                e
+            })?;
 
     // 13. Validate transaction status
     if !receipt.status() {

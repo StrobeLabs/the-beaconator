@@ -1,7 +1,6 @@
 use alloy::primitives::{Address, B256};
 use alloy::providers::Provider;
-use std::{str::FromStr, time::Duration};
-use tokio::time::timeout;
+use std::str::FromStr;
 use tracing;
 
 use crate::models::beacon_type::{BeaconTypeConfig, FactoryType};
@@ -300,143 +299,18 @@ pub async fn register_beacon_with_registry(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Registration transaction hash: {:?}", tx_hash);
 
-    // Use get_receipt() with timeout and fallback to on-chain check
-    let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
-        Ok(Ok(receipt)) => {
-            tracing::info!("Registration confirmed via get_receipt()");
-            receipt
-        }
-        Ok(Err(e)) => {
-            tracing::warn!("get_receipt() failed for registration: {}", e);
-            tracing::info!("Falling back to on-chain registration check...");
-
-            tracing::info!("Checking registration transaction {} on-chain...", tx_hash);
-
-            // Try to get the receipt directly from the read provider with timeout
-            match timeout(
-                Duration::from_secs(30),
-                state
-                    .provider
-                    .read_provider
-                    .get_transaction_receipt(tx_hash),
-            )
-            .await
-            {
-                Ok(Ok(Some(receipt))) => {
-                    tracing::info!("Registration found on-chain via direct receipt lookup");
-                    receipt
-                }
-                Ok(Ok(None)) => {
-                    let error_msg = format!(
-                        "Registration transaction {tx_hash} not found on-chain after timeout"
-                    );
-                    tracing::error!("{}", error_msg);
-                    tracing::error!("This could indicate:");
-                    tracing::error!("  - Registration transaction was dropped/replaced");
-                    tracing::error!("  - Network issues prevented confirmation");
-                    tracing::error!("  - Registration is still pending");
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
-                    return Err(error_msg);
-                }
-                Ok(Err(e)) => {
-                    let error_msg =
-                        format!("Failed to check registration transaction {tx_hash} on-chain: {e}");
-                    tracing::error!("{}", error_msg);
-                    tracing::error!("Original get_receipt() error: {}", e);
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
-                    return Err(error_msg);
-                }
-                Err(_) => {
-                    let error_msg =
-                        format!("Timeout checking registration transaction {tx_hash} on-chain");
-                    tracing::error!("{}", error_msg);
-                    tracing::error!("Network may be slow or unresponsive");
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
-                    return Err(error_msg);
-                }
-            }
-        }
-        Err(_) => {
-            tracing::warn!(
-                "Initial get_receipt() timed out for registration transaction, trying extended fallback..."
-            );
-            tracing::info!(
-                "Checking registration transaction {} on-chain with progressive timeouts...",
-                tx_hash
-            );
-
-            // Extended fallback: retry with progressive timeouts (15s, 30s, 60s) for Base network
-            let mut retry_count = 0;
-            let max_retries = 3;
-            let timeout_seconds = [15u64, 30u64, 60u64]; // Progressive timeout pattern
-
-            loop {
-                retry_count += 1;
-                let current_timeout = timeout_seconds[retry_count - 1];
-                tracing::info!(
-                    "Registration transaction receipt attempt {}/{} ({}s timeout)",
-                    retry_count,
-                    max_retries,
-                    current_timeout
-                );
-
-                match timeout(
-                    Duration::from_secs(current_timeout),
-                    is_transaction_confirmed(state, tx_hash),
-                )
-                .await
-                {
-                    Ok(Ok(Some(receipt))) => {
-                        tracing::info!(
-                            "Registration transaction found on-chain via extended fallback (attempt {})",
-                            retry_count
-                        );
-                        break receipt;
-                    }
-                    Ok(Ok(None)) => {
-                        if retry_count >= max_retries {
-                            let error_msg = format!(
-                                "Registration transaction {tx_hash} not found on-chain after {max_retries} attempts"
-                            );
-                            tracing::error!("{}", error_msg);
-                            tracing::error!("This could indicate:");
-                            tracing::error!("  - Registration transaction was dropped/replaced");
-                            tracing::error!("  - Network issues prevented confirmation");
-                            tracing::error!("  - Transaction is still pending (check gas price)");
-                            tracing::error!("  - Base network congestion causing delays");
-                            return Err(error_msg);
-                        }
-                        tracing::warn!(
-                            "Registration transaction not found on attempt {}, retrying...",
-                            retry_count
-                        );
-                        tokio::time::sleep(Duration::from_secs(3)).await; // Brief pause between retries
-                    }
-                    Ok(Err(e)) => {
-                        let error_msg = format!(
-                            "Failed to check registration transaction {tx_hash} on-chain: {e}"
-                        );
-                        tracing::error!("{}", error_msg);
-                        return Err(error_msg);
-                    }
-                    Err(_) => {
-                        if retry_count >= max_retries {
-                            let error_msg = format!(
-                                "Final timeout waiting for registration transaction receipt {tx_hash} after {max_retries} attempts"
-                            );
-                            tracing::error!("{}", error_msg);
-                            tracing::error!(
-                                "All fallback methods exhausted for registration transaction"
-                            );
-                            return Err(error_msg);
-                        }
-                        tracing::warn!("Timeout on attempt {}, retrying...", retry_count);
-                        tokio::time::sleep(Duration::from_secs(3)).await; // Brief pause between retries
-                    }
-                }
-            }
-        }
-    };
+    // Wait for receipt with optimized polling (2s initial delay, 3s interval, tuned for Base)
+    let receipt = crate::services::transaction::poll_for_receipt(
+        &*state.provider.read_provider,
+        tx_hash,
+        120,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("{}", e);
+        sentry::capture_message(&e, sentry::Level::Error);
+        e
+    })?;
 
     let tx_hash = receipt.transaction_hash;
     tracing::info!(
@@ -532,56 +406,17 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Transaction hash: {:?}", tx_hash);
 
-    // Use get_receipt() with timeout and fallback to on-chain check
-    let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
-        Ok(Ok(receipt)) => {
-            tracing::info!("Transaction confirmed via get_receipt()");
-            receipt
-        }
-        Ok(Err(e)) => {
-            tracing::warn!("get_receipt() failed: {}", e);
-            tracing::info!("Falling back to on-chain transaction check...");
-
-            tracing::info!("Checking transaction {} on-chain...", tx_hash);
-
-            // Try to get the receipt directly from the read provider with timeout
-            match timeout(
-                Duration::from_secs(30),
-                state
-                    .provider
-                    .read_provider
-                    .get_transaction_receipt(tx_hash),
-            )
-            .await
-            {
-                Ok(Ok(Some(receipt))) => {
-                    tracing::info!("Transaction found on-chain via direct receipt lookup");
-                    receipt
-                }
-                Ok(Ok(None)) => {
-                    let error_msg =
-                        format!("Transaction {tx_hash} not found on-chain after timeout");
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-                Ok(Err(e)) => {
-                    let error_msg = format!("Failed to check transaction {tx_hash} on-chain: {e}");
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-                Err(_) => {
-                    let error_msg = format!("Timeout checking transaction {tx_hash} on-chain");
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-            }
-        }
-        Err(_) => {
-            let error_msg = format!("Timeout waiting for transaction {tx_hash} receipt");
-            tracing::error!("{}", error_msg);
-            return Err(error_msg);
-        }
-    };
+    // Wait for receipt with optimized polling
+    let receipt = crate::services::transaction::poll_for_receipt(
+        &*state.provider.read_provider,
+        tx_hash,
+        120,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("{}", e);
+        e
+    })?;
 
     tracing::info!(
         "Update transaction confirmed with hash: {:?}",

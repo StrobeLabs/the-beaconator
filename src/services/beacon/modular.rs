@@ -5,8 +5,6 @@
 
 use alloy::primitives::{Address, I256, U256};
 use std::str::FromStr;
-use std::time::Duration;
-use tokio::time::timeout;
 
 use crate::AlloyProvider;
 use crate::models::AppState;
@@ -158,7 +156,7 @@ async fn create_identity_beacon_modular(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Identity beacon creation tx sent: {:?}", tx_hash);
 
-    wait_for_receipt("identity beacon creation", tx_hash, pending_tx).await?;
+    wait_for_receipt(provider, "identity beacon creation", tx_hash).await?;
 
     tracing::info!("Identity beacon created at {}", beacon_addr);
     sentry::capture_message(
@@ -251,7 +249,7 @@ async fn create_standalone_beacon_modular(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Standalone beacon creation tx sent: {:?}", tx_hash);
 
-    wait_for_receipt("standalone beacon creation", tx_hash, pending_tx).await?;
+    wait_for_receipt(provider, "standalone beacon creation", tx_hash).await?;
 
     tracing::info!("Standalone beacon created at {}", beacon_addr);
     sentry::capture_message(
@@ -334,7 +332,7 @@ async fn create_composite_beacon_modular(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Composite beacon creation tx sent: {:?}", tx_hash);
 
-    wait_for_receipt("composite beacon creation", tx_hash, pending_tx).await?;
+    wait_for_receipt(provider, "composite beacon creation", tx_hash).await?;
 
     tracing::info!("Composite beacon created at {}", beacon_addr);
     sentry::capture_message(
@@ -438,7 +436,7 @@ async fn create_group_beacon_modular(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Group manager creation tx sent: {:?}", tx_hash);
 
-    wait_for_receipt("group manager creation", tx_hash, pending_tx).await?;
+    wait_for_receipt(provider, "group manager creation", tx_hash).await?;
 
     tracing::info!("Group manager created at {}", beacon_addr);
     sentry::capture_message(
@@ -498,7 +496,7 @@ async fn create_verifier(state: &AppState, provider: &AlloyProvider) -> Result<A
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("ECDSA verifier creation tx sent: {:?}", tx_hash);
 
-    wait_for_receipt("ECDSA verifier creation", tx_hash, pending_tx).await?;
+    wait_for_receipt(provider, "ECDSA verifier creation", tx_hash).await?;
 
     tracing::info!("ECDSAVerifier created at {}", verifier_addr);
     Ok(verifier_addr)
@@ -548,7 +546,7 @@ async fn create_preprocessor(
             let tx_hash = *pending_tx.tx_hash();
             tracing::info!("Identity preprocessor creation tx sent: {:?}", tx_hash);
 
-            wait_for_receipt("identity preprocessor creation", tx_hash, pending_tx).await?;
+            wait_for_receipt(provider, "identity preprocessor creation", tx_hash).await?;
             addr
         }
         PreprocessorSpec::Threshold => {
@@ -577,7 +575,7 @@ async fn create_preprocessor(
             let tx_hash = *pending_tx.tx_hash();
             tracing::info!("Threshold preprocessor creation tx sent: {:?}", tx_hash);
 
-            wait_for_receipt("threshold preprocessor creation", tx_hash, pending_tx).await?;
+            wait_for_receipt(provider, "threshold preprocessor creation", tx_hash).await?;
             addr
         }
         PreprocessorSpec::TernaryToBinary => {
@@ -613,12 +611,7 @@ async fn create_preprocessor(
                 tx_hash
             );
 
-            wait_for_receipt(
-                "ternary-to-binary preprocessor creation",
-                tx_hash,
-                pending_tx,
-            )
-            .await?;
+            wait_for_receipt(provider, "ternary-to-binary preprocessor creation", tx_hash).await?;
             addr
         }
         PreprocessorSpec::Argmax => {
@@ -646,7 +639,7 @@ async fn create_preprocessor(
             let tx_hash = *pending_tx.tx_hash();
             tracing::info!("Argmax preprocessor creation tx sent: {:?}", tx_hash);
 
-            wait_for_receipt("argmax preprocessor creation", tx_hash, pending_tx).await?;
+            wait_for_receipt(provider, "argmax preprocessor creation", tx_hash).await?;
             addr
         }
     };
@@ -719,7 +712,7 @@ async fn create_base_fn(
             let tx_hash = *pending_tx.tx_hash();
             tracing::info!("CGBM base function creation tx sent: {:?}", tx_hash);
 
-            wait_for_receipt("CGBM base function creation", tx_hash, pending_tx).await?;
+            wait_for_receipt(provider, "CGBM base function creation", tx_hash).await?;
             addr
         }
         BaseFnSpec::DGBM => {
@@ -756,7 +749,7 @@ async fn create_base_fn(
             let tx_hash = *pending_tx.tx_hash();
             tracing::info!("DGBM base function creation tx sent: {:?}", tx_hash);
 
-            wait_for_receipt("DGBM base function creation", tx_hash, pending_tx).await?;
+            wait_for_receipt(provider, "DGBM base function creation", tx_hash).await?;
             addr
         }
     };
@@ -808,7 +801,7 @@ async fn create_transform(
             let tx_hash = *pending_tx.tx_hash();
             tracing::info!("Bounded transform creation tx sent: {:?}", tx_hash);
 
-            wait_for_receipt("bounded transform creation", tx_hash, pending_tx).await?;
+            wait_for_receipt(provider, "bounded transform creation", tx_hash).await?;
             addr
         }
         TransformSpec::Unbounded => {
@@ -841,7 +834,7 @@ async fn create_transform(
             let tx_hash = *pending_tx.tx_hash();
             tracing::info!("Unbounded transform creation tx sent: {:?}", tx_hash);
 
-            wait_for_receipt("unbounded transform creation", tx_hash, pending_tx).await?;
+            wait_for_receipt(provider, "unbounded transform creation", tx_hash).await?;
             addr
         }
     };
@@ -891,7 +884,7 @@ async fn create_composer(
             let tx_hash = *pending_tx.tx_hash();
             tracing::info!("WeightedSum composer creation tx sent: {:?}", tx_hash);
 
-            wait_for_receipt("weighted sum composer creation", tx_hash, pending_tx).await?;
+            wait_for_receipt(provider, "weighted sum composer creation", tx_hash).await?;
             addr
         }
     };
@@ -947,7 +940,7 @@ async fn create_group_fn(
             let tx_hash = *pending_tx.tx_hash();
             tracing::info!("Dominance group function creation tx sent: {:?}", tx_hash);
 
-            wait_for_receipt("dominance group function creation", tx_hash, pending_tx).await?;
+            wait_for_receipt(provider, "dominance group function creation", tx_hash).await?;
             addr
         }
         GroupFnSpec::RelativeDominance => {
@@ -1008,9 +1001,9 @@ async fn create_group_fn(
             );
 
             wait_for_receipt(
+                provider,
                 "relative dominance group function creation",
                 tx_hash,
-                pending_tx,
             )
             .await?;
             addr
@@ -1054,9 +1047,9 @@ async fn create_group_fn(
             );
 
             wait_for_receipt(
+                provider,
                 "continuous allocation group function creation",
                 tx_hash,
-                pending_tx,
             )
             .await?;
             addr
@@ -1100,9 +1093,9 @@ async fn create_group_fn(
             );
 
             wait_for_receipt(
+                provider,
                 "discrete allocation group function creation",
                 tx_hash,
-                pending_tx,
             )
             .await?;
             addr
@@ -1155,7 +1148,7 @@ async fn create_group_transform(
             let tx_hash = *pending_tx.tx_hash();
             tracing::info!("Softmax group transform creation tx sent: {:?}", tx_hash);
 
-            wait_for_receipt("softmax group transform creation", tx_hash, pending_tx).await?;
+            wait_for_receipt(provider, "softmax group transform creation", tx_hash).await?;
             addr
         }
         GroupTransformSpec::GMNormalize => {
@@ -1190,7 +1183,7 @@ async fn create_group_transform(
                 tx_hash
             );
 
-            wait_for_receipt("gm-normalize group transform creation", tx_hash, pending_tx).await?;
+            wait_for_receipt(provider, "gm-normalize group transform creation", tx_hash).await?;
             addr
         }
     };
@@ -1215,31 +1208,16 @@ fn require_param_vec<T: Clone>(val: &Option<Vec<T>>, name: &str) -> Result<Vec<T
         .ok_or_else(|| format!("Missing required parameter: {name}"))
 }
 
-/// Wait for a pending transaction receipt with a 120-second timeout.
+/// Wait for a pending transaction receipt using optimized polling (tuned for Base ~2s blocks).
 ///
 /// Checks the receipt status and returns an error if the transaction reverted.
 async fn wait_for_receipt(
+    provider: &impl alloy::providers::Provider,
     description: &str,
     tx_hash: alloy::primitives::TxHash,
-    pending_tx: alloy::providers::PendingTransactionBuilder<alloy::network::Ethereum>,
 ) -> Result<(), String> {
-    let receipt = match timeout(Duration::from_secs(120), pending_tx.get_receipt()).await {
-        Ok(Ok(receipt)) => receipt,
-        Ok(Err(e)) => {
-            return Err(format!("Failed to get {} receipt: {e}", description));
-        }
-        Err(_) => {
-            return Err(format!(
-                "Timeout waiting for {} receipt (tx: {tx_hash})",
-                description
-            ));
-        }
-    };
-
-    if !receipt.status() {
-        return Err(format!("{} transaction {tx_hash} reverted", description));
-    }
-
+    crate::services::transaction::poll_for_successful_receipt(provider, tx_hash, description, 120)
+        .await?;
     Ok(())
 }
 
