@@ -162,10 +162,7 @@ async fn create_identity_beacon_modular(
 
     tracing::info!("Identity beacon created at {}", beacon_addr);
     sentry::capture_message(
-        &format!(
-            "Modular Identity beacon created: {} (verifier: {})",
-            beacon_addr, verifier_addr
-        ),
+        &format!("Modular Identity beacon created: {beacon_addr} (verifier: {verifier_addr})"),
         sentry::Level::Info,
     );
 
@@ -255,7 +252,7 @@ async fn create_standalone_beacon_modular(
 
     tracing::info!("Standalone beacon created at {}", beacon_addr);
     sentry::capture_message(
-        &format!("Modular Standalone beacon created: {}", beacon_addr),
+        &format!("Modular Standalone beacon created: {beacon_addr}"),
         sentry::Level::Info,
     );
 
@@ -299,8 +296,7 @@ async fn create_composite_beacon_modular(
     let reference_beacons: Vec<Address> = reference_beacon_strs
         .iter()
         .map(|s| {
-            Address::from_str(s)
-                .map_err(|e| format!("Invalid reference beacon address '{}': {e}", s))
+            Address::from_str(s).map_err(|e| format!("Invalid reference beacon address '{s}': {e}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -338,7 +334,7 @@ async fn create_composite_beacon_modular(
 
     tracing::info!("Composite beacon created at {}", beacon_addr);
     sentry::capture_message(
-        &format!("Modular Composite beacon created: {}", beacon_addr),
+        &format!("Modular Composite beacon created: {beacon_addr}"),
         sentry::Level::Info,
     );
 
@@ -442,7 +438,7 @@ async fn create_group_beacon_modular(
 
     tracing::info!("Group manager created at {}", beacon_addr);
     sentry::capture_message(
-        &format!("Modular Group beacon created: {}", beacon_addr),
+        &format!("Modular Group beacon created: {beacon_addr}"),
         sentry::Level::Info,
     );
 
@@ -1226,18 +1222,17 @@ async fn wait_for_receipt(
     let receipt = match timeout(Duration::from_secs(120), pending_tx.get_receipt()).await {
         Ok(Ok(receipt)) => receipt,
         Ok(Err(e)) => {
-            return Err(format!("Failed to get {} receipt: {e}", description));
+            return Err(format!("Failed to get {description} receipt: {e}"));
         }
         Err(_) => {
             return Err(format!(
-                "Timeout waiting for {} receipt (tx: {tx_hash})",
-                description
+                "Timeout waiting for {description} receipt (tx: {tx_hash})",
             ));
         }
     };
 
     if !receipt.status() {
-        return Err(format!("{} transaction {tx_hash} reverted", description));
+        return Err(format!("{description} transaction {tx_hash} reverted"));
     }
 
     Ok(())

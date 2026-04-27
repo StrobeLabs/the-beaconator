@@ -440,7 +440,7 @@ fn test_component_factory_type_all_20_variants_display_roundtrip() {
 
         // Roundtrip through Display + from_str_name
         let roundtripped = ComponentFactoryType::from_str_name(&display)
-            .unwrap_or_else(|| panic!("from_str_name failed for {}", display));
+            .unwrap_or_else(|| panic!("from_str_name failed for {display}"));
         assert_eq!(&roundtripped, variant);
 
         // Serde roundtrip

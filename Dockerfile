@@ -1,4 +1,4 @@
-FROM rustlang/rust:nightly AS builder
+FROM rust:1.95-bookworm AS builder
 WORKDIR /app
 
 # Copy all source files
@@ -8,11 +8,14 @@ RUN cargo build --release
 FROM debian:bookworm-slim AS runtime
 # Install ca-certificates for HTTPS requests
 RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
+# Create non-root user to reduce blast radius if the process is compromised
+RUN groupadd --system beaconator && useradd --system --gid beaconator --create-home beaconator
 WORKDIR /app
 # Copy the binary from builder stage
-COPY --from=builder /app/target/release/the-beaconator /app/the-beaconator
+COPY --from=builder --chown=beaconator:beaconator /app/target/release/the-beaconator /app/the-beaconator
 # Copy the abis directory
-COPY --from=builder /app/abis /app/abis
+COPY --from=builder --chown=beaconator:beaconator /app/abis /app/abis
+USER beaconator
 
 # Accept build arguments for environment variables
 ARG RPC_URL

@@ -92,13 +92,12 @@ impl ComponentFactoryRegistry {
                 let config: ComponentFactoryConfig = serde_json::from_str(&json)
                     .map_err(|e| format!("Failed to deserialize component factory config: {e}"))?;
                 if !config.enabled {
-                    return Err(format!("Component factory '{}' is disabled", type_name));
+                    return Err(format!("Component factory '{type_name}' is disabled"));
                 }
                 Ok(config.address)
             }
             None => Err(format!(
-                "Component factory '{}' not found in Redis",
-                type_name
+                "Component factory '{type_name}' not found in Redis",
             )),
         }
     }
@@ -182,7 +181,7 @@ impl ComponentFactoryRegistry {
             .map_err(|e| format!("Failed to check component factory existence: {e}"))?;
 
         if exists {
-            return Err(format!("Component factory '{}' already exists", type_name));
+            return Err(format!("Component factory '{type_name}' already exists"));
         }
 
         let config_json = serde_json::to_string(config)
