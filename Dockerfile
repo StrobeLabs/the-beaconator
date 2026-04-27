@@ -1,4 +1,4 @@
-FROM rustlang/rust:nightly AS builder
+FROM rust:1.95-bookworm AS builder
 WORKDIR /app
 
 # Copy all source files
