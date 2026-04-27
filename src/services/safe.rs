@@ -251,7 +251,7 @@ impl SafeTransactionService {
             gas_token: Address::ZERO.to_checksum(None),
             refund_receiver: Address::ZERO.to_checksum(None),
             nonce,
-            contract_transaction_hash: format!("{:#x}", safe_tx_hash),
+            contract_transaction_hash: format!("{safe_tx_hash:#x}"),
             sender: sender.to_checksum(None),
             signature: format!("0x{}", hex::encode(&sig_bytes)),
             origin: "the-beaconator".to_string(),

@@ -246,10 +246,7 @@ async fn test_recipe_registry_get_recipe() {
             assert_eq!(base_fn, BaseFnSpec::CGBM);
             assert_eq!(transform, TransformSpec::Bounded);
         }
-        other => panic!(
-            "Expected BeaconKind::Standalone for lbcgbm, got: {:?}",
-            other
-        ),
+        other => panic!("Expected BeaconKind::Standalone for lbcgbm, got: {other:?}"),
     }
 
     registry.cleanup().await.unwrap();
@@ -266,8 +263,7 @@ async fn test_recipe_registry_missing_recipe() {
     let result = registry.get_recipe("nonexistent").await.unwrap();
     assert!(
         result.is_none(),
-        "Expected None for nonexistent recipe, got: {:?}",
-        result
+        "Expected None for nonexistent recipe, got: {result:?}",
     );
 
     registry.cleanup().await.unwrap();
@@ -358,7 +354,7 @@ async fn test_recipe_registry_register_custom() {
             assert_eq!(group_fn, GroupFnSpec::Dominance);
             assert_eq!(group_transform, GroupTransformSpec::Softmax);
         }
-        other => panic!("Expected BeaconKind::Group, got: {:?}", other),
+        other => panic!("Expected BeaconKind::Group, got: {other:?}"),
     }
 
     registry.cleanup().await.unwrap();

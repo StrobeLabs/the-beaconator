@@ -206,7 +206,7 @@ pub async fn update_beacon_with_ecdsa(
                 let used_detail =
                     match timeout(diag_timeout, verifier.usedProofs(proof_hash).call()).await {
                         Ok(Ok(val)) => {
-                            format!("usedProofs({:#x})={:?}", proof_hash, val)
+                            format!("usedProofs({proof_hash:#x})={val:?}")
                         }
                         Ok(Err(ue)) => format!("usedProofs check failed: {ue}"),
                         Err(_) => "usedProofs diagnostic timed out".to_string(),

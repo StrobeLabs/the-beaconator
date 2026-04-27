@@ -220,8 +220,7 @@ pub async fn register_beacon_with_registry(
             }
             Err(e) => {
                 let error_msg = format!(
-                    "Preflight check failed: registerBeacon would revert on registry {}: {}",
-                    registry_address, e
+                    "Preflight check failed: registerBeacon would revert on registry {registry_address}: {e}",
                 );
                 tracing::error!("{}", error_msg);
                 return Err(error_msg);
@@ -249,8 +248,7 @@ pub async fn register_beacon_with_registry(
         );
         sentry::capture_message(
             &format!(
-                "Safe tx proposed for beacon {} registration (nonce: {}, hash: {})",
-                beacon_address, nonce, safe_tx_hash
+                "Safe tx proposed for beacon {beacon_address} registration (nonce: {nonce}, hash: {safe_tx_hash})",
             ),
             sentry::Level::Info,
         );
