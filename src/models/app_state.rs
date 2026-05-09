@@ -211,12 +211,19 @@ pub struct WalletConfig {
 #[derive(Clone)]
 pub struct ContractAddresses {
     pub perpcity_registry: Address,
-    pub perp_manager: Address,
+    pub perp_factory: Address,
     pub usdc: Address,
     pub ecdsa_verifier_factory: Address,
     pub multicall3: Option<Address>,
     pub identity_beacon_bytecode: Bytes,
     pub safe: Option<SafeConfig>,
+    pub fees_module: Address,
+    pub funding_module: Address,
+    pub margin_ratios_module: Address,
+    pub price_impact_module: Address,
+    pub pricing_module: Address,
+    pub protocol_fee_manager: Option<Address>,
+    pub module_registry: Option<Address>,
 }
 
 #[derive(Clone)]

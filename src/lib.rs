@@ -99,11 +99,37 @@ pub async fn create_rocket() -> Rocket<Build> {
     )
     .expect("Failed to parse perpcity registry address");
 
-    let perp_manager_address = Address::from_str(
-        &env::var("PERP_MANAGER_ADDRESS")
-            .expect("PERP_MANAGER_ADDRESS environment variable not set"),
+    // PerpFactory deploys per-market `Perp` contracts. v0.1.0 architecture.
+    let perp_factory_address = Address::from_str(
+        &env::var("PERP_FACTORY_ADDRESS")
+            .expect("PERP_FACTORY_ADDRESS environment variable not set"),
     )
-    .expect("Failed to parse perp manager address");
+    .expect("Failed to parse perp factory address");
+
+    // Module addresses for the v0.1.0 perp Modules struct. All required at startup so
+    // /deploy_perp_for_beacon never has to ask the caller for them.
+    let parse_module_addr = |key: &str| -> Address {
+        Address::from_str(
+            &env::var(key).unwrap_or_else(|_| panic!("{key} environment variable not set")),
+        )
+        .unwrap_or_else(|e| panic!("Failed to parse {key}: {e}"))
+    };
+    let fees_module_address = parse_module_addr("FEES_MODULE_ADDRESS");
+    let funding_module_address = parse_module_addr("FUNDING_MODULE_ADDRESS");
+    let margin_ratios_module_address = parse_module_addr("MARGIN_RATIOS_MODULE_ADDRESS");
+    let price_impact_module_address = parse_module_addr("PRICE_IMPACT_MODULE_ADDRESS");
+    let pricing_module_address = parse_module_addr("PRICING_MODULE_ADDRESS");
+
+    // Optional governance / diagnostic addresses — not on the deploy path.
+    let parse_optional_addr = |key: &str| -> Option<Address> {
+        env::var(key).ok().and_then(|s| {
+            Address::from_str(&s)
+                .map_err(|e| tracing::warn!("Invalid {} '{}': {}", key, s, e))
+                .ok()
+        })
+    };
+    let protocol_fee_manager_address = parse_optional_addr("PROTOCOL_FEE_MANAGER_ADDRESS");
+    let module_registry_address = parse_optional_addr("MODULE_REGISTRY_ADDRESS");
 
     let usdc_address = Address::from_str(
         &env::var("USDC_ADDRESS").expect("USDC_ADDRESS environment variable not set"),
@@ -503,12 +529,19 @@ pub async fn create_rocket() -> Rocket<Build> {
         },
         contracts: ContractAddresses {
             perpcity_registry: perpcity_registry_address,
-            perp_manager: perp_manager_address,
+            perp_factory: perp_factory_address,
             usdc: usdc_address,
             ecdsa_verifier_factory: ecdsa_verifier_factory_address,
             multicall3: multicall3_address,
             identity_beacon_bytecode,
             safe: safe_config,
+            fees_module: fees_module_address,
+            funding_module: funding_module_address,
+            margin_ratios_module: margin_ratios_module_address,
+            price_impact_module: price_impact_module_address,
+            pricing_module: pricing_module_address,
+            protocol_fee_manager: protocol_fee_manager_address,
+            module_registry: module_registry_address,
         },
         auth: AuthConfig {
             access_token,
