@@ -12,25 +12,6 @@
   },
   {
     "type": "function",
-    "name": "beacons",
-    "inputs": [
-      {
-        "name": "beacon",
-        "type": "address",
-        "internalType": "contract IBeacon"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "registered",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "cancelOwnershipHandover",
     "inputs": [],
     "outputs": [],
@@ -51,17 +32,22 @@
   },
   {
     "type": "function",
-    "name": "isBeaconRegistered",
+    "name": "modules",
     "inputs": [
       {
-        "name": "beacon",
+        "name": "",
+        "type": "uint8",
+        "internalType": "enum IModuleRegistry.Module"
+      },
+      {
+        "name": "",
         "type": "address",
-        "internalType": "contract IBeacon"
+        "internalType": "address"
       }
     ],
     "outputs": [
       {
-        "name": "isRegistered",
+        "name": "",
         "type": "bool",
         "internalType": "bool"
       }
@@ -102,12 +88,17 @@
   },
   {
     "type": "function",
-    "name": "registerBeacon",
+    "name": "registerModule",
     "inputs": [
       {
-        "name": "beacon",
+        "name": "moduleType",
+        "type": "uint8",
+        "internalType": "enum IModuleRegistry.Module"
+      },
+      {
+        "name": "module",
         "type": "address",
-        "internalType": "contract IBeacon"
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -141,52 +132,20 @@
     "stateMutability": "payable"
   },
   {
-    "type": "function",
-    "name": "unregisterBeacon",
-    "inputs": [
-      {
-        "name": "beacon",
-        "type": "address",
-        "internalType": "contract IBeacon"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
     "type": "event",
-    "name": "BeaconRegistered",
+    "name": "ModuleRegistered",
     "inputs": [
       {
-        "name": "beacon",
-        "type": "address",
+        "name": "moduleType",
+        "type": "uint8",
         "indexed": false,
-        "internalType": "contract IBeacon"
+        "internalType": "enum IModuleRegistry.Module"
       },
       {
-        "name": "index",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BeaconUnregistered",
-    "inputs": [
-      {
-        "name": "beacon",
+        "name": "module",
         "type": "address",
         "indexed": false,
-        "internalType": "contract IBeacon"
-      },
-      {
-        "name": "index",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
+        "internalType": "address"
       }
     ],
     "anonymous": false

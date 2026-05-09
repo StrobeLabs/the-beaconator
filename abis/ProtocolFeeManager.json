@@ -6,23 +6,41 @@
         "name": "owner",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "maxProtocolFee",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "beacons",
+    "name": "MAX_PROTOCOL_FEE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "canCollectProtocolFees",
     "inputs": [
       {
-        "name": "beacon",
+        "name": "caller",
         "type": "address",
-        "internalType": "contract IBeacon"
+        "internalType": "address"
       }
     ],
     "outputs": [
       {
-        "name": "registered",
+        "name": "",
         "type": "bool",
         "internalType": "bool"
       }
@@ -48,25 +66,6 @@
     ],
     "outputs": [],
     "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "isBeaconRegistered",
-    "inputs": [
-      {
-        "name": "beacon",
-        "type": "address",
-        "internalType": "contract IBeacon"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "isRegistered",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -102,16 +101,16 @@
   },
   {
     "type": "function",
-    "name": "registerBeacon",
-    "inputs": [
+    "name": "protocolFee",
+    "inputs": [],
+    "outputs": [
       {
-        "name": "beacon",
-        "type": "address",
-        "internalType": "contract IBeacon"
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -129,6 +128,19 @@
   },
   {
     "type": "function",
+    "name": "setProtocolFee",
+    "inputs": [
+      {
+        "name": "newProtocolFee",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "transferOwnership",
     "inputs": [
       {
@@ -139,57 +151,6 @@
     ],
     "outputs": [],
     "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "unregisterBeacon",
-    "inputs": [
-      {
-        "name": "beacon",
-        "type": "address",
-        "internalType": "contract IBeacon"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "BeaconRegistered",
-    "inputs": [
-      {
-        "name": "beacon",
-        "type": "address",
-        "indexed": false,
-        "internalType": "contract IBeacon"
-      },
-      {
-        "name": "index",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BeaconUnregistered",
-    "inputs": [
-      {
-        "name": "beacon",
-        "type": "address",
-        "indexed": false,
-        "internalType": "contract IBeacon"
-      },
-      {
-        "name": "index",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
   },
   {
     "type": "event",
@@ -237,6 +198,19 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "ProtocolFeeSet",
+    "inputs": [
+      {
+        "name": "protocolFee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AlreadyInitialized",
     "inputs": []
@@ -249,6 +223,11 @@
   {
     "type": "error",
     "name": "NoHandoverRequest",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProtocolFeeTooHigh",
     "inputs": []
   },
   {
