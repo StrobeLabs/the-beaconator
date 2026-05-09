@@ -8,7 +8,14 @@ To build this juicy collaboration, the Baconator starts with two ¼ lb. patties2
 
 ## Quick Start
 
-The Beaconator is a Rust-based REST API service for creating and managing beacons and perpetual futures markets on Perp City
+The Beaconator is a Rust-based REST API service for creating and managing beacons and perpetual futures markets on Perp City.
+
+### Pinned contract versions
+
+The-beaconator's REST surface is pinned to specific release tags of the contract repos (not main). See `.contracts-versions` for the source of truth, and run `make refresh-abis` after bumping it.
+
+- `perpcity-contracts` @ **v0.1.0** (`PerpFactory` + per-market `Perp` contracts)
+- `beacons` @ **v0.0.1**
 
 ### Prerequisites
 
