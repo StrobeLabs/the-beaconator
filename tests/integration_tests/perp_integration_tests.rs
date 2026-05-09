@@ -12,25 +12,43 @@ use the_beaconator::routes::perp::{
     deploy_perp_for_beacon_endpoint, deposit_liquidity_for_perp_endpoint,
 };
 
-#[tokio::test]
-#[serial]
-async fn test_deposit_liquidity_invalid_perp_id() {
-    let token = ApiToken("test_token".to_string());
-    let app_state = create_simple_test_app_state().await;
-    let state = State::from(&app_state);
+// Reusable builders for v0.1.0 request shapes. perpcity-contracts@v0.1.0:
+// DeployPerpForBeaconRequest takes owner/name/symbol/tokenUri/emaWindow/salt instead of
+// per-request module addresses; DepositLiquidityForPerpRequest takes a per-perp address.
 
-    // Test invalid perp ID (not hex)
-    let request = Json(DepositLiquidityForPerpRequest {
-        perp_id: "not_a_hex_string".to_string(),
-        margin_amount_usdc: "500000000".to_string(),
+fn deploy_request(beacon_address: &str) -> DeployPerpForBeaconRequest {
+    DeployPerpForBeaconRequest {
+        beacon_address: beacon_address.to_string(),
+        owner: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0".to_string(),
+        name: "Test Market".to_string(),
+        symbol: "TEST-PERP".to_string(),
+        token_uri: "https://example.com/token-uri".to_string(),
+        ema_window: 3600,
+        salt: None,
+    }
+}
+
+fn deposit_request(perp_address: &str, margin: &str) -> DepositLiquidityForPerpRequest {
+    DepositLiquidityForPerpRequest {
+        perp_address: perp_address.to_string(),
+        margin_amount_usdc: margin.to_string(),
         holder: None,
         max_amt0_in: None,
         max_amt1_in: None,
         tick_spacing: None,
         tick_lower: None,
         tick_upper: None,
-    });
+    }
+}
 
+#[tokio::test]
+#[serial]
+async fn test_deposit_liquidity_invalid_perp_address() {
+    let token = ApiToken("test_token".to_string());
+    let app_state = create_simple_test_app_state().await;
+    let state = State::from(&app_state);
+
+    let request = Json(deposit_request("not_a_hex_string", "500000000"));
     let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);
@@ -43,18 +61,10 @@ async fn test_deposit_liquidity_invalid_margin_amount() {
     let app_state = create_simple_test_app_state().await;
     let state = State::from(&app_state);
 
-    // Test invalid margin amount (not a number)
-    let request = Json(DepositLiquidityForPerpRequest {
-        perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234".to_string(),
-        margin_amount_usdc: "not_a_number".to_string(),
-        holder: None,
-        max_amt0_in: None,
-        max_amt1_in: None,
-        tick_spacing: None,
-        tick_lower: None,
-        tick_upper: None,
-    });
-
+    let request = Json(deposit_request(
+        "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+        "not_a_number",
+    ));
     let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);
@@ -68,20 +78,12 @@ async fn test_deposit_liquidity_zero_margin_amount() {
     let app_state = create_simple_test_app_state().await;
     let state = State::from(&app_state);
 
-    let request = Json(DepositLiquidityForPerpRequest {
-        perp_id: "0x1234567890123456789012345678901234567890123456789012345678901234".to_string(),
-        margin_amount_usdc: "0".to_string(), // 0 USDC
-        holder: None,
-        max_amt0_in: None,
-        max_amt1_in: None,
-        tick_spacing: None,
-        tick_lower: None,
-        tick_upper: None,
-    });
-
+    let request = Json(deposit_request(
+        "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+        "0",
+    ));
     let result = deposit_liquidity_for_perp_endpoint(request, token, state).await;
     assert!(result.is_err());
-    // Should fail with network error attempting to call contract
     assert_eq!(result.unwrap_err(), Status::InternalServerError);
 }
 
@@ -92,15 +94,7 @@ async fn test_deploy_perp_invalid_beacon_address() {
     let app_state = create_simple_test_app_state().await;
     let state = State::from(&app_state);
 
-    // Test invalid beacon address
-    let request = Json(DeployPerpForBeaconRequest {
-        beacon_address: "not_a_valid_address".to_string(),
-        fees_module: "0x1111111111111111111111111111111111111111".to_string(),
-        margin_ratios_module: "0x2222222222222222222222222222222222222222".to_string(),
-        lockup_period_module: "0x3333333333333333333333333333333333333333".to_string(),
-        sqrt_price_impact_limit_module: "0x4444444444444444444444444444444444444444".to_string(),
-    });
-
+    let request = Json(deploy_request("not_a_valid_address"));
     let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);
@@ -113,15 +107,7 @@ async fn test_deploy_perp_short_beacon_address() {
     let app_state = create_simple_test_app_state().await;
     let state = State::from(&app_state);
 
-    // Test short beacon address (missing characters)
-    let request = Json(DeployPerpForBeaconRequest {
-        beacon_address: "0x123456".to_string(), // Too short
-        fees_module: "0x1111111111111111111111111111111111111111".to_string(),
-        margin_ratios_module: "0x2222222222222222222222222222222222222222".to_string(),
-        lockup_period_module: "0x3333333333333333333333333333333333333333".to_string(),
-        sqrt_price_impact_limit_module: "0x4444444444444444444444444444444444444444".to_string(),
-    });
-
+    let request = Json(deploy_request("0x123456"));
     let result = deploy_perp_for_beacon_endpoint(request, token, state).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Status::BadRequest);

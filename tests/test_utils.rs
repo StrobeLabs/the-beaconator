@@ -399,7 +399,7 @@ async fn deploy_contract(
 pub struct TestDeployment {
     pub beacon_factory: Address,
     pub beacon_registry: Address,
-    pub perp_hook: Address,
+    pub perp_factory: Address,
     pub usdc: Address,
     pub deployer: Address,
     pub provider: Arc<the_beaconator::AlloyProvider>,
@@ -436,13 +436,13 @@ impl TestDeployment {
             tracing::info!("  - MockBeaconRegistry deployed at: {beacon_registry}");
 
             // Use mock addresses for contracts we don't need to test
-            let perp_hook = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
+            let perp_factory = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
             let usdc = Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9")?;
 
             Ok(Self {
                 beacon_factory,
                 beacon_registry,
-                perp_hook,
+                perp_factory,
                 usdc,
                 provider,
                 deployer: anvil.deployer_account(),
@@ -456,13 +456,13 @@ impl TestDeployment {
 
             let beacon_factory = Address::from_str("0x5FbDB2315678afecb367f032d93F642f64180aa3")?;
             let beacon_registry = Address::from_str("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512")?;
-            let perp_hook = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
+            let perp_factory = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
             let usdc = Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9")?;
 
             Ok(Self {
                 beacon_factory,
                 beacon_registry,
-                perp_hook,
+                perp_factory,
                 usdc,
                 provider,
                 deployer: anvil.deployer_account(),
@@ -500,13 +500,13 @@ impl TestDeployment {
             tracing::info!("  - MockBeaconRegistry deployed at: {beacon_registry}");
 
             // Use mock addresses for contracts we don't need to test
-            let perp_hook = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
+            let perp_factory = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
             let usdc = Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9")?;
 
             Ok(Self {
                 beacon_factory,
                 beacon_registry,
-                perp_hook,
+                perp_factory,
                 usdc,
                 deployer: anvil.deployer_account(),
                 provider,
@@ -519,13 +519,13 @@ impl TestDeployment {
 
             let beacon_factory = Address::from_str("0x5FbDB2315678afecb367f032d93F642f64180aa3")?;
             let beacon_registry = Address::from_str("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512")?;
-            let perp_hook = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
+            let perp_factory = Address::from_str("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")?;
             let usdc = Address::from_str("0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9")?;
 
             Ok(Self {
                 beacon_factory,
                 beacon_registry,
-                perp_hook,
+                perp_factory,
                 usdc,
                 deployer: anvil.deployer_account(),
                 provider,
@@ -571,7 +571,7 @@ pub async fn create_test_app_state() -> AppState {
         },
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
-            perp_manager: deployment.perp_hook,
+            perp_factory: deployment.perp_factory,
             usdc: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
             ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
                 .unwrap(), // Mock factory address
@@ -580,6 +580,17 @@ pub async fn create_test_app_state() -> AppState {
             ), // Standard multicall3 address for tests
             identity_beacon_bytecode: Bytes::new(),
             safe: None,
+            fees_module: Address::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            funding_module: Address::from_str("0x2222222222222222222222222222222222222222")
+                .unwrap(),
+            margin_ratios_module: Address::from_str("0x3333333333333333333333333333333333333333")
+                .unwrap(),
+            price_impact_module: Address::from_str("0x4444444444444444444444444444444444444444")
+                .unwrap(),
+            pricing_module: Address::from_str("0x5555555555555555555555555555555555555555")
+                .unwrap(),
+            protocol_fee_manager: None,
+            module_registry: None,
         },
         auth: AuthConfig {
             access_token: "test_token".to_string(),
@@ -628,7 +639,7 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
         },
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
-            perp_manager: deployment.perp_hook,
+            perp_factory: deployment.perp_factory,
             usdc: deployment.usdc,
             ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
                 .unwrap(),
@@ -637,6 +648,17 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
             ), // Standard multicall3 address for tests
             identity_beacon_bytecode: Bytes::new(),
             safe: None,
+            fees_module: Address::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            funding_module: Address::from_str("0x2222222222222222222222222222222222222222")
+                .unwrap(),
+            margin_ratios_module: Address::from_str("0x3333333333333333333333333333333333333333")
+                .unwrap(),
+            price_impact_module: Address::from_str("0x4444444444444444444444444444444444444444")
+                .unwrap(),
+            pricing_module: Address::from_str("0x5555555555555555555555555555555555555555")
+                .unwrap(),
+            protocol_fee_manager: None,
+            module_registry: None,
         },
         auth: AuthConfig {
             access_token: "test_token".to_string(),
@@ -710,7 +732,7 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
         },
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
-            perp_manager: deployment.perp_hook,
+            perp_factory: deployment.perp_factory,
             usdc: deployment.usdc,
             ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
                 .unwrap(),
@@ -719,6 +741,17 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
             ),
             identity_beacon_bytecode: Bytes::new(),
             safe: None,
+            fees_module: Address::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            funding_module: Address::from_str("0x2222222222222222222222222222222222222222")
+                .unwrap(),
+            margin_ratios_module: Address::from_str("0x3333333333333333333333333333333333333333")
+                .unwrap(),
+            price_impact_module: Address::from_str("0x4444444444444444444444444444444444444444")
+                .unwrap(),
+            pricing_module: Address::from_str("0x5555555555555555555555555555555555555555")
+                .unwrap(),
+            protocol_fee_manager: None,
+            module_registry: None,
         },
         auth: AuthConfig {
             access_token: "test_token".to_string(),
@@ -764,7 +797,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
         },
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
-            perp_manager: deployment.perp_hook,
+            perp_factory: deployment.perp_factory,
             usdc: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
             ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
                 .unwrap(),
@@ -773,6 +806,17 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
             ), // Standard multicall3 address for tests
             identity_beacon_bytecode: Bytes::new(),
             safe: None,
+            fees_module: Address::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            funding_module: Address::from_str("0x2222222222222222222222222222222222222222")
+                .unwrap(),
+            margin_ratios_module: Address::from_str("0x3333333333333333333333333333333333333333")
+                .unwrap(),
+            price_impact_module: Address::from_str("0x4444444444444444444444444444444444444444")
+                .unwrap(),
+            pricing_module: Address::from_str("0x5555555555555555555555555555555555555555")
+                .unwrap(),
+            protocol_fee_manager: None,
+            module_registry: None,
         },
         auth: AuthConfig {
             access_token: "test_token".to_string(),
@@ -869,7 +913,7 @@ pub async fn create_simple_test_app_state() -> AppState {
         contracts: ContractAddresses {
             perpcity_registry: Address::from_str("0x2345678901234567890123456789012345678901")
                 .unwrap(),
-            perp_manager: Address::from_str("0x3456789012345678901234567890123456789012").unwrap(),
+            perp_factory: Address::from_str("0x3456789012345678901234567890123456789012").unwrap(),
             usdc: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
             ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
                 .unwrap(),
@@ -878,6 +922,17 @@ pub async fn create_simple_test_app_state() -> AppState {
             ), // Standard multicall3 address for tests
             identity_beacon_bytecode: Bytes::new(),
             safe: None,
+            fees_module: Address::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            funding_module: Address::from_str("0x2222222222222222222222222222222222222222")
+                .unwrap(),
+            margin_ratios_module: Address::from_str("0x3333333333333333333333333333333333333333")
+                .unwrap(),
+            price_impact_module: Address::from_str("0x4444444444444444444444444444444444444444")
+                .unwrap(),
+            pricing_module: Address::from_str("0x5555555555555555555555555555555555555555")
+                .unwrap(),
+            protocol_fee_manager: None,
+            module_registry: None,
         },
         auth: AuthConfig {
             access_token: "test_token".to_string(),
@@ -923,7 +978,7 @@ pub async fn create_test_app_state_with_provider(
         contracts: ContractAddresses {
             perpcity_registry: Address::from_str("0x2345678901234567890123456789012345678901")
                 .unwrap(),
-            perp_manager: Address::from_str("0x3456789012345678901234567890123456789012").unwrap(),
+            perp_factory: Address::from_str("0x3456789012345678901234567890123456789012").unwrap(),
             usdc: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
             ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
                 .unwrap(),
@@ -932,6 +987,17 @@ pub async fn create_test_app_state_with_provider(
             ), // Standard multicall3 address for tests
             identity_beacon_bytecode: Bytes::new(),
             safe: None,
+            fees_module: Address::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            funding_module: Address::from_str("0x2222222222222222222222222222222222222222")
+                .unwrap(),
+            margin_ratios_module: Address::from_str("0x3333333333333333333333333333333333333333")
+                .unwrap(),
+            price_impact_module: Address::from_str("0x4444444444444444444444444444444444444444")
+                .unwrap(),
+            pricing_module: Address::from_str("0x5555555555555555555555555555555555555555")
+                .unwrap(),
+            protocol_fee_manager: None,
+            module_registry: None,
         },
         auth: AuthConfig {
             access_token: "test_token".to_string(),
@@ -978,8 +1044,11 @@ mod tests {
         let beacon_abi = load_test_abi("Beacon");
         assert!(!beacon_abi.functions.is_empty());
 
-        let perp_manager_abi = load_test_abi("PerpManager");
-        assert!(!perp_manager_abi.functions.is_empty());
+        // perpcity-contracts@v0.1.0: PerpManager replaced by Perp + PerpFactory.
+        let perp_factory_abi = load_test_abi("PerpFactory");
+        assert!(!perp_factory_abi.functions.is_empty());
+        let perp_abi = load_test_abi("Perp");
+        assert!(!perp_abi.functions.is_empty());
     }
 
     #[tokio::test]
@@ -988,7 +1057,7 @@ mod tests {
         let app_state = create_test_app_state().await;
         assert_ne!(app_state.wallets.funding_address, Address::ZERO);
         assert_ne!(app_state.contracts.ecdsa_verifier_factory, Address::ZERO);
-        assert_ne!(app_state.contracts.perp_manager, Address::ZERO);
+        assert_ne!(app_state.contracts.perp_factory, Address::ZERO);
     }
 
     #[tokio::test]
@@ -1001,7 +1070,7 @@ mod tests {
         let deployment = deployment.unwrap();
         assert_ne!(deployment.beacon_factory, Address::ZERO);
         assert_ne!(deployment.beacon_registry, Address::ZERO);
-        assert_ne!(deployment.perp_hook, Address::ZERO);
+        assert_ne!(deployment.perp_factory, Address::ZERO);
     }
 
     #[tokio::test]
