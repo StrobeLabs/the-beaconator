@@ -38,27 +38,38 @@ pub struct BatchUpdateBeaconResponse {
     pub failed_updates: usize,
 }
 
-/// Response from deploying a perpetual contract
+/// Response from deploying a perpetual market contract via PerpFactory.createPerp.
+/// perpcity-contracts@v0.1.0: each market is its own `Perp` contract with its own pool.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DeployPerpForBeaconResponse {
-    /// 32-byte perpetual pool identifier (hex string with 0x prefix)
-    pub perp_id: String,
-    /// Address of the PerpManager contract
-    pub perp_manager_address: String,
-    /// Transaction hash
+    /// Address of the per-market Perp contract (use this for subsequent open / adjust calls).
+    pub perp_address: String,
+    /// 32-byte Uniswap V4 PoolId for this market (hex string with 0x prefix).
+    pub pool_id: String,
+    /// Address of the PerpFactory contract used to deploy.
+    pub perp_factory_address: String,
+    /// Beacon's initial index value at the moment of deployment.
+    pub initial_index: String,
+    /// EMA window in seconds.
+    pub ema_window: u32,
+    /// sqrt(price) in Q96 fixed-point format at deployment.
+    pub sqrt_price_x96: String,
+    /// Initial AMM tick.
+    pub tick: i32,
+    /// Transaction hash for the createPerp transaction.
     pub transaction_hash: String,
 }
 
 /// Response from batch perpetual deployment
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BatchDeployPerpsForBeaconsResponse {
-    /// Number of successfully deployed perpetuals
+    /// Number of successfully deployed markets.
     pub deployed_count: u32,
-    /// List of perpetual pool IDs (hex strings with 0x prefix)
-    pub perp_ids: Vec<String>,
-    /// Number of failed deployments
+    /// List of per-market Perp contract addresses (hex strings with 0x prefix).
+    pub perp_addresses: Vec<String>,
+    /// Number of failed deployments.
     pub failed_count: u32,
-    /// Error messages for failed deployments
+    /// Error messages for failed deployments.
     pub errors: Vec<String>,
 }
 

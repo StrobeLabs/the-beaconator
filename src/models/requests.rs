@@ -163,53 +163,50 @@ pub struct UpdateBeaconTypeRequest {
     pub enabled: Option<bool>,
 }
 
-/// Deploy a perpetual contract for a specific beacon
+/// Deploy a perpetual market contract via PerpFactory.createPerp (perpcity-contracts@v0.1.0).
+/// Module addresses are read from server env vars.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DeployPerpForBeaconRequest {
-    /// Ethereum address of the beacon contract
+    /// Ethereum address of the beacon contract (must be registered with BeaconRegistry)
     pub beacon_address: String,
-    /// Address of the fees configuration module
-    pub fees_module: String,
-    /// Address of the margin ratios configuration module
-    pub margin_ratios_module: String,
-    /// Address of the lockup period configuration module
-    pub lockup_period_module: String,
-    /// Address of the sqrt price impact limit configuration module
-    pub sqrt_price_impact_limit_module: String,
+    /// Owner of the new Perp contract (governance address). Receives `Ownable` role.
+    pub owner: String,
+    /// Display name for the market (used by ERC721.name()). Example: "Citibike Utilization Perp"
+    pub name: String,
+    /// Display symbol for the market (used by ERC721.symbol()). Example: "CITI-PERP"
+    pub symbol: String,
+    /// Token URI string returned by ERC721.tokenURI() for any position NFT in this market
+    pub token_uri: String,
+    /// EMA window in seconds, encoded as uint24. Required (non-zero). Example: 3600 (1 hour).
+    pub ema_window: u32,
+    /// Optional 32-byte salt (hex with or without 0x). Server generates a random salt if omitted.
+    pub salt: Option<String>,
 }
 
-/// Batch deploy perpetual contracts for multiple beacons
+/// Batch deploy perpetual market contracts. One owner/name/symbol/tokenUri/emaWindow per beacon.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BatchDeployPerpsForBeaconsRequest {
-    /// List of beacon addresses to deploy perps for
-    pub beacon_addresses: Vec<String>,
-    /// Address of the fees configuration module
-    pub fees_module: String,
-    /// Address of the margin ratios configuration module
-    pub margin_ratios_module: String,
-    /// Address of the lockup period configuration module
-    pub lockup_period_module: String,
-    /// Address of the sqrt price impact limit configuration module
-    pub sqrt_price_impact_limit_module: String,
+    /// List of per-beacon perp deployment requests.
+    pub deployments: Vec<DeployPerpForBeaconRequest>,
 }
 
-/// Deposit liquidity for a perpetual contract
+/// Deposit liquidity (open a maker position) on a per-market Perp contract.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DepositLiquidityForPerpRequest {
-    /// Perpetual pool ID as hex string (with or without 0x prefix)
-    pub perp_id: String,
-    /// USDC margin amount in 6 decimals (e.g., "50000000" for 50 USDC)
+    /// Address of the per-market `Perp` contract (returned by /deploy_perp_for_beacon).
+    pub perp_address: String,
+    /// USDC margin amount in 6 decimals (e.g., "50000000" for 50 USDC).
     ///
-    /// Margin constraints are enforced by on-chain modules. The margin ratios module
+    /// Margin constraints are enforced by on-chain modules. The MarginRatios module
     /// defines minimum and maximum allowed margins based on market configuration.
     ///
     /// Current liquidity scaling: margin × 500,000 = final liquidity amount
     pub margin_amount_usdc: String,
     /// Optional holder address (defaults to wallet address if not provided)
     pub holder: Option<String>,
-    /// Maximum amount of token0 to deposit (slippage protection), optional
+    /// Maximum amount of token0 (perp accounting) to deposit, decimal string. Optional.
     pub max_amt0_in: Option<String>,
-    /// Maximum amount of token1 to deposit (slippage protection), optional
+    /// Maximum amount of token1 (USD accounting) to deposit, decimal string. Optional.
     pub max_amt1_in: Option<String>,
     /// Tick spacing for the liquidity position (defaults to 30)
     pub tick_spacing: Option<i32>,
