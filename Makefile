@@ -159,6 +159,9 @@ check: ## Run cargo check and anvil cleanup (faster than build)
 	@echo "Running anvil cleanup..."
 	./scripts/anvil-cleanup.sh
 
+refresh-abis: ## Regenerate abis/ from pinned contract release tags (.contracts-versions)
+	./scripts/refresh-abis.sh
+
 # Comprehensive quality check
 quality: fmt-check lint test-fast test-redis ## Run all quality checks (format, lint, tests including Redis)
 
