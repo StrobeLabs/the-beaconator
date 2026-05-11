@@ -245,12 +245,41 @@ pub async fn deposit_liquidity_for_perp_endpoint(
         }
     };
 
+    let margin_amount = match request.margin_amount_usdc.parse::<u128>() {
+        Ok(amount) => amount,
+        Err(e) => {
+            let error_msg = format!(
+                "Invalid margin amount '{}': {e}",
+                request.margin_amount_usdc
+            );
+            tracing::error!("{}", error_msg);
+            tracing::error!("Margin amount must be a valid number in USDC with 6 decimals");
+            tracing::error!("  Examples: '1000000' = 1 USDC, '500000000' = 500 USDC");
+            sentry_error(
+                &hub,
+                "ValidationError",
+                error_msg,
+                vec![("margin_amount", request.margin_amount_usdc.clone().into())],
+            );
+            return Err(Status::BadRequest);
+        }
+    };
+
+    tracing::info!(
+        "Margin amount: {} USDC (validation delegated to on-chain modules)",
+        margin_amount as f64 / 1_000_000.0
+    );
+
+    let tick_spacing = request.tick_spacing.unwrap_or(30);
+    let tick_lower = request.tick_lower.unwrap_or(24390);
+    let tick_upper = request.tick_upper.unwrap_or(53850);
+
     // Defense in depth: refuse to approve USDC against any address that wasn't deployed by the
     // trusted PerpFactory. The endpoint is gated by the API token, but a caller typo or a
     // compromised token must never produce a USDC allowance on an EOA or a non-Perp contract.
     //
     // The on-chain check is `PerpFactory.perps(address)` (boolean mapping populated in
-    // createPerp). One eth_call per request, cached via standard provider semantics.
+    // createPerp). Run AFTER cheap input validation so 400-class errors are surfaced first.
     let factory = IPerpFactory::new(state.contracts.perp_factory, &state.provider.read_provider);
     match factory.perps(perp_address).call().await {
         Ok(is_known_perp) => {
@@ -283,35 +312,6 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             return Err(Status::InternalServerError);
         }
     }
-
-    let margin_amount = match request.margin_amount_usdc.parse::<u128>() {
-        Ok(amount) => amount,
-        Err(e) => {
-            let error_msg = format!(
-                "Invalid margin amount '{}': {e}",
-                request.margin_amount_usdc
-            );
-            tracing::error!("{}", error_msg);
-            tracing::error!("Margin amount must be a valid number in USDC with 6 decimals");
-            tracing::error!("  Examples: '1000000' = 1 USDC, '500000000' = 500 USDC");
-            sentry_error(
-                &hub,
-                "ValidationError",
-                error_msg,
-                vec![("margin_amount", request.margin_amount_usdc.clone().into())],
-            );
-            return Err(Status::BadRequest);
-        }
-    };
-
-    tracing::info!(
-        "Margin amount: {} USDC (validation delegated to on-chain modules)",
-        margin_amount as f64 / 1_000_000.0
-    );
-
-    let tick_spacing = request.tick_spacing.unwrap_or(30);
-    let tick_lower = request.tick_lower.unwrap_or(24390);
-    let tick_upper = request.tick_upper.unwrap_or(53850);
 
     match deposit_liquidity_for_perp(
         state,
