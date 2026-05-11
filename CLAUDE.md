@@ -216,6 +216,7 @@ let contract = IBeacon::new(address, &*state.provider);
 ### ABI Management
 - Inline `sol!` macros in `src/routes/mod.rs` are the source of truth for what the service binds against. Update those when the pinned contracts change.
 - JSON files in `abis/` are reference snapshots regenerated from `forge inspect` against the pinned tags via `make refresh-abis`. They are NOT loaded by the runtime — they exist for OpenAPI client generators and for human inspection.
+- **Known gap (forge limitation):** `abis/Perp.json` is missing the `MakerOpened`, `TakerOpened`, `Maker*` / `Taker*Adjusted` / `*Closed` / `*Backstopped` and Tick/funding/cumulatives events. Those are declared as free events in `perpcity-contracts/src/libraries/Events.sol` and emitted from the `PerpLogic` library, but `forge inspect Perp abi` doesn't propagate library-declared free events into a contract's ABI. The Rust runtime decodes them anyway via the inline `IPerp { event MakerOpened(...); ... }` block, so service code is unaffected. Downstream SDK generators that need event signatures should consult either the inline `sol!` block or `Events.sol` directly.
 - The pinned tags are recorded in `.contracts-versions`. CI validates that `git diff abis/` is clean after a refresh, so a stale `abis/` will fail CI on the next refresh.
 
 ## Modular Beacon Creation
