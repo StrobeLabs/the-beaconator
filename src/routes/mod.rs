@@ -132,6 +132,12 @@ mod root_sol_interfaces {
             bytes32 salt
         ) external returns (address perp);
 
+        // PerpFactory.perps mapping: tracks every address created by this factory. Used as the
+        // membership check before any privileged action (USDC approval, openMaker call) on a
+        // caller-supplied perp address — guarantees we never approve USDC to an EOA or a
+        // contract that wasn't deployed by this trusted factory.
+        function perps(address perp) external view returns (bool);
+
         event PerpCreated(
             address perp,
             bytes32 poolId,

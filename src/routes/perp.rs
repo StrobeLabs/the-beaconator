@@ -12,6 +12,7 @@ use crate::models::{
     ApiResponse, AppState, DeployPerpForBeaconRequest, DeployPerpForBeaconResponse,
     DepositLiquidityForPerpRequest, DepositLiquidityForPerpResponse,
 };
+use crate::routes::IPerpFactory;
 use crate::services::perp::{deploy_perp_for_beacon, deposit_liquidity_for_perp};
 
 /// Derive a deterministic 32-byte salt from the deploy request. Reusing this salt on retry
@@ -243,6 +244,45 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             return Err(Status::BadRequest);
         }
     };
+
+    // Defense in depth: refuse to approve USDC against any address that wasn't deployed by the
+    // trusted PerpFactory. The endpoint is gated by the API token, but a caller typo or a
+    // compromised token must never produce a USDC allowance on an EOA or a non-Perp contract.
+    //
+    // The on-chain check is `PerpFactory.perps(address)` (boolean mapping populated in
+    // createPerp). One eth_call per request, cached via standard provider semantics.
+    let factory = IPerpFactory::new(state.contracts.perp_factory, &state.provider.read_provider);
+    match factory.perps(perp_address).call().await {
+        Ok(is_known_perp) => {
+            if !is_known_perp {
+                let error_msg = format!(
+                    "perp_address {perp_address} is not registered with PerpFactory \
+                     {} — refusing to approve USDC to an untrusted address",
+                    state.contracts.perp_factory
+                );
+                tracing::error!("{}", error_msg);
+                sentry_error(
+                    &hub,
+                    "ValidationError",
+                    error_msg,
+                    vec![("perp_address", perp_address.to_string().into())],
+                );
+                return Err(Status::BadRequest);
+            }
+        }
+        Err(e) => {
+            let error_msg =
+                format!("Failed to verify perp_address {perp_address} with factory: {e}");
+            tracing::error!("{}", error_msg);
+            sentry_error(
+                &hub,
+                "ContractError",
+                error_msg,
+                vec![("perp_address", perp_address.to_string().into())],
+            );
+            return Err(Status::InternalServerError);
+        }
+    }
 
     let margin_amount = match request.margin_amount_usdc.parse::<u128>() {
         Ok(amount) => amount,
