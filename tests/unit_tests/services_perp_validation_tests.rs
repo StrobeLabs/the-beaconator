@@ -303,4 +303,29 @@ mod try_decode_revert_reason_tests {
         assert!(result.is_some());
         assert!(result.unwrap().contains("MarginTooLow"));
     }
+
+    #[test]
+    fn test_decode_revert_skips_address_picks_revert_data() {
+        // Provider error message that includes an address (20-byte hex, 42 chars including 0x)
+        // followed by the actual revert payload. The earlier implementation grabbed the first
+        // 0x token and returned "Unknown contract error: 0x70997970..."; the fix must skip
+        // the address and recognise the real selector.
+        let error =
+            "execution reverted at 0x70997970C51812dc3A010C7d01b50e0d17dc79C8, data: 0x10074548";
+        let result = try_decode_revert_reason(&error);
+        assert!(result.is_some());
+        let msg = result.unwrap();
+        assert!(msg.contains("ZeroLiquidity"), "got {msg}");
+    }
+
+    #[test]
+    fn test_decode_revert_prefers_explicit_data_field() {
+        // Alloy-style revert with explicit `data:` field — must be picked even if there are
+        // other hex blobs in the message.
+        let error = "ContractError(tx 0xabcdef1234567890, data: 0x38f5e1a7)";
+        let result = try_decode_revert_reason(&error);
+        assert!(result.is_some());
+        let msg = result.unwrap();
+        assert!(msg.contains("MarginTooLow"), "got {msg}");
+    }
 }

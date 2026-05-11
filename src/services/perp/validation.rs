@@ -197,26 +197,80 @@ pub async fn validate_module_address(
     }
 }
 
-/// Best-effort revert-reason decoder: looks for hex-encoded revert data in an error string and
+/// Best-effort revert-reason decoder: extracts hex-encoded revert data from an error string and
 /// dispatches to `ContractErrorDecoder`. Falls back to plain "execution reverted" extraction.
+///
+/// The provider error string can contain incidental `0x...` tokens (addresses, tx hashes) before
+/// the actual revert payload, so we search for the explicit field markers a provider uses
+/// (`data: 0x...`, `data="0x..."`, `reverted with data: 0x...`) before falling back to the first
+/// hex blob long enough to be a 4-byte selector. We also prefer the longest hex blob over the
+/// first one, since revert data is typically longer than the 20-byte address that might appear
+/// earlier in the message.
 pub fn try_decode_revert_reason(error: &impl std::fmt::Display) -> Option<String> {
     let error_str = error.to_string();
 
-    if let Some(data_start) = error_str.find("0x") {
-        let data_part = &error_str[data_start..];
-        let hex_end = data_part
-            .chars()
-            .skip(2)
-            .take_while(|c| c.is_ascii_hexdigit())
-            .count()
-            + 2;
-
-        if hex_end >= 10 {
-            let error_data = &data_part[..hex_end];
-            if let Some(decoded) = ContractErrorDecoder::decode_error_data(error_data) {
+    // First try explicit revert-data markers used by common providers / Alloy.
+    let markers = [
+        "data: 0x",
+        "data:0x",
+        "data=\"0x",
+        "data=0x",
+        "reverted with data: 0x",
+        "reverted with data:0x",
+        "revert data: 0x",
+        "revert data:0x",
+        "revertData\":\"0x",
+        "\"data\":\"0x",
+    ];
+    for marker in markers {
+        if let Some(idx) = error_str.find(marker) {
+            let hex_start = idx + marker.len() - 2; // back up to the "0x"
+            if let Some(decoded) = decode_hex_blob_at(&error_str[hex_start..]) {
                 return Some(decoded);
             }
         }
+    }
+
+    // Fallback: scan all `0x<hex>` substrings, prefer the longest one of selector size or larger.
+    // An address is 42 chars (`0x` + 40); a parameterless revert is 10 chars (`0x` + 8); a revert
+    // with one uint256 param is 74 chars. Prefer longer payloads to bias toward revert data over
+    // addresses, then fall back to any selector-sized blob.
+    let mut candidates: Vec<&str> = Vec::new();
+    let mut rest = error_str.as_str();
+    while let Some(pos) = rest.find("0x") {
+        rest = &rest[pos..];
+        let hex_len = rest
+            .chars()
+            .skip(2)
+            .take_while(|c| c.is_ascii_hexdigit())
+            .count();
+        if hex_len >= 8 {
+            candidates.push(&rest[..hex_len + 2]);
+        }
+        rest = &rest[2 + hex_len..];
+    }
+    // Sort by length desc; addresses (42) and tx hashes (66) are stable lengths, while real
+    // contract reverts are 10, 74, or longer multiples of 64+10 — so the longest-non-66-non-42
+    // is the most likely candidate.
+    candidates.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    for blob in &candidates {
+        // Skip canonical address (42) and tx hash (66) lengths unless they are also a recognised
+        // selector tail (very unlikely). The decoder will skip "Unknown contract error: ..." for
+        // those when called below; here we just bias.
+        if blob.len() == 42 || blob.len() == 66 {
+            continue;
+        }
+        if let Some(decoded) = ContractErrorDecoder::decode_error_data(blob)
+            && !decoded.starts_with("Unknown contract error")
+        {
+            return Some(decoded);
+        }
+    }
+    // Last resort: try the first selector-length blob (even an address) so we surface *something*.
+    if let Some(blob) = candidates.first()
+        && let Some(decoded) = ContractErrorDecoder::decode_error_data(blob)
+    {
+        return Some(decoded);
     }
 
     if error_str.contains("execution reverted") {
@@ -230,4 +284,21 @@ pub fn try_decode_revert_reason(error: &impl std::fmt::Display) -> Option<String
     }
 
     None
+}
+
+/// Read a `0x<hex>` blob starting at `s[0..]` and feed it to `ContractErrorDecoder`. Returns
+/// the decoded reason if the blob is at least a 4-byte selector (10 chars including `0x`).
+fn decode_hex_blob_at(s: &str) -> Option<String> {
+    if !s.starts_with("0x") {
+        return None;
+    }
+    let hex_len = s
+        .chars()
+        .skip(2)
+        .take_while(|c| c.is_ascii_hexdigit())
+        .count();
+    if hex_len < 8 {
+        return None;
+    }
+    ContractErrorDecoder::decode_error_data(&s[..hex_len + 2])
 }
