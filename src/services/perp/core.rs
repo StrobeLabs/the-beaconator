@@ -199,6 +199,7 @@ pub async fn deploy_perp_for_beacon(
         ema_window,
         sqrt_price_x96: event.sqrt_price_x96.to_string(),
         tick: event.tick,
+        salt: format!("{salt:#x}"),
         transaction_hash: tx_hash.to_string(),
     })
 }

@@ -56,6 +56,11 @@ pub struct DeployPerpForBeaconResponse {
     pub sqrt_price_x96: String,
     /// Initial AMM tick.
     pub tick: i32,
+    /// 32-byte salt actually used in PerpFactory.createPerp. When the request omits `salt`,
+    /// the server derives one deterministically from the request fields (beacon, owner, name,
+    /// symbol, token_uri, ema_window) so retries with the same payload are idempotent. Return
+    /// it so clients can persist + re-use it on explicit retries.
+    pub salt: String,
     /// Transaction hash for the createPerp transaction.
     pub transaction_hash: String,
 }

@@ -1,4 +1,5 @@
-use alloy::primitives::{Address, FixedBytes};
+use alloy::primitives::{Address, FixedBytes, keccak256};
+use alloy::sol_types::SolValue;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
 use rocket_okapi::openapi;
@@ -13,14 +14,31 @@ use crate::models::{
 };
 use crate::services::perp::{deploy_perp_for_beacon, deposit_liquidity_for_perp};
 
-/// Generate a random 32-byte salt for PerpFactory.createPerp.
-fn random_salt() -> FixedBytes<32> {
-    use rand::TryRngCore;
-    let mut bytes = [0u8; 32];
-    rand::rngs::OsRng
-        .try_fill_bytes(&mut bytes)
-        .expect("OsRng failed to produce random bytes");
-    FixedBytes::<32>::from(bytes)
+/// Derive a deterministic 32-byte salt from the deploy request. Reusing this salt on retry
+/// causes `LibClone.cloneDeterministic` inside PerpFactory.createPerp to revert if the previous
+/// call already minted the accounting-token clones — making /deploy_perp_for_beacon idempotent
+/// instead of silently creating a duplicate market when the client retries after a timeout.
+///
+/// Includes every user-controllable createPerp input so that distinct intents produce distinct
+/// salts.
+fn deterministic_salt(
+    beacon: Address,
+    owner: Address,
+    name: &str,
+    symbol: &str,
+    token_uri: &str,
+    ema_window: u32,
+) -> FixedBytes<32> {
+    let encoded = (
+        beacon,
+        owner,
+        name.to_string(),
+        symbol.to_string(),
+        token_uri.to_string(),
+        ema_window,
+    )
+        .abi_encode();
+    keccak256(encoded)
 }
 
 /// Deploys a perpetual market contract for a specific beacon via PerpFactory.createPerp.
@@ -88,8 +106,33 @@ pub async fn deploy_perp_for_beacon_endpoint(
         }
     };
 
+    // Validate ema_window fits in uint24 and is non-zero (matches IPerpFactory.EmaWindowTooLow).
+    // Defensive: also enforced inside deploy_perp_for_beacon, but rejecting here gives a clearer
+    // BadRequest instead of a 500 from the service layer.
+    if request.ema_window == 0 || request.ema_window > 0x00FF_FFFF {
+        let error_msg = format!(
+            "Invalid ema_window {}: must be in 1..=16777215 (uint24 non-zero)",
+            request.ema_window
+        );
+        tracing::error!("{}", error_msg);
+        sentry_error(
+            &hub,
+            "ValidationError",
+            error_msg,
+            vec![("ema_window", request.ema_window.to_string().into())],
+        );
+        return Err(Status::BadRequest);
+    }
+
     let salt = match request.salt.as_deref() {
-        None => random_salt(),
+        None => deterministic_salt(
+            beacon_address,
+            owner,
+            &request.name,
+            &request.symbol,
+            &request.token_uri,
+            request.ema_window,
+        ),
         Some(s) => match FixedBytes::<32>::from_str(s) {
             Ok(b) => b,
             Err(e) => {
