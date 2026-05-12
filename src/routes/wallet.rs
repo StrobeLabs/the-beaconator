@@ -12,6 +12,14 @@ use super::{IERC20, sentry_error};
 use crate::guards::ApiToken;
 use crate::models::{ApiResponse, AppState, FundGuestWalletRequest};
 
+/// Production chain ids the beaconator can target. Any chain id NOT in the testnet/local
+/// allow-list (Arbitrum Sepolia = 421614, Anvil default = 31337) is treated as production
+/// so a future mainnet addition fails closed instead of accidentally unlocking the funding
+/// endpoint.
+fn is_production_chain(chain_id: u64) -> bool {
+    !matches!(chain_id, 421614 | 31337)
+}
+
 /// Funds a guest wallet with USDC and ETH.
 ///
 /// Transfers the specified amounts of USDC and ETH from the beaconator wallet
@@ -40,6 +48,33 @@ pub async fn fund_guest_wallet(
         scope.set_extra("usdc_amount", request.usdc_amount.clone().into());
         scope.set_extra("eth_amount", request.eth_amount.clone().into());
     });
+
+    // Hard-disable guest-wallet funding on production chains. The endpoint pulls real ETH +
+    // USDC from a hot wallet — fine on Arbitrum Sepolia (chain 421614) or local Anvil, but a
+    // foot-gun on Arbitrum One (chain 42161). The chain id is set from ENV at startup and
+    // cannot be overridden per request, so this is the canonical mainnet check.
+    if is_production_chain(state.provider.chain_id) {
+        let error_msg = format!(
+            "fund_guest_wallet is disabled on chain id {} (production network); \
+             this endpoint only runs on Arbitrum Sepolia / local Anvil",
+            state.provider.chain_id
+        );
+        tracing::error!("{}", error_msg);
+        sentry_error(
+            &hub,
+            "ProductionGuardrail",
+            error_msg.clone(),
+            vec![("chain_id", state.provider.chain_id.to_string().into())],
+        );
+        return Err((
+            Status::Forbidden,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: error_msg,
+            }),
+        ));
+    }
     let wallet_address = match Address::from_str(&request.wallet_address) {
         Ok(addr) => addr,
         Err(e) => {
