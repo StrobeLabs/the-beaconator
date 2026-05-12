@@ -203,9 +203,9 @@ pub async fn create_rocket() -> Rocket<Build> {
     // Get environment configuration and chain ID
     let env_type = &rpc_config.env_type;
     let chain_id = match env_type.to_lowercase().as_str() {
-        "testnet" => 84532u64,  // Base Sepolia testnet
-        "mainnet" => 8453u64,   // Base mainnet
-        "localnet" => 84532u64, // Use testnet chain ID for local development/CI
+        "testnet" => 421614u64,  // Arbitrum Sepolia
+        "mainnet" => 42161u64,   // Arbitrum One
+        "localnet" => 421614u64, // Use testnet chain ID for local development/CI
         _ => panic!(
             "Invalid ENV value '{env_type}'. Must be either 'mainnet', 'testnet', or 'localnet'"
         ),

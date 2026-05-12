@@ -253,14 +253,14 @@ mod tests {
     #[test]
     fn test_build_provider_valid() {
         let config = create_test_config("mainnet", "http://localhost:8545");
-        let result = config.build_provider(ANVIL_TEST_PRIVATE_KEY, 8453);
+        let result = config.build_provider(ANVIL_TEST_PRIVATE_KEY, 42161);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_build_provider_invalid_key() {
         let config = create_test_config("mainnet", "http://localhost:8545");
-        let result = config.build_provider("invalid-key", 8453);
+        let result = config.build_provider("invalid-key", 42161);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to parse private key"));
     }

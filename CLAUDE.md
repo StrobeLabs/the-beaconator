@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # The Beaconator
 
-**The Beaconator** is a Rust web service that manages Ethereum beacon contracts and perpetual deployments on Base network. It provides RESTful APIs for creating beacons, deploying perpetuals, and updating beacon data with zero-knowledge proofs.
+**The Beaconator** is a Rust web service that manages Ethereum beacon contracts and perpetual deployments on Arbitrum. It provides RESTful APIs for creating beacons, deploying perpetuals, and updating beacon data with zero-knowledge proofs.
 
 ## Pinned contract versions
 
@@ -24,7 +24,7 @@ The script `scripts/refresh-abis.sh` adds a temporary git worktree at each pinne
 ## Tech Stack
 - **Framework**: Rocket 0.5.0 (async web framework)
 - **Blockchain**: Alloy 1.5 (Ethereum library)
-- **Network**: Base mainnet/testnet support
+- **Network**: Arbitrum (mainnet = Arbitrum One, testnet = Arbitrum Sepolia)
 - **Security**: Bearer token authentication
 - **Monitoring**: Sentry integration + structured logging
 
@@ -135,8 +135,8 @@ Use any OpenAPI viewer to explore the API interactively:
 Copy `env.example` to `.env.local` (preferred) or `.env` and configure. Required env vars for the v0.1.0 contract pin:
 
 ```bash
-RPC_URL=https://mainnet.base.org              # Base chain RPC URL
-ENV=mainnet|testnet|localnet                  # Network type
+RPC_URL=https://arb1.arbitrum.io/rpc          # Arbitrum RPC URL
+ENV=mainnet|testnet|localnet                  # mainnet=Arbitrum One (42161), testnet=Arbitrum Sepolia (421614)
 BEACONATOR_ACCESS_TOKEN=your_secret_token     # API authentication
 PRIVATE_KEY=...                               # Funding wallet private key (no 0x prefix)
 WALLET_PRIVATE_KEYS=...                       # Comma-separated wallet pool keys

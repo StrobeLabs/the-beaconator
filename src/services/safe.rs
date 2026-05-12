@@ -283,12 +283,12 @@ impl SafeTransactionService {
     }
 
     /// Returns the default Safe Transaction Service URL for a given chain ID.
+    /// The service supports Arbitrum One and Arbitrum Sepolia — the only chains
+    /// the-beaconator is configured to deploy against.
     pub fn default_url_for_chain(chain_id: u64) -> Option<String> {
         match chain_id {
-            84532 => Some("https://safe-transaction-base-sepolia.safe.global".to_string()),
-            8453 => Some("https://safe-transaction-base.safe.global".to_string()),
-            421614 => Some("https://safe-transaction-arbitrum-sepolia.safe.global".to_string()),
             42161 => Some("https://safe-transaction-arbitrum.safe.global".to_string()),
+            421614 => Some("https://safe-transaction-arbitrum-sepolia.safe.global".to_string()),
             _ => None,
         }
     }
