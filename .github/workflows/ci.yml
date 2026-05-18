@@ -215,7 +215,7 @@ jobs:
       - name: Test Docker image
         run: |
           # Use host network so container can reach Redis service
-          docker run --rm -d --name test-beaconator --network host \
+          docker run -d --name test-beaconator --network host \
             -e RPC_URL=https://mainnet.base.org \
             -e PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
             -e SENTRY_DSN=https://test@test.ingest.sentry.io/test \
@@ -234,8 +234,13 @@ jobs:
             -e BEACONATOR_ADMIN_TOKEN=test_admin_token_123 \
             the-beaconator:latest
           sleep 15
-          curl -f http://localhost:8000/ || (docker logs test-beaconator && exit 1)
-          docker stop test-beaconator
+          if ! curl -f http://localhost:8000/; then
+            echo "--- Container logs ---"
+            docker logs test-beaconator
+            docker rm -f test-beaconator
+            exit 1
+          fi
+          docker rm -f test-beaconator
 
       - name: Move cache
         run: |

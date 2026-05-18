@@ -175,15 +175,22 @@ pub async fn create_rocket() -> Rocket<Build> {
         .expect("Failed to parse ETH_TRANSFER_LIMIT");
 
     // Get environment configuration and chain ID
+    // CHAIN_ID env var overrides the default ENV-based mapping, enabling
+    // deployment to chains like Arbitrum Sepolia (421614) while keeping ENV=testnet.
     let env_type = &rpc_config.env_type;
-    let chain_id = match env_type.to_lowercase().as_str() {
-        "testnet" => 84532u64,  // Base Sepolia testnet
-        "mainnet" => 8453u64,   // Base mainnet
-        "localnet" => 84532u64, // Use testnet chain ID for local development/CI
-        _ => panic!(
-            "Invalid ENV value '{env_type}'. Must be either 'mainnet', 'testnet', or 'localnet'"
-        ),
-    };
+    let chain_id = env::var("CHAIN_ID")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or_else(|| {
+            match env_type.to_lowercase().as_str() {
+                "testnet" => 84532u64,  // Base Sepolia testnet
+                "mainnet" => 8453u64,   // Base mainnet
+                "localnet" => 84532u64, // Use testnet chain ID for local development/CI
+                _ => panic!(
+                    "Invalid ENV value '{env_type}'. Must be either 'mainnet', 'testnet', or 'localnet'"
+                ),
+            }
+        });
 
     // Get the RPC URL for storing in AppState (used by WalletHandle to build providers)
     let rpc_url = rpc_config.rpc_url().to_string();
