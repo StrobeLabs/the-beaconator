@@ -18,16 +18,16 @@ async fn rocket() -> _ {
 
     tracing::info!("Starting the Beaconator server...");
 
-    // Check environment setup
+    // Environment check — presence only, never values. The full audit (with shape /
+    // length checks for every var) runs inside `create_rocket()` via `audit_environment`,
+    // which emits ERROR lines per problem and a one-line summary.
     tracing::info!("Environment check:");
-    tracing::info!("  - RUST_LOG: {:?}", std::env::var("RUST_LOG"));
-    tracing::info!("  - ENV: {:?}", std::env::var("ENV"));
-    tracing::info!(
-        "  - SENTRY_DSN: {}",
-        std::env::var("SENTRY_DSN")
-            .map(|_| "Set")
-            .unwrap_or("Not set")
-    );
+    for key in ["RUST_LOG", "ENV", "SENTRY_DSN"] {
+        tracing::info!(
+            "  - {key}: {}",
+            std::env::var(key).map(|_| "Set").unwrap_or("Not set")
+        );
+    }
 
     let dsn = std::env::var("SENTRY_DSN")
         .ok()

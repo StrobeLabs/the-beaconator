@@ -83,18 +83,26 @@ fn serve_openapi_spec(
 /// sets up providers and wallets, and mounts all routes.
 /// Pre-flight audit of every env var the-beaconator reads at startup.
 ///
-/// Logs each variable's presence and shape BEFORE any code tries to parse them, so the
-/// operator sees the full picture of what the container thinks its config is in a single
-/// log dump — even when the next step is going to panic. This is verbose by design:
-/// startup crashes are fatal-by-restart-loop, and the per-deploy debug cost of one extra
-/// log block is dwarfed by the cost of round-tripping through redeploys to find a typo.
+/// Validates each variable WITHOUT logging its value. The only log output is a single
+/// summary line at the end and one ERROR line per problem detected. This gives the
+/// operator a list of things to fix on a fresh boot without echoing any config
+/// (sensitive or otherwise) to the logs.
 ///
-/// **Secrets are never logged in plaintext.** For private keys, tokens, DSNs, and any URL
-/// known to carry an API key, we log only `<set, len=N>` plus a whitespace warning if the
-/// value would trim to a different length. For addresses and other non-sensitive vars the
-/// raw value is logged so parse failures are obvious.
+/// Detection rules:
+/// - Required var missing → ERROR `<KEY> is required but not set`.
+/// - Value contains leading/trailing space → ERROR with `raw_len` and `trimmed_len` only.
+/// - Address-typed var fails `Address::from_str` → ERROR with the alloy error class only,
+///   never the offending characters.
+/// - `PRIVATE_KEY` length not 64 / 66 → ERROR with the observed length only.
+/// - `WALLET_PRIVATE_KEYS` entry length not 64 / 66 → ERROR with index and observed
+///   length only.
+///
+/// Anything that passes is silent. Lengths and integer error metadata are emitted because
+/// they're necessary to fix the bug; raw values, addresses, URLs, and any portion of a
+/// secret are NEVER emitted.
 fn audit_environment() {
     use std::env;
+    use std::str::FromStr;
 
     // Categorise every env var the-beaconator reads. ADD NEW ENTRIES HERE whenever a new
     // env var is plumbed in src/lib.rs — keeping the audit in sync with reality is the
@@ -132,131 +140,110 @@ fn audit_environment() {
         "REDIS_URL",
     ];
     const SECRET_VARS_OPTIONAL: &[&str] = &["SENTRY_DSN", "SAFE_TX_SERVICE_URL"];
-    const PLAIN_VARS: &[&str] = &[
-        "ENV",
+    // Other env vars the-beaconator reads. We don't log their values either; we only
+    // check presence (for required) and whitespace cleanliness.
+    const OTHER_VARS_REQUIRED: &[&str] = &["ENV"];
+    const OTHER_VARS_OPTIONAL: &[&str] = &[
         "USDC_TRANSFER_LIMIT",
         "ETH_TRANSFER_LIMIT",
         "BEACONATOR_INSTANCE_ID",
         "RUST_LOG",
     ];
 
-    tracing::info!("=== Pre-flight environment audit ===");
+    let mut problems = 0usize;
 
-    // Addresses: log raw value (addresses are public), pre-validate parse, warn on
-    // hidden whitespace.
-    for &key in ADDRESS_VARS_REQUIRED {
-        audit_address(key, true);
-    }
-    for &key in ADDRESS_VARS_OPTIONAL {
-        audit_address(key, false);
+    // Required presence + whitespace checks (no value logging).
+    for &key in ADDRESS_VARS_REQUIRED
+        .iter()
+        .chain(SECRET_VARS_REQUIRED.iter())
+        .chain(OTHER_VARS_REQUIRED.iter())
+    {
+        match env::var(key) {
+            Ok(raw) => {
+                if raw.len() != raw.trim().len() {
+                    tracing::error!(
+                        "{key} has hidden leading/trailing whitespace (raw_len={}, trimmed_len={})",
+                        raw.len(),
+                        raw.trim().len()
+                    );
+                    problems += 1;
+                }
+            }
+            Err(_) => {
+                tracing::error!("{key} is required but not set");
+                problems += 1;
+            }
+        }
     }
 
-    // Secrets: log only length + whitespace warning. NEVER the value.
-    for &key in SECRET_VARS_REQUIRED {
-        audit_secret(key, true);
-    }
-    for &key in SECRET_VARS_OPTIONAL {
-        audit_secret(key, false);
+    // Optional vars: only check whitespace if present. Missing is silent.
+    for &key in ADDRESS_VARS_OPTIONAL
+        .iter()
+        .chain(SECRET_VARS_OPTIONAL.iter())
+        .chain(OTHER_VARS_OPTIONAL.iter())
+    {
+        if let Ok(raw) = env::var(key)
+            && raw.len() != raw.trim().len()
+        {
+            tracing::error!(
+                "{key} has hidden leading/trailing whitespace (raw_len={}, trimmed_len={})",
+                raw.len(),
+                raw.trim().len()
+            );
+            problems += 1;
+        }
     }
 
-    // Plain non-sensitive scalars.
-    for &key in PLAIN_VARS {
-        audit_plain(key);
+    // Address-typed vars: validate parse without logging the value or the offending
+    // characters. The Address::from_str error class (e.g. "invalid string length") is
+    // safe to log; it doesn't echo the raw input.
+    for &key in ADDRESS_VARS_REQUIRED
+        .iter()
+        .chain(ADDRESS_VARS_OPTIONAL.iter())
+    {
+        if let Ok(raw) = env::var(key)
+            && let Err(e) = Address::from_str(raw.trim())
+        {
+            tracing::error!("{key} does not parse as Address: {e}");
+            problems += 1;
+        }
     }
 
-    // Special case: PRIVATE_KEY's expected length. secp256k1 keys are 32 bytes = 64 hex
-    // characters, optionally with `0x` prefix. Anything else is the bug we keep seeing.
+    // PRIVATE_KEY: must be 64 (raw hex) or 66 (with 0x prefix) characters. We log only
+    // the observed length, never any portion of the value.
     if let Ok(v) = env::var("PRIVATE_KEY") {
-        let trimmed = v.trim();
-        let len = trimmed.len();
+        let len = v.trim().len();
         if len != 64 && len != 66 {
             tracing::error!(
-                "PRIVATE_KEY length is {len} (after trim) — expected 64 (raw hex) or 66 (with 0x prefix). \
-                 PRIVATE_KEY parse WILL fail. Generate a fresh key with `openssl rand -hex 32`."
+                "PRIVATE_KEY length is {len} after trim, expected 64 or 66; parse WILL fail"
             );
+            problems += 1;
         }
     }
 
-    // Same check for each comma-separated entry in WALLET_PRIVATE_KEYS.
+    // WALLET_PRIVATE_KEYS: comma-separated list of keys, each must be 64 or 66 chars.
+    // We log only the index and length per malformed entry, never any portion of the
+    // value. This is how we caught WALLET_PRIVATE_KEYS[3] = a 42-char address on
+    // 2026-05-29.
     if let Ok(v) = env::var("WALLET_PRIVATE_KEYS") {
         for (i, raw) in v.split(',').enumerate() {
-            let trimmed = raw.trim();
-            let len = trimmed.len();
-            if !trimmed.is_empty() && len != 64 && len != 66 {
+            let len = raw.trim().len();
+            if len != 0 && len != 64 && len != 66 {
                 tracing::error!(
-                    "WALLET_PRIVATE_KEYS[{i}] length is {len} (after trim) — expected 64 or 66. \
-                     This entry WILL fail to parse."
+                    "WALLET_PRIVATE_KEYS[{i}] length is {len} after trim, expected 64 or 66; \
+                     parse WILL fail"
                 );
+                problems += 1;
             }
         }
     }
 
-    tracing::info!("=== End pre-flight environment audit ===");
-}
-
-fn audit_address(key: &str, required: bool) {
-    use std::env;
-    use std::str::FromStr;
-    match env::var(key) {
-        Ok(raw) => {
-            let trimmed = raw.trim();
-            let whitespace_note = if raw.len() != trimmed.len() {
-                format!(
-                    " WARNING: raw_len={} trimmed_len={} — hidden leading/trailing whitespace!",
-                    raw.len(),
-                    trimmed.len()
-                )
-            } else {
-                String::new()
-            };
-            match Address::from_str(trimmed) {
-                Ok(parsed) => tracing::info!(
-                    "  {key} = {parsed} (parses OK, len={}){whitespace_note}",
-                    trimmed.len()
-                ),
-                Err(e) => tracing::error!(
-                    "  {key} = {trimmed:?} FAILS to parse as Address: {e}{whitespace_note}"
-                ),
-            }
-        }
-        Err(_) if required => tracing::error!("  {key} = (NOT SET — REQUIRED)"),
-        Err(_) => tracing::info!("  {key} = (not set, optional)"),
-    }
-}
-
-fn audit_secret(key: &str, required: bool) {
-    use std::env;
-    match env::var(key) {
-        Ok(raw) => {
-            let trimmed_len = raw.trim().len();
-            let whitespace_note = if raw.len() != trimmed_len {
-                format!(
-                    " WARNING: raw_len={} trimmed_len={trimmed_len} — hidden whitespace; likely cause of parse errors!",
-                    raw.len(),
-                )
-            } else {
-                String::new()
-            };
-            tracing::info!("  {key} = <set, len={trimmed_len}>{whitespace_note}");
-        }
-        Err(_) if required => tracing::error!("  {key} = (NOT SET — REQUIRED)"),
-        Err(_) => tracing::info!("  {key} = (not set, optional)"),
-    }
-}
-
-fn audit_plain(key: &str) {
-    use std::env;
-    match env::var(key) {
-        Ok(raw) => {
-            let trimmed = raw.trim();
-            let whitespace_note = if raw.len() != trimmed.len() {
-                format!(" WARNING: hidden whitespace, raw_len={}", raw.len())
-            } else {
-                String::new()
-            };
-            tracing::info!("  {key} = {trimmed:?}{whitespace_note}");
-        }
-        Err(_) => tracing::info!("  {key} = (not set)"),
+    if problems == 0 {
+        tracing::info!("Pre-flight environment audit: all checks passed");
+    } else {
+        tracing::error!(
+            "Pre-flight environment audit: {problems} problem(s) detected; startup will likely fail"
+        );
     }
 }
 
