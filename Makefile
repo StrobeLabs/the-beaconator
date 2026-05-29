@@ -1,6 +1,6 @@
 # Makefile for the-beaconator
 
-.PHONY: help build build-release test test-unit test-integration test-parallel test-verbose test-coverage test-verify lint fmt fmt-check check clean clean-all docker-build docker-build-cached docker-run docker-run-local docker-test dev docs install pre-commit release-prep quality test-fast test-wallet test-wallet-stop test-redis test-full
+.PHONY: help build build-release test test-unit test-integration test-parallel test-verbose test-coverage test-verify lint fmt fmt-check check clean clean-all docker-build docker-build-cached docker-run docker-run-local docker-test dev docs install pre-commit release-prep quality test-fast test-wallet test-wallet-stop test-redis test-full refresh-abis
 
 # Default target
 help: ## Show this help message
@@ -158,6 +158,9 @@ check: ## Run cargo check and anvil cleanup (faster than build)
 	cargo check
 	@echo "Running anvil cleanup..."
 	./scripts/anvil-cleanup.sh
+
+refresh-abis: ## Regenerate abis/ from pinned contract release tags (.contracts-versions)
+	./scripts/refresh-abis.sh
 
 # Comprehensive quality check
 quality: fmt-check lint test-fast test-redis ## Run all quality checks (format, lint, tests including Redis)

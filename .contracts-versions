@@ -1,0 +1,4 @@
+# Pinned contract release tags for the-beaconator. Read by scripts/refresh-abis.sh.
+# Bump these tags + run `make refresh-abis` to update abis/.
+beacons=v0.0.1
+perpcity-contracts=v0.1.0

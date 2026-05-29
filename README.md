@@ -8,13 +8,20 @@ To build this juicy collaboration, the Baconator starts with two ¼ lb. patties2
 
 ## Quick Start
 
-The Beaconator is a Rust-based REST API service for creating and managing beacons and perpetual futures markets on Perp City
+The Beaconator is a Rust-based REST API service for creating and managing beacons and perpetual futures markets on Perp City.
+
+### Pinned contract versions
+
+The-beaconator's REST surface is pinned to specific release tags of the contract repos (not main). See `.contracts-versions` for the source of truth, and run `make refresh-abis` after bumping it.
+
+- `perpcity-contracts` @ **v0.1.0** (`PerpFactory` + per-market `Perp` contracts)
+- `beacons` @ **v0.0.1**
 
 ### Prerequisites
 
 - Rust (nightly version required)
 - Cargo
-- Base chain RPC access
+- Arbitrum RPC access (Arbitrum One for mainnet, Arbitrum Sepolia for testnet)
 - Ethereum wallet with private key
 - **Anvil** (for running tests) - Install via [Foundry](https://book.getfoundry.sh/getting-started/installation):
   ```bash
@@ -82,8 +89,8 @@ docker run -p 8000:8000 -e RPC_URL=your_rpc_url -e PRIVATE_KEY=your_private_key 
 Create a `.env` file in the project root with the following variables:
 
 ```env
-# Base Chain RPC URL
-RPC_URL=https://mainnet.base.org
+# Arbitrum RPC URL (Arbitrum One mainnet shown; replace with your private endpoint)
+RPC_URL=https://arb1.arbitrum.io/rpc
 
 # Private key for the wallet that will pay for gas (without 0x prefix)
 PRIVATE_KEY=your_private_key_here_without_0x_prefix

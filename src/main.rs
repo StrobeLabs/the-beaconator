@@ -18,16 +18,16 @@ async fn rocket() -> _ {
 
     tracing::info!("Starting the Beaconator server...");
 
-    // Check environment setup
+    // Environment check — presence only, never values. The full audit (with shape /
+    // length checks for every var) runs inside `create_rocket()` via `audit_environment`,
+    // which emits ERROR lines per problem and a one-line summary.
     tracing::info!("Environment check:");
-    tracing::info!("  - RUST_LOG: {:?}", std::env::var("RUST_LOG"));
-    tracing::info!("  - ENV: {:?}", std::env::var("ENV"));
-    tracing::info!(
-        "  - SENTRY_DSN: {}",
-        std::env::var("SENTRY_DSN")
-            .map(|_| "Set")
-            .unwrap_or("Not set")
-    );
+    for key in ["RUST_LOG", "ENV", "SENTRY_DSN"] {
+        tracing::info!(
+            "  - {key}: {}",
+            std::env::var(key).map(|_| "Set").unwrap_or("Not set")
+        );
+    }
 
     let dsn = std::env::var("SENTRY_DSN")
         .ok()
@@ -46,20 +46,32 @@ async fn rocket() -> _ {
         None
     };
 
-    // Install panic handler to log panics
+    // Install panic handler to log panics.
+    //
+    // The previous version logged `panic_info` via Debug, which only prints
+    // `PanicHookInfo { payload: Any { .. }, location: ... }` — the actual panic message
+    // never made it to the logs. We now downcast `payload()` to recover the message
+    // string that `panic!("...")` and `.expect("...")` write.
     std::panic::set_hook(Box::new(|panic_info| {
-        tracing::error!("PANIC occurred: {:?}", panic_info);
-        if let Some(location) = panic_info.location() {
-            tracing::error!(
-                "Panic location: {}:{}:{}",
-                location.file(),
-                location.line(),
-                location.column()
-            );
-        }
-        let msg = format!("Panic: {panic_info:?}");
+        let payload = panic_info.payload();
+        let message = payload
+            .downcast_ref::<&'static str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("(non-string panic payload — payload was not &str or String)");
+
+        let location_str = panic_info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown location>".to_string());
+
+        tracing::error!("PANIC at {}: {}", location_str, message);
+
+        // Sentry capture: include both the message and the location in a single string so the
+        // grouped issue title is readable in the dashboard.
+        let sentry_msg = format!("Panic at {location_str}: {message}");
         let _ = std::panic::catch_unwind(|| {
-            sentry::capture_message(&msg, sentry::Level::Fatal);
+            sentry::capture_message(&sentry_msg, sentry::Level::Fatal);
         });
     }));
 

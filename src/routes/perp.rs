@@ -1,4 +1,5 @@
-use alloy::primitives::{Address, FixedBytes};
+use alloy::primitives::{Address, FixedBytes, keccak256};
+use alloy::sol_types::SolValue;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
 use rocket_okapi::openapi;
@@ -11,14 +12,41 @@ use crate::models::{
     ApiResponse, AppState, DeployPerpForBeaconRequest, DeployPerpForBeaconResponse,
     DepositLiquidityForPerpRequest, DepositLiquidityForPerpResponse,
 };
-use crate::services::perp::{
-    deploy_perp_for_beacon, deposit_liquidity_for_perp, validate_module_address,
-};
+use crate::routes::IPerpFactory;
+use crate::services::perp::{deploy_perp_for_beacon, deposit_liquidity_for_perp};
 
-/// Deploys a perpetual contract for a specific beacon.
+/// Derive a deterministic 32-byte salt from the deploy request. Reusing this salt on retry
+/// causes `LibClone.cloneDeterministic` inside PerpFactory.createPerp to revert if the previous
+/// call already minted the accounting-token clones — making /deploy_perp_for_beacon idempotent
+/// instead of silently creating a duplicate market when the client retries after a timeout.
 ///
-/// Creates a new perpetual pool using the PerpManager contract for the specified beacon address.
-/// Returns the perp ID, PerpManager address, and transaction hash on success.
+/// Includes every user-controllable createPerp input so that distinct intents produce distinct
+/// salts.
+fn deterministic_salt(
+    beacon: Address,
+    owner: Address,
+    name: &str,
+    symbol: &str,
+    token_uri: &str,
+    ema_window: u32,
+) -> FixedBytes<32> {
+    let encoded = (
+        beacon,
+        owner,
+        name.to_string(),
+        symbol.to_string(),
+        token_uri.to_string(),
+        ema_window,
+    )
+        .abi_encode();
+    keccak256(encoded)
+}
+
+/// Deploys a perpetual market contract for a specific beacon via PerpFactory.createPerp.
+///
+/// perpcity-contracts@v0.1.0 architecture: each market is its own `Perp` contract.
+/// Module addresses (Fees / Funding / MarginRatios / PriceImpact / Pricing) are resolved
+/// from the server's environment, not the request body.
 #[openapi(tag = "Perpetual")]
 #[post("/deploy_perp_for_beacon", data = "<request>")]
 pub async fn deploy_perp_for_beacon_endpoint(
@@ -43,13 +71,12 @@ pub async fn deploy_perp_for_beacon_endpoint(
         scope.set_tag("endpoint", "/deploy_perp_for_beacon");
         scope.set_extra("beacon_address", request.beacon_address.clone().into());
         scope.set_extra(
-            "perp_manager_address",
-            state.contracts.perp_manager.to_string().into(),
+            "perp_factory_address",
+            state.contracts.perp_factory.to_string().into(),
         );
         scope.set_extra("wallet_source", "WalletManager pool".into());
     });
 
-    // Parse the beacon address
     let beacon_address = match Address::from_str(&request.beacon_address) {
         Ok(addr) => addr,
         Err(e) => {
@@ -65,200 +92,88 @@ pub async fn deploy_perp_for_beacon_endpoint(
         }
     };
 
-    // Parse module addresses
-    let fees_module = match Address::from_str(&request.fees_module) {
+    let owner = match Address::from_str(&request.owner) {
         Ok(addr) => addr,
         Err(e) => {
-            let error_msg = format!(
-                "Invalid fees module address '{}': {}",
-                request.fees_module, e
-            );
+            let error_msg = format!("Invalid owner address '{}': {}", request.owner, e);
             tracing::error!("{}", error_msg);
             sentry_error(
                 &hub,
                 "ValidationError",
                 error_msg,
-                vec![("fees_module", request.fees_module.clone().into())],
+                vec![("owner", request.owner.clone().into())],
             );
             return Err(Status::BadRequest);
         }
     };
 
-    let margin_ratios_module = match Address::from_str(&request.margin_ratios_module) {
-        Ok(addr) => addr,
-        Err(e) => {
-            let error_msg = format!(
-                "Invalid margin ratios module address '{}': {}",
-                request.margin_ratios_module, e
-            );
-            tracing::error!("{}", error_msg);
-            sentry_error(
-                &hub,
-                "ValidationError",
-                error_msg,
-                vec![(
-                    "margin_ratios_module",
-                    request.margin_ratios_module.clone().into(),
-                )],
-            );
-            return Err(Status::BadRequest);
-        }
-    };
+    // Validate ema_window fits in uint24 and is non-zero (matches IPerpFactory.EmaWindowTooLow).
+    // Defensive: also enforced inside deploy_perp_for_beacon, but rejecting here gives a clearer
+    // BadRequest instead of a 500 from the service layer.
+    if request.ema_window == 0 || request.ema_window > 0x00FF_FFFF {
+        let error_msg = format!(
+            "Invalid ema_window {}: must be in 1..=16777215 (uint24 non-zero)",
+            request.ema_window
+        );
+        tracing::error!("{}", error_msg);
+        sentry_error(
+            &hub,
+            "ValidationError",
+            error_msg,
+            vec![("ema_window", request.ema_window.to_string().into())],
+        );
+        return Err(Status::BadRequest);
+    }
 
-    let lockup_period_module = match Address::from_str(&request.lockup_period_module) {
-        Ok(addr) => addr,
-        Err(e) => {
-            let error_msg = format!(
-                "Invalid lockup period module address '{}': {}",
-                request.lockup_period_module, e
-            );
-            tracing::error!("{}", error_msg);
-            sentry_error(
-                &hub,
-                "ValidationError",
-                error_msg,
-                vec![(
-                    "lockup_period_module",
-                    request.lockup_period_module.clone().into(),
-                )],
-            );
-            return Err(Status::BadRequest);
-        }
-    };
-
-    let sqrt_price_impact_limit_module =
-        match Address::from_str(&request.sqrt_price_impact_limit_module) {
-            Ok(addr) => addr,
+    let salt = match request.salt.as_deref() {
+        None => deterministic_salt(
+            beacon_address,
+            owner,
+            &request.name,
+            &request.symbol,
+            &request.token_uri,
+            request.ema_window,
+        ),
+        Some(s) => match FixedBytes::<32>::from_str(s) {
+            Ok(b) => b,
             Err(e) => {
-                let error_msg = format!(
-                    "Invalid sqrt price impact limit module address '{}': {}",
-                    request.sqrt_price_impact_limit_module, e
-                );
+                let error_msg = format!("Invalid salt '{s}': {e} (expected 32-byte hex)");
                 tracing::error!("{}", error_msg);
                 sentry_error(
                     &hub,
                     "ValidationError",
                     error_msg,
-                    vec![(
-                        "sqrt_price_impact_limit_module",
-                        request.sqrt_price_impact_limit_module.clone().into(),
-                    )],
+                    vec![("salt", s.to_string().into())],
                 );
                 return Err(Status::BadRequest);
             }
-        };
-
-    // Validate all module addresses have deployed code
-    tracing::info!("Validating module addresses...");
-
-    if let Err(e) =
-        validate_module_address(&state.provider.read_provider, fees_module, "Fees module").await
-    {
-        tracing::error!("fees_module ({}) failed validation: {}", fees_module, e);
-        sentry_error(
-            &hub,
-            "ValidationError",
-            e,
-            vec![("fees_module", fees_module.to_string().into())],
-        );
-        return Err(Status::BadRequest);
-    }
-
-    if let Err(e) = validate_module_address(
-        &state.provider.read_provider,
-        margin_ratios_module,
-        "Margin ratios module",
-    )
-    .await
-    {
-        tracing::error!(
-            "margin_ratios_module ({}) failed validation: {}",
-            margin_ratios_module,
-            e
-        );
-        sentry_error(
-            &hub,
-            "ValidationError",
-            e,
-            vec![(
-                "margin_ratios_module",
-                margin_ratios_module.to_string().into(),
-            )],
-        );
-        return Err(Status::BadRequest);
-    }
-
-    if let Err(e) = validate_module_address(
-        &state.provider.read_provider,
-        lockup_period_module,
-        "Lockup period module",
-    )
-    .await
-    {
-        tracing::error!(
-            "lockup_period_module ({}) failed validation: {}",
-            lockup_period_module,
-            e
-        );
-        sentry_error(
-            &hub,
-            "ValidationError",
-            e,
-            vec![(
-                "lockup_period_module",
-                lockup_period_module.to_string().into(),
-            )],
-        );
-        return Err(Status::BadRequest);
-    }
-
-    if let Err(e) = validate_module_address(
-        &state.provider.read_provider,
-        sqrt_price_impact_limit_module,
-        "Sqrt price impact limit module",
-    )
-    .await
-    {
-        tracing::error!(
-            "sqrt_price_impact_limit_module ({}) failed validation: {}",
-            sqrt_price_impact_limit_module,
-            e
-        );
-        sentry_error(
-            &hub,
-            "ValidationError",
-            e,
-            vec![(
-                "sqrt_price_impact_limit_module",
-                sqrt_price_impact_limit_module.to_string().into(),
-            )],
-        );
-        return Err(Status::BadRequest);
-    }
-
-    tracing::info!("All module addresses validated successfully");
+        },
+    };
 
     tracing::info!("Starting perp deployment process...");
     match deploy_perp_for_beacon(
         state,
         beacon_address,
-        fees_module,
-        margin_ratios_module,
-        lockup_period_module,
-        sqrt_price_impact_limit_module,
+        owner,
+        request.name.clone(),
+        request.symbol.clone(),
+        request.token_uri.clone(),
+        request.ema_window,
+        salt,
     )
     .await
     {
         Ok(response) => {
             let message = "Perp deployed successfully!";
             tracing::info!("{}", message);
-            tracing::info!("Perp ID: {}", response.perp_id);
-            tracing::info!("PerpManager address: {}", response.perp_manager_address);
+            tracing::info!("Perp address: {}", response.perp_address);
+            tracing::info!("PerpFactory address: {}", response.perp_factory_address);
+            tracing::info!("Pool ID: {}", response.pool_id);
             tracing::info!("Transaction hash: {}", response.transaction_hash);
             hub.capture_message(
                 &format!(
-                    "Perp deployed successfully for beacon {beacon_address}, perp ID: {}",
-                    response.perp_id
+                    "Perp deployed successfully for beacon {beacon_address}, perp address: {}",
+                    response.perp_address
                 ),
                 sentry::Level::Info,
             );
@@ -273,33 +188,8 @@ pub async fn deploy_perp_for_beacon_endpoint(
             tracing::error!("{}", error_msg);
             tracing::error!("Error context:");
             tracing::error!("  - Beacon address: {}", beacon_address);
-            tracing::error!("  - PerpManager address: {}", state.contracts.perp_manager);
+            tracing::error!("  - PerpFactory address: {}", state.contracts.perp_factory);
             tracing::error!("  - USDC address: {}", state.contracts.usdc);
-            tracing::error!("  - Wallet source: WalletManager pool");
-
-            // Provide actionable next steps based on error
-            tracing::error!("Recommended next steps:");
-            if e.contains("execution reverted") {
-                tracing::error!(
-                    "  1. Verify PerpManager contract is deployed at {}",
-                    state.contracts.perp_manager
-                );
-                tracing::error!(
-                    "  2. Check beacon address {} exists and is valid",
-                    beacon_address
-                );
-                tracing::error!(
-                    "  3. Ensure external contracts (PoolManager, modules) are accessible"
-                );
-                tracing::error!("  4. Review module addresses and parameters for correctness");
-            } else if e.contains("insufficient funds") {
-                tracing::error!("  1. Check wallet balance and ensure sufficient ETH for gas");
-                tracing::error!("  2. Verify USDC balance if contract requires token transfers");
-            } else {
-                tracing::error!("  1. Check network connectivity and RPC endpoint");
-                tracing::error!("  2. Verify all contract addresses are correct");
-                tracing::error!("  3. Try the request again after a short delay");
-            }
 
             sentry_error(
                 &hub,
@@ -312,10 +202,10 @@ pub async fn deploy_perp_for_beacon_endpoint(
     }
 }
 
-/// Deposits liquidity for a specific perpetual contract.
+/// Deposits liquidity (opens a maker position) on a per-market `Perp` contract.
 ///
-/// Approves USDC spending and deposits the specified margin amount as liquidity
-/// for the given perp ID. Returns the maker position ID and transaction hashes.
+/// Approves USDC spending against the per-Perp contract address and calls
+/// `Perp.openMaker(OpenMakerParams)`. Returns the maker position ID and transaction hashes.
 #[openapi(tag = "Perpetual")]
 #[post("/deposit_liquidity_for_perp", data = "<request>")]
 pub async fn deposit_liquidity_for_perp_endpoint(
@@ -329,34 +219,32 @@ pub async fn deposit_liquidity_for_perp_endpoint(
         ty: "http".into(),
         category: Some("request".into()),
         message: Some(format!(
-            "POST /deposit_liquidity_for_perp perp_id={}",
-            request.perp_id
+            "POST /deposit_liquidity_for_perp perp_address={}",
+            request.perp_address
         )),
         ..Default::default()
     });
     hub.configure_scope(|scope| {
         scope.set_tag("endpoint", "/deposit_liquidity_for_perp");
-        scope.set_extra("perp_id", request.perp_id.clone().into());
+        scope.set_extra("perp_address", request.perp_address.clone().into());
         scope.set_extra("margin_amount", request.margin_amount_usdc.clone().into());
     });
 
-    // Parse the perp ID (PoolId as bytes32)
-    let perp_id = match FixedBytes::<32>::from_str(&request.perp_id) {
-        Ok(id) => id,
+    let perp_address = match Address::from_str(&request.perp_address) {
+        Ok(addr) => addr,
         Err(e) => {
-            let error_msg = format!("Invalid perp ID '{}': {e}", request.perp_id);
+            let error_msg = format!("Invalid perp address '{}': {e}", request.perp_address);
             tracing::error!("{}", error_msg);
             sentry_error(
                 &hub,
                 "ValidationError",
                 error_msg,
-                vec![("perp_id", request.perp_id.clone().into())],
+                vec![("perp_address", request.perp_address.clone().into())],
             );
             return Err(Status::BadRequest);
         }
     };
 
-    // Parse the margin amount (USDC in 6 decimals)
     let margin_amount = match request.margin_amount_usdc.parse::<u128>() {
         Ok(amount) => amount,
         Err(e) => {
@@ -377,20 +265,57 @@ pub async fn deposit_liquidity_for_perp_endpoint(
         }
     };
 
-    // All margin validations are performed by on-chain modules
     tracing::info!(
         "Margin amount: {} USDC (validation delegated to on-chain modules)",
         margin_amount as f64 / 1_000_000.0
     );
 
-    // Extract tick parameters from request or use defaults
     let tick_spacing = request.tick_spacing.unwrap_or(30);
     let tick_lower = request.tick_lower.unwrap_or(24390);
     let tick_upper = request.tick_upper.unwrap_or(53850);
 
+    // Defense in depth: refuse to approve USDC against any address that wasn't deployed by the
+    // trusted PerpFactory. The endpoint is gated by the API token, but a caller typo or a
+    // compromised token must never produce a USDC allowance on an EOA or a non-Perp contract.
+    //
+    // The on-chain check is `PerpFactory.perps(address)` (boolean mapping populated in
+    // createPerp). Run AFTER cheap input validation so 400-class errors are surfaced first.
+    let factory = IPerpFactory::new(state.contracts.perp_factory, &state.provider.read_provider);
+    match factory.perps(perp_address).call().await {
+        Ok(is_known_perp) => {
+            if !is_known_perp {
+                let error_msg = format!(
+                    "perp_address {perp_address} is not registered with PerpFactory \
+                     {} — refusing to approve USDC to an untrusted address",
+                    state.contracts.perp_factory
+                );
+                tracing::error!("{}", error_msg);
+                sentry_error(
+                    &hub,
+                    "ValidationError",
+                    error_msg,
+                    vec![("perp_address", perp_address.to_string().into())],
+                );
+                return Err(Status::BadRequest);
+            }
+        }
+        Err(e) => {
+            let error_msg =
+                format!("Failed to verify perp_address {perp_address} with factory: {e}");
+            tracing::error!("{}", error_msg);
+            sentry_error(
+                &hub,
+                "ContractError",
+                error_msg,
+                vec![("perp_address", perp_address.to_string().into())],
+            );
+            return Err(Status::InternalServerError);
+        }
+    }
+
     match deposit_liquidity_for_perp(
         state,
-        perp_id,
+        perp_address,
         margin_amount,
         tick_spacing,
         tick_lower,
@@ -416,43 +341,19 @@ pub async fn deposit_liquidity_for_perp_endpoint(
         Err(e) => {
             let error_msg = format!(
                 "Failed to deposit liquidity for perp {}: {e}",
-                request.perp_id
+                request.perp_address
             );
             tracing::error!("{}", error_msg);
             tracing::error!("Error context:");
-            tracing::error!("  - Perp ID: {}", request.perp_id);
+            tracing::error!("  - Perp address: {}", request.perp_address);
             tracing::error!("  - Margin amount: {} USDC", request.margin_amount_usdc);
-            tracing::error!("  - PerpManager address: {}", state.contracts.perp_manager);
-            tracing::error!("  - Wallet source: WalletManager pool");
-
-            // Provide actionable next steps
-            tracing::error!("Recommended next steps:");
-            if e.contains("execution reverted") {
-                tracing::error!(
-                    "  1. Verify perp ID {} exists and is active",
-                    request.perp_id
-                );
-                tracing::error!(
-                    "  2. Check margin amount {} is within allowed limits",
-                    request.margin_amount_usdc
-                );
-                tracing::error!("  3. Ensure sufficient USDC balance for liquidity deposit");
-                tracing::error!("  4. Verify tick range configuration is valid");
-            } else if e.contains("invalid perp") || e.contains("perp not found") {
-                tracing::error!("  1. Confirm perp was successfully deployed first");
-                tracing::error!("  2. Verify perp ID format is correct (32-byte hex)");
-                tracing::error!("  3. Check deployment transaction was confirmed");
-            } else {
-                tracing::error!("  1. Check network connectivity and RPC endpoint");
-                tracing::error!("  2. Verify all contract addresses are correct");
-                tracing::error!("  3. Try the request again after a short delay");
-            }
+            tracing::error!("  - PerpFactory address: {}", state.contracts.perp_factory);
 
             sentry_error(
                 &hub,
                 "ContractError",
                 error_msg,
-                vec![("perp_id", request.perp_id.clone().into())],
+                vec![("perp_address", request.perp_address.clone().into())],
             );
             Err(Status::InternalServerError)
         }

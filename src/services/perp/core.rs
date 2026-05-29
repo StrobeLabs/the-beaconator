@@ -1,32 +1,33 @@
-use alloy::primitives::{Address, FixedBytes, Signed, U256, Uint};
+use alloy::primitives::{Address, FixedBytes, U256};
 use alloy::providers::Provider;
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing;
 
-use super::super::transaction::events::{
-    parse_maker_position_opened_event, parse_perp_created_event,
-};
+use super::super::transaction::events::{parse_maker_opened_event, parse_perp_created_event};
 use super::super::transaction::execution::is_nonce_error;
 use super::validation::try_decode_revert_reason;
 use crate::models::{AppState, DeployPerpForBeaconResponse, DepositLiquidityForPerpResponse};
-use crate::routes::{IERC20, IPerpManager};
+use crate::routes::{IERC20, IPerp, IPerpFactory};
 
-/// Deploys a perpetual contract for a specific beacon.
+/// Deploys a per-market `Perp` contract via PerpFactory.createPerp (perpcity-contracts@v0.1.0).
 ///
-/// Creates a new perpetual pool using the PerpManager contract with modular plugin configuration.
-/// Returns the perp ID and transaction hash on success.
+/// Module addresses are taken from `state.contracts` (configured via env vars at startup).
+/// On success, returns the new `Perp` contract address along with PoolId / sqrtPrice / tick
+/// extracted from the `PerpCreated` event.
+#[allow(clippy::too_many_arguments)]
 pub async fn deploy_perp_for_beacon(
     state: &AppState,
     beacon_address: Address,
-    fees_module: Address,
-    margin_ratios_module: Address,
-    lockup_period_module: Address,
-    sqrt_price_impact_limit_module: Address,
+    owner: Address,
+    name: String,
+    symbol: String,
+    token_uri: String,
+    ema_window: u32,
+    salt: FixedBytes<32>,
 ) -> Result<DeployPerpForBeaconResponse, String> {
     tracing::info!("Starting perp deployment for beacon: {}", beacon_address);
 
-    // Acquire a wallet from the pool
     let wallet_handle = state
         .wallets
         .manager
@@ -37,257 +38,115 @@ pub async fn deploy_perp_for_beacon(
     let wallet_address = wallet_handle.address();
     tracing::info!("Acquired wallet {} for perp deployment", wallet_address);
 
-    // Build provider with the acquired wallet
     let provider = wallet_handle
         .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
-    // Log environment details
     tracing::info!("Environment details:");
-    tracing::info!("  - PerpManager address: {}", state.contracts.perp_manager);
+    tracing::info!("  - PerpFactory address: {}", state.contracts.perp_factory);
     tracing::info!("  - Wallet address: {}", wallet_address);
     tracing::info!("  - USDC address: {}", state.contracts.usdc);
-    tracing::info!("Modular configuration:");
-    tracing::info!("  - Fees module: {}", fees_module);
-    tracing::info!("  - Margin ratios module: {}", margin_ratios_module);
-    tracing::info!("  - Lockup period module: {}", lockup_period_module);
-    tracing::info!(
-        "  - Sqrt price impact limit module: {}",
-        sqrt_price_impact_limit_module
-    );
-    // Check wallet balance first using read provider
-    match state
+    tracing::info!("Modules struct (server-configured):");
+    tracing::info!("  - beacon: {}", beacon_address);
+    tracing::info!("  - fees: {}", state.contracts.fees_module);
+    tracing::info!("  - funding: {}", state.contracts.funding_module);
+    tracing::info!("  - marginRatios: {}", state.contracts.margin_ratios_module);
+    tracing::info!("  - priceImpact: {}", state.contracts.price_impact_module);
+    tracing::info!("  - pricing: {}", state.contracts.pricing_module);
+
+    if let Ok(balance) = state
         .provider
         .read_provider
         .get_balance(wallet_address)
         .await
     {
-        Ok(balance) => {
-            let balance_f64 = balance.to::<u128>() as f64 / 1e18;
-            tracing::info!("Wallet balance: {:.6} ETH", balance_f64);
-        }
-        Err(e) => {
-            tracing::warn!("Failed to get wallet balance: {}", e);
-        }
+        let balance_f64 = balance.to::<u128>() as f64 / 1e18;
+        tracing::info!("Wallet balance: {:.6} ETH", balance_f64);
     }
 
-    // Create contract instance using the wallet's provider for transactions
-    let contract = IPerpManager::new(state.contracts.perp_manager, &provider);
-
-    // Validate beacon exists and has code deployed using read provider
-    tracing::info!("Validating beacon address exists...");
+    // Verify the beacon contract has code deployed.
     match state
         .provider
         .read_provider
         .get_code_at(beacon_address)
         .await
     {
+        Ok(code) if code.is_empty() => {
+            let error_msg =
+                format!("Beacon address {beacon_address} has no deployed code (not a contract)");
+            tracing::error!("{}", error_msg);
+            return Err(error_msg);
+        }
         Ok(code) => {
-            if code.is_empty() {
-                let error_msg = format!(
-                    "Beacon address {beacon_address} has no deployed code (not a contract)"
-                );
-                tracing::error!("{}", error_msg);
-                tracing::error!("Troubleshooting hints:");
-                tracing::error!("  - Verify the beacon was successfully deployed");
-                tracing::error!(
-                    "  - Check if you're using the correct network (mainnet vs testnet)"
-                );
-                tracing::error!("  - Confirm the beacon deployment transaction was mined");
-                tracing::error!("  - Double-check the beacon address is correct");
-                return Err(error_msg);
-            } else {
-                tracing::info!(
-                    "Beacon address {} has deployed code ({} bytes)",
-                    beacon_address,
-                    code.len()
-                );
-            }
+            tracing::info!(
+                "Beacon address {} has deployed code ({} bytes)",
+                beacon_address,
+                code.len()
+            );
         }
         Err(e) => {
             let error_msg = format!("Failed to check beacon address {beacon_address}: {e}");
             tracing::error!("{}", error_msg);
-            tracing::error!("This might indicate network connectivity issues or invalid address");
             return Err(error_msg);
         }
     }
 
-    // Additional beacon validation - try to call a basic function
-    tracing::info!("Attempting to validate beacon contract interface...");
+    let factory = IPerpFactory::new(state.contracts.perp_factory, &provider);
 
-    // Try to get the beacon address from the beacon contract (if it implements the standard interface)
-    let beacon_call_result = state
-        .provider
-        .read_provider
-        .call(
-            alloy::rpc::types::TransactionRequest::default()
-                .to(beacon_address)
-                .input(alloy::primitives::hex!("59659e90").to_vec().into()),
-        ) // selector for beacon() function
-        .await;
-
-    match beacon_call_result {
-        Ok(_) => {
-            tracing::info!("Beacon contract appears to have standard interface");
-        }
-        Err(e) => {
-            tracing::warn!("Could not validate standard beacon interface: {}", e);
-            tracing::warn!("Proceeding anyway - contract exists but may use custom interface");
-            tracing::warn!("  - This could be a custom beacon implementation");
-            tracing::warn!("  - The perp deployment may still succeed if the beacon is valid");
-        }
-    }
-
-    // Try to call index() function to verify it's a beacon contract
-    tracing::info!("Validating beacon contract has index() function...");
-    let index_call_result = state
-        .provider
-        .read_provider
-        .call(
-            alloy::rpc::types::TransactionRequest::default()
-                .to(beacon_address)
-                .input(alloy::primitives::hex!("2986c0e5").to_vec().into()), // selector for index()
-        )
-        .await;
-
-    match index_call_result {
-        Ok(_) => {
-            tracing::info!("Beacon contract has index() function");
-        }
-        Err(e) => {
-            tracing::warn!("Beacon contract may not have index() function: {}", e);
-            tracing::warn!(
-                "  - The perp deployment may fail if PerpManager expects a standard beacon"
-            );
-        }
-    }
-
-    // Prepare the CreatePerpParams struct with modular configuration
-    tracing::info!("CreatePerpParams parameters (5 fields - modular architecture):");
-    tracing::info!("  1. beacon: {} (address)", beacon_address);
-    tracing::info!("  2. fees: {} (IFees module)", fees_module);
-    tracing::info!(
-        "  3. marginRatios: {} (IMarginRatios module)",
-        margin_ratios_module
-    );
-    tracing::info!(
-        "  4. lockupPeriod: {} (ILockupPeriod module)",
-        lockup_period_module
-    );
-    tracing::info!(
-        "  5. sqrtPriceImpactLimit: {} (ISqrtPriceImpactLimit module)",
-        sqrt_price_impact_limit_module
-    );
-
-    let create_perp_params = IPerpManager::CreatePerpParams {
+    let modules = IPerpFactory::Modules {
         beacon: beacon_address,
-        fees: fees_module,
-        marginRatios: margin_ratios_module,
-        lockupPeriod: lockup_period_module,
-        sqrtPriceImpactLimit: sqrt_price_impact_limit_module,
+        fees: state.contracts.fees_module,
+        funding: state.contracts.funding_module,
+        marginRatios: state.contracts.margin_ratios_module,
+        priceImpact: state.contracts.price_impact_module,
+        pricing: state.contracts.pricing_module,
     };
 
-    tracing::info!("CreatePerpParams struct prepared successfully");
-    tracing::info!("Initiating createPerp transaction...");
+    // emaWindow is encoded as uint24 on-chain; verify before sending so the revert is local.
+    if ema_window == 0 {
+        return Err("ema_window must be > 0 (uint24)".to_string());
+    }
+    if ema_window > 0xFF_FFFF {
+        return Err(format!(
+            "ema_window {ema_window} exceeds uint24 max (16777215)"
+        ));
+    }
+    let ema_window_u24 = alloy::primitives::Uint::<24, 1>::from(ema_window);
 
-    // Send the transaction and wait for confirmation
-    tracing::info!("Sending createPerp transaction to PerpManager contract...");
-    let pending_tx = contract
-        .createPerp(create_perp_params)
+    tracing::info!("Sending createPerp transaction to PerpFactory...");
+    let pending_tx = factory
+        .createPerp(
+            owner,
+            name.clone(),
+            symbol.clone(),
+            token_uri.clone(),
+            modules,
+            ema_window_u24,
+            salt,
+        )
         .send()
         .await
         .map_err(|e| {
-            let error_type = match e.to_string().as_str() {
-                s if s.contains("execution reverted") => "Contract Execution Reverted",
-                s if s.contains("insufficient funds") => "Insufficient Funds",
-                s if s.contains("gas") => "Gas Related Error",
-                s if s.contains("nonce") => "Nonce Error",
-                s if s.contains("connection") || s.contains("timeout") => {
-                    "Network Connection Error"
-                }
-                s if s.contains("unauthorized") || s.contains("forbidden") => "Authorization Error",
-                _ => "Unknown Transaction Error",
-            };
-
-            let error_msg = format!("{error_type}: {e}");
+            let mut error_msg = format!("createPerp send failed: {e}");
+            if let Some(decoded) = try_decode_revert_reason(&e) {
+                error_msg = format!("createPerp reverted: {decoded}");
+            }
             tracing::error!("{}", error_msg);
-            tracing::error!("Transaction send error details: {:?}", e);
-
-            // Try to decode revert reason if it's an execution revert
-            if let Some(revert_reason) = try_decode_revert_reason(&e) {
-                tracing::error!("{}", revert_reason);
-            }
-
-            tracing::error!("Contract call details:");
-            tracing::error!("  - PerpManager address: {}", state.contracts.perp_manager);
-            tracing::error!("  - Beacon address: {}", beacon_address);
-            tracing::error!("  - Provider type: Alloy HTTP provider");
-
-            // Add specific troubleshooting hints based on error type
-            match error_type {
-                "Contract Execution Reverted" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Check if PerpManager contract is properly deployed");
-                    tracing::error!("  - Verify beacon address exists and is valid");
-                    tracing::error!("  - Ensure all module addresses are correct and deployed");
-                    tracing::error!(
-                        "  - Check if external contracts (PoolManager, modules) are available"
-                    );
-                    tracing::error!("  - Verify beacon is not already registered with PerpManager");
-                    tracing::error!("  - Check if beacon implements the expected interface");
-                    tracing::error!("  - Verify PerpManager contract has required permissions");
-                    tracing::error!("  - Verify module contracts are properly configured");
-
-                    // Additional debugging for execution reverted
-                    tracing::error!("Execution revert analysis:");
-                    tracing::error!("  - Beacon address: {} (has code deployed)", beacon_address);
-                    tracing::error!("  - PerpManager address: {}", state.contracts.perp_manager);
-                    tracing::error!("  - Fees module: {}", fees_module);
-                    tracing::error!("  - Margin ratios module: {}", margin_ratios_module);
-                    tracing::error!("  - Lockup period module: {}", lockup_period_module);
-                    tracing::error!(
-                        "  - Sqrt price impact limit module: {}",
-                        sqrt_price_impact_limit_module
-                    );
-                }
-                "Insufficient Funds" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Check wallet ETH balance for gas fees");
-                    tracing::error!("  - Verify USDC balance if contract requires token transfers");
-                }
-                "Gas Related Error" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Try increasing gas limit");
-                    tracing::error!("  - Check current network gas prices");
-                }
-                "Network Connection Error" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Check RPC endpoint connectivity");
-                    tracing::error!("  - Verify network is accessible");
-                    tracing::error!("  - Try again as this might be temporary");
-                }
-                _ => {}
-            }
-
+            tracing::error!("Context:");
+            tracing::error!("  - PerpFactory: {}", state.contracts.perp_factory);
+            tracing::error!("  - Beacon: {}", beacon_address);
+            tracing::error!("  - Owner: {}", owner);
             sentry::capture_message(&error_msg, sentry::Level::Error);
             error_msg
         })?;
 
-    tracing::info!("Transaction sent successfully, waiting for confirmation...");
     let pending_tx_hash = *pending_tx.tx_hash();
-    tracing::info!("Transaction hash (pending): {:?}", pending_tx_hash);
+    tracing::info!("createPerp tx hash: {:?}", pending_tx_hash);
 
-    // Use get_receipt() with timeout and fallback like beacon endpoints
     let receipt = match timeout(Duration::from_secs(120), pending_tx.get_receipt()).await {
-        Ok(Ok(receipt)) => {
-            tracing::info!("Perp deployment confirmed via get_receipt()");
-            receipt
-        }
+        Ok(Ok(receipt)) => receipt,
         Ok(Err(e)) => {
-            tracing::warn!("get_receipt() failed for perp deployment: {}", e);
-            tracing::info!("Falling back to on-chain perp deployment check...");
-
-            // Try to get the receipt directly from the read provider with timeout
+            tracing::warn!("get_receipt() failed for createPerp: {}", e);
             match timeout(
                 Duration::from_secs(30),
                 state
@@ -297,83 +156,73 @@ pub async fn deploy_perp_for_beacon(
             )
             .await
             {
-                Ok(Ok(Some(receipt))) => {
-                    tracing::info!("Perp deployment confirmed via on-chain check");
-                    receipt
-                }
+                Ok(Ok(Some(r))) => r,
                 Ok(Ok(None)) => {
-                    let error_msg =
-                        format!("Perp deployment transaction {pending_tx_hash} not found on-chain");
-                    tracing::error!("{}", error_msg);
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
-                    return Err(error_msg);
+                    let msg =
+                        format!("createPerp transaction {pending_tx_hash} not found on-chain");
+                    sentry::capture_message(&msg, sentry::Level::Error);
+                    return Err(msg);
                 }
                 Ok(Err(e)) => {
-                    let error_msg = format!(
-                        "Failed to check perp deployment transaction {pending_tx_hash} on-chain: {e}"
-                    );
-                    tracing::error!("{}", error_msg);
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
-                    return Err(error_msg);
+                    let msg =
+                        format!("Failed to check createPerp tx {pending_tx_hash} on-chain: {e}");
+                    sentry::capture_message(&msg, sentry::Level::Error);
+                    return Err(msg);
                 }
                 Err(_) => {
-                    let error_msg = format!(
-                        "Timeout checking perp deployment transaction {pending_tx_hash} on-chain"
-                    );
-                    tracing::error!("{}", error_msg);
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
-                    return Err(error_msg);
+                    let msg = format!("Timeout checking createPerp tx {pending_tx_hash} on-chain");
+                    sentry::capture_message(&msg, sentry::Level::Error);
+                    return Err(msg);
                 }
             }
         }
         Err(_) => {
-            let error_msg = "Timeout waiting for perp deployment receipt".to_string();
-            tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
-            return Err(error_msg);
+            let msg = "Timeout waiting for createPerp receipt".to_string();
+            sentry::capture_message(&msg, sentry::Level::Error);
+            return Err(msg);
         }
     };
 
     let tx_hash = receipt.transaction_hash;
-    tracing::info!("Perp deployment transaction confirmed successfully!");
-    tracing::info!("Final transaction hash: {:?}", tx_hash);
-    tracing::info!(
-        "Perp deployment confirmed in block {:?}",
-        receipt.block_number
-    );
+    tracing::info!("createPerp confirmed in block {:?}", receipt.block_number);
 
-    // Parse the perp ID from the PerpCreated event
-    let perp_id = parse_perp_created_event(&receipt, state.contracts.perp_manager)?;
+    let event = parse_perp_created_event(&receipt, state.contracts.perp_factory)?;
 
-    tracing::info!("Successfully deployed perp with ID: {}", perp_id);
-    tracing::info!(
-        "Perp is managed by PerpManager contract: {}",
-        state.contracts.perp_manager
-    );
+    tracing::info!("Deployed Perp at {}", event.perp);
+    tracing::info!("PoolId: {}", event.pool_id);
 
     Ok(DeployPerpForBeaconResponse {
-        perp_id: perp_id.to_string(),
-        perp_manager_address: state.contracts.perp_manager.to_string(),
+        perp_address: event.perp.to_string(),
+        pool_id: format!("{:#x}", event.pool_id),
+        perp_factory_address: state.contracts.perp_factory.to_string(),
+        initial_index: event.initial_index.to_string(),
+        ema_window,
+        sqrt_price_x96: event.sqrt_price_x96.to_string(),
+        tick: event.tick,
+        salt: format!("{salt:#x}"),
         transaction_hash: tx_hash.to_string(),
     })
 }
 
-/// Helper function to deposit liquidity for a perp using configuration from AppState
+/// Opens a maker liquidity position on a per-market `Perp` contract.
+///
+/// Approves USDC against the per-perp contract address (which calls `safeTransferFrom` from
+/// `msg.sender`), then sends `Perp.openMaker(OpenMakerParams)`.
+#[allow(clippy::too_many_arguments)]
 pub async fn deposit_liquidity_for_perp(
     state: &AppState,
-    perp_id: FixedBytes<32>,
+    perp_address: Address,
     margin_amount_usdc: u128,
     tick_spacing: i32,
     tick_lower: i32,
     tick_upper: i32,
 ) -> Result<DepositLiquidityForPerpResponse, String> {
     tracing::info!(
-        "Depositing liquidity for perp {} with margin {}",
-        perp_id,
+        "Opening maker on Perp {} with margin {}",
+        perp_address,
         margin_amount_usdc
     );
 
-    // Acquire a wallet from the pool
     let wallet_handle = state
         .wallets
         .manager
@@ -384,15 +233,12 @@ pub async fn deposit_liquidity_for_perp(
     let wallet_address = wallet_handle.address();
     tracing::info!("Acquired wallet {} for liquidity deposit", wallet_address);
 
-    // Build provider with the acquired wallet
     let provider = wallet_handle
         .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
-    // Create contract instance using the wallet's provider
-    let contract = IPerpManager::new(state.contracts.perp_manager, &provider);
+    let perp = IPerp::new(perp_address, &provider);
 
-    // Validate tick alignment with tick_spacing
     if tick_lower % tick_spacing != 0 {
         return Err(format!(
             "tick_lower ({tick_lower}) must be divisible by tick_spacing ({tick_spacing})"
@@ -416,31 +262,29 @@ pub async fn deposit_liquidity_for_perp(
         tick_upper
     );
 
-    // Use conservative liquidity scaling factor
-    // This converts USDC margin (6 decimals) to 18-decimal liquidity amount
+    // Conservative liquidity scaling: USDC margin (6 decimals) -> AMM liquidity unit.
     let liquidity_scaling_factor = 500_000u128;
-    let liquidity_raw = margin_amount_usdc * liquidity_scaling_factor;
+    let liquidity_raw = margin_amount_usdc
+        .checked_mul(liquidity_scaling_factor)
+        .ok_or_else(|| "liquidity scaling overflow".to_string())?;
 
-    // uint120 max value: 2^120 - 1
-    const MAX_UINT120: u128 = (1u128 << 120) - 1;
-    if liquidity_raw > MAX_UINT120 {
-        return Err(format!(
-            "Computed liquidity {liquidity_raw} exceeds uint120 max ({MAX_UINT120}). Reduce margin amount."
-        ));
-    }
+    // v0.1.0 widened OpenMakerParams.liquidity from uint120 to uint128 — `liquidity_raw` is
+    // already u128, so the contract bound is trivially satisfied. Documented for posterity:
+    // the upstream cap is u128::MAX. The earlier u120 cap that lived here is no longer required.
 
-    // Set reasonable defaults for slippage protection (max values mean no limit)
-    let max_amt0_in = u128::MAX;
-    let max_amt1_in = u128::MAX;
+    // Slippage protection defaults: u256::MAX = "no limit". Caller-supplied limits could be
+    // wired in once the request DTO carries them through.
+    let max_amt0_in = U256::MAX;
+    let max_amt1_in = U256::MAX;
 
-    let open_maker_params = IPerpManager::OpenMakerPositionParams {
+    let open_maker_params = IPerp::OpenMakerParams {
         holder: wallet_address,
         margin: margin_amount_usdc,
-        liquidity: Uint::<120, 2>::from(liquidity_raw),
-        tickLower: Signed::<24, 1>::try_from(tick_lower)
+        tickLower: alloy::primitives::Signed::<24, 1>::try_from(tick_lower)
             .map_err(|e| format!("Invalid tick lower: {e}"))?,
-        tickUpper: Signed::<24, 1>::try_from(tick_upper)
+        tickUpper: alloy::primitives::Signed::<24, 1>::try_from(tick_upper)
             .map_err(|e| format!("Invalid tick upper: {e}"))?,
+        liquidity: liquidity_raw,
         maxAmt0In: max_amt0_in,
         maxAmt1In: max_amt1_in,
     };
@@ -453,307 +297,131 @@ pub async fn deposit_liquidity_for_perp(
         liquidity_raw
     );
 
-    // First, approve USDC spending by the PerpManager contract
+    // The per-Perp contract calls safeTransferFrom(USDC, msg.sender, address(this), ...).
+    // So the approve target is the per-Perp contract address, NOT the factory.
     tracing::info!(
-        "Approving USDC spending: {} USDC for PerpManager contract {}",
+        "Approving USDC ({} USDC) for Perp contract {}",
         margin_amount_usdc as f64 / 1_000_000.0,
-        state.contracts.perp_manager
+        perp_address
     );
 
-    // USDC approval using acquired wallet
     let usdc_contract = IERC20::new(state.contracts.usdc, &provider);
-    tracing::info!("Approving USDC spending with wallet {}", wallet_address);
-    let pending_approval = match usdc_contract
-        .approve(state.contracts.perp_manager, U256::from(margin_amount_usdc))
+    let pending_approval = usdc_contract
+        .approve(perp_address, U256::from(margin_amount_usdc))
         .send()
         .await
-    {
-        Ok(pending) => Ok(pending),
-        Err(e) => {
+        .map_err(|e| {
             let error_msg = format!("Failed to approve USDC spending: {e}");
             tracing::error!("{}", error_msg);
-            tracing::error!("Make sure the wallet has sufficient USDC balance");
-
-            // Check if nonce error
             if is_nonce_error(&error_msg) {
                 tracing::warn!("Nonce error detected, transaction failed");
             }
-
             sentry::capture_message(&error_msg, sentry::Level::Error);
-            Err(error_msg)
-        }
-    }?;
+            error_msg
+        })?;
 
-    tracing::info!("USDC approval transaction sent, waiting for confirmation...");
     let approval_tx_hash = *pending_approval.tx_hash();
-    tracing::info!("USDC approval transaction hash: {:?}", approval_tx_hash);
+    tracing::info!("USDC approval tx hash: {:?}", approval_tx_hash);
 
-    // Use get_receipt() with extended timeout for USDC approvals (Base can be slow)
-    let approval_receipt = match timeout(Duration::from_secs(150), pending_approval.get_receipt())
-        .await
-    {
-        Ok(Ok(receipt)) => {
-            tracing::info!("USDC approval confirmed via get_receipt()");
-            receipt
-        }
-        Ok(Err(e)) => {
-            tracing::warn!("get_receipt() failed for USDC approval: {}", e);
-            tracing::info!("Falling back to on-chain approval check...");
-
-            // Try to get the receipt directly from the read provider with timeout
-            match timeout(
-                Duration::from_secs(60),
-                state
-                    .provider
-                    .read_provider
-                    .get_transaction_receipt(approval_tx_hash),
-            )
-            .await
-            {
-                Ok(Ok(Some(receipt))) => {
-                    tracing::info!("USDC approval confirmed via on-chain check");
-                    receipt
-                }
-                Ok(Ok(None)) => {
-                    let error_msg =
-                        format!("USDC approval transaction {approval_tx_hash} not found on-chain");
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-                Ok(Err(e)) => {
-                    let error_msg = format!(
-                        "Failed to check USDC approval transaction {approval_tx_hash} on-chain: {e}"
-                    );
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-                Err(_) => {
-                    let error_msg = format!(
-                        "Timeout checking USDC approval transaction {approval_tx_hash} on-chain"
-                    );
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
+    let approval_receipt =
+        match timeout(Duration::from_secs(150), pending_approval.get_receipt()).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
+                tracing::warn!("get_receipt() failed for USDC approval: {}", e);
+                wait_for_receipt(state, approval_tx_hash, "USDC approval").await?
             }
-        }
-        Err(_) => {
-            tracing::warn!(
-                "Initial get_receipt() timed out for USDC approval, trying extended fallback..."
-            );
-            tracing::info!(
-                "Checking USDC approval transaction {} on-chain with extended timeout...",
-                approval_tx_hash
-            );
-
-            // Extended fallback: retry with progressive timeouts (15s, 30s, 60s) for Base network
-            let mut retry_count = 0;
-            let max_retries = 3;
-            let timeout_seconds = [15u64, 30u64, 60u64]; // Progressive timeout pattern
-
-            loop {
-                retry_count += 1;
-                let current_timeout = timeout_seconds[retry_count - 1];
-                tracing::info!(
-                    "USDC approval receipt attempt {}/{} ({}s timeout)",
-                    retry_count,
-                    max_retries,
-                    current_timeout
-                );
-
-                match timeout(
-                    Duration::from_secs(current_timeout),
-                    state
-                        .provider
-                        .read_provider
-                        .get_transaction_receipt(approval_tx_hash),
-                )
-                .await
-                {
-                    Ok(Ok(Some(receipt))) => {
-                        tracing::info!(
-                            "USDC approval found on-chain via extended fallback (attempt {})",
-                            retry_count
-                        );
-                        break receipt;
-                    }
-                    Ok(Ok(None)) => {
-                        if retry_count >= max_retries {
-                            let error_msg = format!(
-                                "USDC approval transaction {approval_tx_hash} not found on-chain after {max_retries} attempts"
-                            );
-                            tracing::error!("{}", error_msg);
-                            tracing::error!("This could indicate:");
-                            tracing::error!("  - USDC approval transaction was dropped/replaced");
-                            tracing::error!("  - Network issues prevented confirmation");
-                            tracing::error!("  - Transaction is still pending (check gas price)");
-                            tracing::error!("  - Base network congestion causing delays");
-                            return Err(error_msg);
-                        }
-                        tracing::warn!(
-                            "USDC approval not found on attempt {}, retrying...",
-                            retry_count
-                        );
-                        tokio::time::sleep(Duration::from_secs(5)).await; // Brief pause between retries
-                    }
-                    Ok(Err(e)) => {
-                        let error_msg = format!(
-                            "Failed to check USDC approval transaction {approval_tx_hash} on-chain: {e}"
-                        );
-                        tracing::error!("{}", error_msg);
-                        return Err(error_msg);
-                    }
-                    Err(_) => {
-                        if retry_count >= max_retries {
-                            let error_msg = format!(
-                                "Final timeout waiting for USDC approval receipt {approval_tx_hash} after {max_retries} attempts"
-                            );
-                            tracing::error!("{}", error_msg);
-                            tracing::error!("All fallback methods exhausted for USDC approval");
-                            return Err(error_msg);
-                        }
-                        tracing::warn!("Timeout on attempt {}, retrying...", retry_count);
-                        tokio::time::sleep(Duration::from_secs(5)).await; // Brief pause between retries
-                    }
-                }
+            Err(_) => {
+                tracing::warn!("Initial get_receipt() timed out for USDC approval, polling...");
+                wait_for_receipt(state, approval_tx_hash, "USDC approval").await?
             }
-        }
-    };
+        };
 
-    // Send the openMakerPosition transaction
     tracing::info!("Opening maker position with wallet {}", wallet_address);
-    let pending_tx = match contract
-        .openMakerPos(perp_id, open_maker_params.clone())
+    let pending_tx = perp
+        .openMaker(open_maker_params.clone())
         .send()
         .await
-    {
-        Ok(pending) => Ok(pending),
-        Err(e) => {
-            let error_type = match e.to_string().as_str() {
-                s if s.contains("execution reverted") => "Liquidity Deposit Reverted",
-                s if s.contains("insufficient funds") => "Insufficient Funds for Liquidity",
-                s if s.contains("perp not found") || s.contains("invalid perp") => {
-                    "Invalid Perp ID"
-                }
-                s if s.contains("margin") => "Margin Related Error",
-                s if s.contains("liquidity") => "Liquidity Related Error",
-                _ => "Liquidity Transaction Error",
-            };
-
-            let mut error_msg = format!("{error_type}: {e}");
-
-            // Try to decode contract error for better user feedback
-            if let Some(decoded_error) = try_decode_revert_reason(&e) {
-                error_msg = format!("{error_type}: {decoded_error}");
-                tracing::error!("{}", error_msg);
-                tracing::error!("Decoded contract error: {}", decoded_error);
-            } else {
-                tracing::error!("{}", error_msg);
+        .map_err(|e| {
+            let mut error_msg = format!("openMaker send failed: {e}");
+            if let Some(decoded) = try_decode_revert_reason(&e) {
+                error_msg = format!("openMaker reverted: {decoded}");
             }
-
-            // Check if nonce error
+            tracing::error!("{}", error_msg);
             if is_nonce_error(&error_msg) {
                 tracing::warn!("Nonce error detected, transaction failed");
             }
-
-            // Add specific troubleshooting hints
-            match error_type {
-                "Liquidity Deposit Reverted" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Check if perp ID exists and is active");
-                    tracing::error!("  - Verify margin amount is within allowed limits");
-                    tracing::error!("  - Ensure tick range is valid for the perp");
-                    tracing::error!(
-                        "  - Review leverage bounds (current config may have high scaling factor)"
-                    );
-                }
-                "Invalid Perp ID" => {
-                    tracing::error!("Troubleshooting hints:");
-                    tracing::error!("  - Verify perp ID format (32-byte hex string)");
-                    tracing::error!("  - Check if perp was successfully deployed");
-                }
-                _ => {}
-            }
-
             sentry::capture_message(&error_msg, sentry::Level::Error);
-            Err(error_msg)
-        }
-    }?;
+            error_msg
+        })?;
 
-    tracing::info!("Liquidity deposit transaction sent, waiting for confirmation...");
     let deposit_tx_hash = *pending_tx.tx_hash();
-    tracing::info!("Liquidity deposit transaction hash: {:?}", deposit_tx_hash);
+    tracing::info!("openMaker tx hash: {:?}", deposit_tx_hash);
 
-    // Use get_receipt() with timeout and fallback like beacon endpoints
     let receipt = match timeout(Duration::from_secs(90), pending_tx.get_receipt()).await {
-        Ok(Ok(receipt)) => {
-            tracing::info!("Liquidity deposit confirmed via get_receipt()");
-            receipt
-        }
+        Ok(Ok(r)) => r,
         Ok(Err(e)) => {
-            tracing::warn!("get_receipt() failed for liquidity deposit: {}", e);
-            tracing::info!("Falling back to on-chain deposit check...");
-
-            // Try to get the receipt directly from the read provider with timeout
-            match timeout(
-                Duration::from_secs(30),
-                state
-                    .provider
-                    .read_provider
-                    .get_transaction_receipt(deposit_tx_hash),
-            )
-            .await
-            {
-                Ok(Ok(Some(receipt))) => {
-                    tracing::info!("Liquidity deposit confirmed via on-chain check");
-                    receipt
-                }
-                Ok(Ok(None)) => {
-                    let error_msg = format!(
-                        "Liquidity deposit transaction {deposit_tx_hash} not found on-chain"
-                    );
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-                Ok(Err(e)) => {
-                    let error_msg = format!(
-                        "Failed to check liquidity deposit transaction {deposit_tx_hash} on-chain: {e}"
-                    );
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-                Err(_) => {
-                    let error_msg = format!(
-                        "Timeout checking liquidity deposit transaction {deposit_tx_hash} on-chain"
-                    );
-                    tracing::error!("{}", error_msg);
-                    return Err(error_msg);
-                }
-            }
+            tracing::warn!("get_receipt() failed for openMaker: {}", e);
+            wait_for_receipt(state, deposit_tx_hash, "openMaker").await?
         }
         Err(_) => {
-            let error_msg = "Timeout waiting for liquidity deposit receipt".to_string();
-            tracing::error!("{}", error_msg);
-            return Err(error_msg);
+            let msg = "Timeout waiting for openMaker receipt".to_string();
+            tracing::error!("{}", msg);
+            return Err(msg);
         }
     };
 
-    tracing::info!(
-        "Liquidity deposit transaction confirmed with hash: {:?}",
-        receipt.transaction_hash
-    );
+    tracing::info!("openMaker confirmed: {:?}", receipt.transaction_hash);
 
-    // Parse the maker position ID from the MakerPositionOpened event
-    let maker_pos_id =
-        parse_maker_position_opened_event(&receipt, state.contracts.perp_manager, perp_id)?;
-
-    tracing::info!(
-        "Parsed maker position ID {} from MakerPositionOpened event",
-        maker_pos_id
-    );
+    let pos_id = parse_maker_opened_event(&receipt, perp_address)?;
+    tracing::info!("Maker position opened with posId {}", pos_id);
 
     Ok(DepositLiquidityForPerpResponse {
-        maker_position_id: maker_pos_id.to_string(),
+        maker_position_id: pos_id.to_string(),
         approval_transaction_hash: approval_receipt.transaction_hash.to_string(),
         deposit_transaction_hash: receipt.transaction_hash.to_string(),
     })
+}
+
+/// Poll the read provider for a transaction receipt with progressive backoff.
+async fn wait_for_receipt(
+    state: &AppState,
+    tx_hash: alloy::primitives::FixedBytes<32>,
+    label: &str,
+) -> Result<alloy::rpc::types::TransactionReceipt, String> {
+    let timeout_seconds = [15u64, 30u64, 60u64];
+    for (attempt, secs) in timeout_seconds.iter().enumerate() {
+        tracing::info!(
+            "{} receipt attempt {}/{} ({}s timeout)",
+            label,
+            attempt + 1,
+            timeout_seconds.len(),
+            secs
+        );
+        match timeout(
+            Duration::from_secs(*secs),
+            state
+                .provider
+                .read_provider
+                .get_transaction_receipt(tx_hash),
+        )
+        .await
+        {
+            Ok(Ok(Some(receipt))) => return Ok(receipt),
+            Ok(Ok(None)) => {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+            Ok(Err(e)) => {
+                let msg = format!("Failed to query {label} receipt {tx_hash}: {e}");
+                tracing::error!("{}", msg);
+                return Err(msg);
+            }
+            Err(_) => {
+                tracing::warn!("Timeout on attempt {}, retrying...", attempt + 1);
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        }
+    }
+    let msg = format!("{label} receipt {tx_hash} not found after retries");
+    tracing::error!("{}", msg);
+    Err(msg)
 }

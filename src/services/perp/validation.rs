@@ -4,35 +4,49 @@ use std::sync::Arc;
 
 use crate::ReadOnlyProvider;
 
-/// Contract error decoding utilities for PerpManager errors
+/// Decodes 4-byte error selectors emitted by perpcity-contracts@v0.1.0 (`Perp.sol`,
+/// `PerpFactory.sol`, `ProtocolFeeManager.sol`) into human-readable strings for API responses.
 ///
-/// All new PerpManager errors are parameterless, making decoding straightforward.
+/// Selectors are derived from the v0.1.0 contracts via `cast sig "<ErrorName>()"` (and similar
+/// for parameterized errors). Update this list whenever the pinned contracts version bumps.
 pub struct ContractErrorDecoder;
 
 impl ContractErrorDecoder {
-    // Known PerpManager error selectors (all parameterless)
-    const ZERO_LIQUIDITY: &'static str = "0x10074548";
-    const ZERO_NOTIONAL: &'static str = "0x96bafbfd";
-    const TICKS_OUT_OF_BOUNDS: &'static str = "0xd6acf910";
-    const INVALID_MARGIN: &'static str = "0x3a29e65e";
-    const INVALID_MARGIN_DELTA: &'static str = "0x8acc6d7f";
-    const INVALID_CALLER: &'static str = "0x48f5c3ed";
-    const POSITION_LOCKED: &'static str = "0xc7d26d72";
+    // From src/libraries/Errors.sol@v0.1.0 — all parameterless.
     const ZERO_DELTA: &'static str = "0x6f0f5899";
-    const INVALID_MARGIN_RATIO: &'static str = "0xbcffc83f";
-    const FEES_NOT_REGISTERED: &'static str = "0x2872ed04";
-    const MARGIN_RATIOS_NOT_REGISTERED: &'static str = "0x3eea589d";
-    const LOCKUP_PERIOD_NOT_REGISTERED: &'static str = "0xd9f0aeaf";
-    const SQRT_PRICE_IMPACT_LIMIT_NOT_REGISTERED: &'static str = "0x5140209c";
-    const FEE_TOO_LARGE: &'static str = "0xfc5bee12";
-    const MAKER_NOT_ALLOWED: &'static str = "0xc3f6bb4e";
-    const BEACON_NOT_REGISTERED: &'static str = "0x7884e2a9";
-    const PERP_DOES_NOT_EXIST: &'static str = "0x232ad152";
-    const STARTING_SQRT_PRICE_TOO_LOW: &'static str = "0x1d8648bc";
-    const STARTING_SQRT_PRICE_TOO_HIGH: &'static str = "0x0947cb52";
-    const COULD_NOT_FULLY_FILL: &'static str = "0x67cf2eaa";
+    const MIN_AMT_UNMET: &'static str = "0x0470009e";
+    const MARGIN_TOO_LOW: &'static str = "0x38f5e1a7";
+    const NO_SYSTEM_FUNDS: &'static str = "0x5c64c19c";
+    const ZERO_LIQUIDITY: &'static str = "0x10074548";
+    const MAX_AMT_EXCEEDED: &'static str = "0x24f14ba6";
+    const NEGATIVE_EQUITY: &'static str = "0xfece0035";
+    const NEGATIVE_MARGIN: &'static str = "0xe94943ae";
+    const NOT_POOL_MANAGER: &'static str = "0xae18210a";
+    const NOT_LIQUIDATABLE: &'static str = "0xddeb79ba";
+    const NON_MAKER_POSITION: &'static str = "0xdbcefbf3";
+    const NON_TAKER_POSITION: &'static str = "0x12d39e8a";
+    const TICKS_OUT_OF_BOUNDS: &'static str = "0xd6acf910";
+    const MARGIN_RATIO_TOO_LOW: &'static str = "0xb2c649db";
+    const PRICE_IMPACT_TOO_HIGH: &'static str = "0xfb30d03a";
+    const UNAUTHORIZED_CALLER: &'static str = "0x5c427cd9";
+    const POSITION_DOES_NOT_EXIST: &'static str = "0xf7b3b391";
+    const LONG_UTILIZATION_EXCEEDED: &'static str = "0xcefb0b13";
+    const SHORT_UTILIZATION_EXCEEDED: &'static str = "0x3615a2a2";
+    const INSUFFICIENT_LIQUIDITY_TO_FILL: &'static str = "0xed126f97";
+    const DATA_ALREADY_PENDING: &'static str = "0xd91ff208";
+    const DATA_NOT_TIMELOCKED: &'static str = "0x1ea942a8";
+    const TIMELOCK_NOT_EXPIRED: &'static str = "0x621e25c3";
+    const ABDICATED: &'static str = "0x281df4aa";
 
-    // Solady SafeCast error (still relevant, has parameters)
+    // From src/interfaces/IPerpFactory.sol@v0.1.0.
+    const STARTING_PRICE_TOO_LOW: &'static str = "0xac8ac5a5";
+    const STARTING_PRICE_TOO_HIGH: &'static str = "0x32231715";
+    const EMA_WINDOW_TOO_LOW: &'static str = "0xc657a809";
+
+    // From src/interfaces/IProtocolFeeManager.sol@v0.1.0.
+    const PROTOCOL_FEE_TOO_HIGH: &'static str = "0x499fddb1";
+
+    // Solady SafeCastLib — has parameter (the offending uint).
     const SAFECAST_OVERFLOW: &'static str = "0x24775e06";
 
     pub fn decode_error_data(error_data: &str) -> Option<String> {
@@ -44,26 +58,94 @@ impl ContractErrorDecoder {
         let params_data = &error_data[10..];
 
         match selector {
-            Self::ZERO_LIQUIDITY => Some("ZeroLiquidity: liquidity must be greater than zero".to_string()),
-            Self::ZERO_NOTIONAL => Some("ZeroNotional: notional value must be greater than zero".to_string()),
-            Self::TICKS_OUT_OF_BOUNDS => Some("TicksOutOfBounds: tick range is outside valid bounds".to_string()),
-            Self::INVALID_MARGIN => Some("InvalidMargin: margin amount is invalid".to_string()),
-            Self::INVALID_MARGIN_DELTA => Some("InvalidMarginDelta: margin delta is invalid".to_string()),
-            Self::INVALID_CALLER => Some("InvalidCaller: caller is not authorized".to_string()),
-            Self::POSITION_LOCKED => Some("PositionLocked: position is still within lockup period".to_string()),
-            Self::ZERO_DELTA => Some("ZeroDelta: delta must be non-zero".to_string()),
-            Self::INVALID_MARGIN_RATIO => Some("InvalidMarginRatio: margin ratio is invalid".to_string()),
-            Self::FEES_NOT_REGISTERED => Some("FeesNotRegistered: fees module is not registered with PerpManager".to_string()),
-            Self::MARGIN_RATIOS_NOT_REGISTERED => Some("MarginRatiosNotRegistered: margin ratios module is not registered with PerpManager".to_string()),
-            Self::LOCKUP_PERIOD_NOT_REGISTERED => Some("LockupPeriodNotRegistered: lockup period module is not registered with PerpManager".to_string()),
-            Self::SQRT_PRICE_IMPACT_LIMIT_NOT_REGISTERED => Some("SqrtPriceImpactLimitNotRegistered: sqrt price impact limit module is not registered with PerpManager".to_string()),
-            Self::FEE_TOO_LARGE => Some("FeeTooLarge: fee exceeds maximum allowed value".to_string()),
-            Self::MAKER_NOT_ALLOWED => Some("MakerNotAllowed: maker positions are not allowed for this perp".to_string()),
-            Self::BEACON_NOT_REGISTERED => Some("BeaconNotRegistered: beacon is not registered with the registry".to_string()),
-            Self::PERP_DOES_NOT_EXIST => Some("PerpDoesNotExist: the specified perp ID does not exist".to_string()),
-            Self::STARTING_SQRT_PRICE_TOO_LOW => Some("StartingSqrtPriceTooLow: starting sqrt price is below minimum".to_string()),
-            Self::STARTING_SQRT_PRICE_TOO_HIGH => Some("StartingSqrtPriceTooHigh: starting sqrt price exceeds maximum".to_string()),
-            Self::COULD_NOT_FULLY_FILL => Some("CouldNotFullyFill: order could not be fully filled".to_string()),
+            Self::ZERO_DELTA => Some("ZeroDelta: requested perp delta is zero".to_string()),
+            Self::MIN_AMT_UNMET => {
+                Some("MinAmtUnmet: swap result fell short of the requested minimum".to_string())
+            }
+            Self::MARGIN_TOO_LOW => {
+                Some("MarginTooLow: margin is below the module's minimum".to_string())
+            }
+            Self::NO_SYSTEM_FUNDS => {
+                Some("NoSystemFunds: nothing collectable from system fee accumulators".to_string())
+            }
+            Self::ZERO_LIQUIDITY => {
+                Some("ZeroLiquidity: liquidity must be greater than zero".to_string())
+            }
+            Self::MAX_AMT_EXCEEDED => {
+                Some("MaxAmtExceeded: deposit/withdraw exceeded the requested max".to_string())
+            }
+            Self::NEGATIVE_EQUITY => {
+                Some("NegativeEquity: position equity is negative".to_string())
+            }
+            Self::NEGATIVE_MARGIN => {
+                Some("NegativeMargin: resulting margin is negative".to_string())
+            }
+            Self::NOT_POOL_MANAGER => {
+                Some("NotPoolManager: caller is not the Uniswap V4 PoolManager".to_string())
+            }
+            Self::NOT_LIQUIDATABLE => {
+                Some("NotLiquidatable: position is not below liquidation threshold".to_string())
+            }
+            Self::NON_MAKER_POSITION => {
+                Some("NonMakerPosition: position is not a maker position".to_string())
+            }
+            Self::NON_TAKER_POSITION => {
+                Some("NonTakerPosition: position is not a taker position".to_string())
+            }
+            Self::TICKS_OUT_OF_BOUNDS => {
+                Some("TicksOutOfBounds: tick range is outside valid bounds".to_string())
+            }
+            Self::MARGIN_RATIO_TOO_LOW => {
+                Some("MarginRatioTooLow: margin ratio is below the initial threshold".to_string())
+            }
+            Self::PRICE_IMPACT_TOO_HIGH => {
+                Some("PriceImpactTooHigh: swap exceeds the PriceImpact module's bounds".to_string())
+            }
+            Self::UNAUTHORIZED_CALLER => {
+                Some("UnauthorizedCaller: caller is not authorized for this position".to_string())
+            }
+            Self::POSITION_DOES_NOT_EXIST => {
+                Some("PositionDoesNotExist: the specified position id does not exist".to_string())
+            }
+            Self::LONG_UTILIZATION_EXCEEDED => Some(
+                "LongUtilizationExceeded: long open interest exceeds available capacity"
+                    .to_string(),
+            ),
+            Self::SHORT_UTILIZATION_EXCEEDED => Some(
+                "ShortUtilizationExceeded: short open interest exceeds available capacity"
+                    .to_string(),
+            ),
+            Self::INSUFFICIENT_LIQUIDITY_TO_FILL => Some(
+                "InsufficientLiquidityToFill: AMM has insufficient liquidity for this trade"
+                    .to_string(),
+            ),
+            Self::DATA_ALREADY_PENDING => {
+                Some("DataAlreadyPending: a timelocked update is already pending".to_string())
+            }
+            Self::DATA_NOT_TIMELOCKED => {
+                Some("DataNotTimelocked: no pending timelocked update for this data".to_string())
+            }
+            Self::TIMELOCK_NOT_EXPIRED => {
+                Some("TimelockNotExpired: timelock period has not yet elapsed".to_string())
+            }
+            Self::ABDICATED => {
+                Some("Abdicated: this admin function has been permanently abdicated".to_string())
+            }
+            Self::STARTING_PRICE_TOO_LOW => Some(
+                "StartingPriceTooLow: beacon index implies a sqrt price below the AMM minimum"
+                    .to_string(),
+            ),
+            Self::STARTING_PRICE_TOO_HIGH => Some(
+                "StartingPriceTooHigh: beacon index implies a sqrt price above the AMM maximum"
+                    .to_string(),
+            ),
+            Self::EMA_WINDOW_TOO_LOW => {
+                Some("EmaWindowTooLow: emaWindow must be > 0 (uint24)".to_string())
+            }
+            Self::PROTOCOL_FEE_TOO_HIGH => Some(
+                "ProtocolFeeTooHigh: requested protocol fee exceeds the configured maximum"
+                    .to_string(),
+            ),
             Self::SAFECAST_OVERFLOW => Self::decode_safecast_overflow(params_data),
             _ => Some(format!("Unknown contract error: {selector}")),
         }
@@ -83,7 +165,7 @@ impl ContractErrorDecoder {
     }
 }
 
-/// Helper function to validate that a module address has deployed code
+/// Validates that a module address has deployed bytecode (i.e. is actually a contract).
 pub async fn validate_module_address(
     provider: &Arc<ReadOnlyProvider>,
     address: Address,
@@ -115,31 +197,82 @@ pub async fn validate_module_address(
     }
 }
 
-/// Helper function to try to decode revert reason from error
+/// Best-effort revert-reason decoder: extracts hex-encoded revert data from an error string and
+/// dispatches to `ContractErrorDecoder`. Falls back to plain "execution reverted" extraction.
+///
+/// The provider error string can contain incidental `0x...` tokens (addresses, tx hashes) before
+/// the actual revert payload, so we search for the explicit field markers a provider uses
+/// (`data: 0x...`, `data="0x..."`, `reverted with data: 0x...`) before falling back to the first
+/// hex blob long enough to be a 4-byte selector. We also prefer the longest hex blob over the
+/// first one, since revert data is typically longer than the 20-byte address that might appear
+/// earlier in the message.
 pub fn try_decode_revert_reason(error: &impl std::fmt::Display) -> Option<String> {
     let error_str = error.to_string();
 
-    // Look for hex data in the error message
-    if let Some(data_start) = error_str.find("0x") {
-        let data_part = &error_str[data_start..];
-        // Extract just the hex part (stop at first non-hex character after 0x)
-        let hex_end = data_part
-            .chars()
-            .skip(2) // Skip "0x"
-            .take_while(|c| c.is_ascii_hexdigit())
-            .count()
-            + 2;
-
-        if hex_end >= 10 {
-            // At least a full selector (parameterless errors are exactly 10 chars)
-            let error_data = &data_part[..hex_end];
-            if let Some(decoded) = ContractErrorDecoder::decode_error_data(error_data) {
+    // First try explicit revert-data markers used by common providers / Alloy.
+    let markers = [
+        "data: 0x",
+        "data:0x",
+        "data=\"0x",
+        "data=0x",
+        "reverted with data: 0x",
+        "reverted with data:0x",
+        "revert data: 0x",
+        "revert data:0x",
+        "revertData\":\"0x",
+        "\"data\":\"0x",
+    ];
+    for marker in markers {
+        if let Some(idx) = error_str.find(marker) {
+            let hex_start = idx + marker.len() - 2; // back up to the "0x"
+            if let Some(decoded) = decode_hex_blob_at(&error_str[hex_start..]) {
                 return Some(decoded);
             }
         }
     }
 
-    // Fallback to original logic
+    // Fallback: scan all `0x<hex>` substrings, prefer the longest one of selector size or larger.
+    // An address is 42 chars (`0x` + 40); a parameterless revert is 10 chars (`0x` + 8); a revert
+    // with one uint256 param is 74 chars. Prefer longer payloads to bias toward revert data over
+    // addresses, then fall back to any selector-sized blob.
+    let mut candidates: Vec<&str> = Vec::new();
+    let mut rest = error_str.as_str();
+    while let Some(pos) = rest.find("0x") {
+        rest = &rest[pos..];
+        let hex_len = rest
+            .chars()
+            .skip(2)
+            .take_while(|c| c.is_ascii_hexdigit())
+            .count();
+        if hex_len >= 8 {
+            candidates.push(&rest[..hex_len + 2]);
+        }
+        rest = &rest[2 + hex_len..];
+    }
+    // Sort by length desc; addresses (42) and tx hashes (66) are stable lengths, while real
+    // contract reverts are 10, 74, or longer multiples of 64+10 — so the longest-non-66-non-42
+    // is the most likely candidate.
+    candidates.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    for blob in &candidates {
+        // Skip canonical address (42) and tx hash (66) lengths unless they are also a recognised
+        // selector tail (very unlikely). The decoder will skip "Unknown contract error: ..." for
+        // those when called below; here we just bias.
+        if blob.len() == 42 || blob.len() == 66 {
+            continue;
+        }
+        if let Some(decoded) = ContractErrorDecoder::decode_error_data(blob)
+            && !decoded.starts_with("Unknown contract error")
+        {
+            return Some(decoded);
+        }
+    }
+    // Last resort: try the first selector-length blob (even an address) so we surface *something*.
+    if let Some(blob) = candidates.first()
+        && let Some(decoded) = ContractErrorDecoder::decode_error_data(blob)
+    {
+        return Some(decoded);
+    }
+
     if error_str.contains("execution reverted") {
         if let Some(reason) = error_str.split("execution reverted").nth(1) {
             let cleaned = reason.trim().trim_matches('"').trim_matches(':').trim();
@@ -151,4 +284,21 @@ pub fn try_decode_revert_reason(error: &impl std::fmt::Display) -> Option<String
     }
 
     None
+}
+
+/// Read a `0x<hex>` blob starting at `s[0..]` and feed it to `ContractErrorDecoder`. Returns
+/// the decoded reason if the blob is at least a 4-byte selector (10 chars including `0x`).
+fn decode_hex_blob_at(s: &str) -> Option<String> {
+    if !s.starts_with("0x") {
+        return None;
+    }
+    let hex_len = s
+        .chars()
+        .skip(2)
+        .take_while(|c| c.is_ascii_hexdigit())
+        .count();
+    if hex_len < 8 {
+        return None;
+    }
+    ContractErrorDecoder::decode_error_data(&s[..hex_len + 2])
 }

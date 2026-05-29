@@ -4,12 +4,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # The Beaconator
 
-**The Beaconator** is a Rust web service that manages Ethereum beacon contracts and perpetual deployments on Base network. It provides RESTful APIs for creating beacons, deploying perpetuals, and updating beacon data with zero-knowledge proofs.
+**The Beaconator** is a Rust web service that manages Ethereum beacon contracts and perpetual deployments on Arbitrum. It provides RESTful APIs for creating beacons, deploying perpetuals, and updating beacon data with zero-knowledge proofs.
+
+## Pinned contract versions
+
+The-beaconator's REST surface and inline `sol!` interfaces target specific contract release tags (not main):
+
+- `perpcity-contracts` @ **v0.1.0** (`bffbd6f`, 2026-04 — "isolated per-perp markets" architecture: `PerpFactory` + per-market `Perp` contracts)
+- `beacons` @ **v0.0.1** (`d61aca0`, 2026-04-22)
+
+The pin is recorded in `.contracts-versions`. After bumping it, regenerate the JSON ABIs via:
+
+```bash
+make refresh-abis
+```
+
+The script `scripts/refresh-abis.sh` adds a temporary git worktree at each pinned tag, initializes submodules (rewriting SSH→HTTPS), runs `forge inspect <Contract> abi --json`, and writes back into `abis/`.
 
 ## Tech Stack
 - **Framework**: Rocket 0.5.0 (async web framework)
 - **Blockchain**: Alloy 1.5 (Ethereum library)
-- **Network**: Base mainnet/testnet support
+- **Network**: Arbitrum (mainnet = Arbitrum One, testnet = Arbitrum Sepolia)
 - **Security**: Bearer token authentication
 - **Monitoring**: Sentry integration + structured logging
 
@@ -54,7 +69,7 @@ make build-release # Build project (release)
   - `recipe_registry.rs`: Redis-backed recipe registry with 12 standard recipes
 - **`src/guards.rs`**: Authentication guard for Bearer token validation
 - **`src/main.rs`**: Entry point that launches Rocket server
-- **`abis/`**: Contract ABI files loaded at runtime
+- **`abis/`**: JSON ABI snapshots regenerated from pinned contract tags via `make refresh-abis`. NOT loaded at runtime — see `src/routes/mod.rs` for the inline `sol!` interfaces the service actually binds against. JSONs ship as a reference for client SDK generators and human inspection.
 
 ### Code Organization
 See `ARCHITECTURE.md` for detailed guidelines on code organization and best practices for managing large files.
@@ -117,35 +132,45 @@ Use any OpenAPI viewer to explore the API interactively:
 
 ## Environment Configuration
 
-Copy `env.example` to `.env` and configure:
+Copy `env.example` to `.env.local` (preferred) or `.env` and configure. Required env vars for the v0.1.0 contract pin:
 
 ```bash
-RPC_URL=https://mainnet.base.org           # Base chain RPC URL
-ENV=mainnet|testnet|localnet               # Network type
-BEACONATOR_ACCESS_TOKEN=your_secret_token  # API authentication
-PRIVATE_KEY=0x...                          # Wallet private key (without 0x)
-BEACON_FACTORY_ADDRESS=0x...               # Factory contract address
-PERPCITY_REGISTRY_ADDRESS=0x...            # Registry contract address
-PERP_MANAGER_ADDRESS=0x...                 # PerpManager contract address
-FEES_MODULE_ADDRESS=0x...                  # Fees configuration module
-MARGIN_RATIOS_MODULE_ADDRESS=0x...         # Margin ratios configuration module
-LOCKUP_PERIOD_MODULE_ADDRESS=0x...         # Lockup period configuration module
-SQRT_PRICE_IMPACT_LIMIT_MODULE_ADDRESS=0x... # Price impact limit module
+RPC_URL=https://arb1.arbitrum.io/rpc          # Arbitrum RPC URL
+ENV=mainnet|testnet|localnet                  # mainnet=Arbitrum One (42161), testnet=Arbitrum Sepolia (421614)
+BEACONATOR_ACCESS_TOKEN=your_secret_token     # API authentication
+PRIVATE_KEY=...                               # Funding wallet private key (no 0x prefix)
+WALLET_PRIVATE_KEYS=...                       # Comma-separated wallet pool keys
+PERPCITY_REGISTRY_ADDRESS=0x...               # BeaconRegistry (beacons@v0.0.1)
+PERP_FACTORY_ADDRESS=0x...                    # PerpFactory (perpcity-contracts@v0.1.0)
+ECDSA_VERIFIER_FACTORY_ADDRESS=0x...          # ECDSAVerifierFactory (beacons@v0.0.1)
+USDC_ADDRESS=0x...                            # USDC ERC20 (network-specific)
+
+# Modules struct for PerpFactory.createPerp (perpcity-contracts@v0.1.0)
+FEES_MODULE_ADDRESS=0x...
+FUNDING_MODULE_ADDRESS=0x...                  # NEW in v0.1.0 (replaces lockup-period semantics)
+MARGIN_RATIOS_MODULE_ADDRESS=0x...
+PRICE_IMPACT_MODULE_ADDRESS=0x...             # NEW in v0.1.0 (replaces sqrt-price-impact-limit)
+PRICING_MODULE_ADDRESS=0x...                  # NEW in v0.1.0
+
+# Optional / governance — not needed for the create / open flow
+PROTOCOL_FEE_MANAGER_ADDRESS=0x...
+MODULE_REGISTRY_ADDRESS=0x...
+MULTICALL3_ADDRESS=0xcA11bde05977b3631167028862bE2a173976CA11
 ```
 
 ## Implementation Details
 
-### AppState Structure (`src/models.rs:7-18`)
+### AppState Structure (`src/models/app_state.rs`)
 - Arc'd Alloy provider with wallet integration
 - Separate wallet address storage for easy access
-- Contract ABIs loaded from `abis/` directory at startup
+- Contract addresses loaded from env vars at startup (`src/lib.rs:96-165`)
 - All contract addresses and access token
 
-### Contract Interactions (`src/routes.rs`)
-- Uses Alloy's `sol!` macro for type-safe contract interfaces
-- Dereferences Arc provider with `&*state.provider` for contract calls
-- Comprehensive error handling with Sentry integration
-- Batch operations support partial failures
+### Contract Interactions (`src/routes/mod.rs`)
+- Inline `sol!` macros define `IBeacon`, `IBeaconRegistry`, `IPerpFactory`, `IPerp`, factories, etc.
+- v0.1.0 architecture: `PerpFactory.createPerp()` returns a per-market `Perp` address; subsequent `openMaker` / `openTaker` calls go to that address.
+- Dereferences Arc provider with `&*state.provider` for read calls; uses wallet-bound provider from the pool for writes.
+- Comprehensive error handling with Sentry integration; revert reasons decoded via `services::perp::validation::ContractErrorDecoder`.
 
 ### Testing Strategy
 - Mock providers with wallets for consistent test setup
@@ -189,9 +214,10 @@ let contract = IBeacon::new(address, &*state.provider);
 ```
 
 ### ABI Management
-- ABIs stored in `abis/` directory and loaded at runtime via `load_abi()` 
-- File-based approach preferred over embedded serde structs
-- Manual ABI modifications documented (e.g., createPerp function added to PerpHook.json)
+- Inline `sol!` macros in `src/routes/mod.rs` are the source of truth for what the service binds against. Update those when the pinned contracts change.
+- JSON files in `abis/` are reference snapshots regenerated from `forge inspect` against the pinned tags via `make refresh-abis`. They are NOT loaded by the runtime — they exist for OpenAPI client generators and for human inspection.
+- **Known gap (forge limitation):** `abis/Perp.json` is missing the `MakerOpened`, `TakerOpened`, `Maker*` / `Taker*Adjusted` / `*Closed` / `*Backstopped` and Tick/funding/cumulatives events. Those are declared as free events in `perpcity-contracts/src/libraries/Events.sol` and emitted from the `PerpLogic` library, but `forge inspect Perp abi` doesn't propagate library-declared free events into a contract's ABI. The Rust runtime decodes them anyway via the inline `IPerp { event MakerOpened(...); ... }` block, so service code is unaffected. Downstream SDK generators that need event signatures should consult either the inline `sol!` block or `Events.sol` directly.
+- The pinned tags are recorded in `.contracts-versions`. CI validates that `git diff abis/` is clean after a refresh, so a stale `abis/` will fail CI on the next refresh.
 
 ## Modular Beacon Creation
 
@@ -227,27 +253,38 @@ Factory addresses are pre-seeded into Redis (not env vars). Keys:
 5. Create beacon via beacon factory (Standalone/Composite/GroupManager), passing component addresses
 6. Register with beacon registry
 
-## Perp Deployment - Modular Architecture
+## Perp Deployment — v0.1.0 architecture
 
-The perpcity-contracts system uses a **modular plugin architecture** where perp configuration is handled by on-chain modules:
+`perpcity-contracts@v0.1.0` introduces an **isolated per-perp markets** model (commit `ee6e396`). The old single `PerpManager` is gone — each market is its own `Perp` contract created by a shared `PerpFactory`.
 
-### Configuration Modules
-- **Fees Module**: Defines trading fees, insurance fees, LP fees, and liquidation fees
-- **Margin Ratios Module**: Specifies margin requirements and leverage limits for maker/taker positions
-- **Lockup Period Module**: Sets lockup periods for maker positions (e.g., 7 days)
-- **Price Impact Limit Module**: Defines price impact boundaries for trades
+### Topology
+- **`PerpFactory`** (one per network): deploys per-market `Perp` contracts, initializes a Uniswap V4 pool, and emits `PerpCreated` with the new `Perp` address.
+- **`Perp`** (one per market): ERC721 of position NFTs, holds the V4 pool's accounting tokens, exposes `openMaker` / `openTaker` / `adjust*` / `liquidate*` / `backstop*` plus view functions for fees / open interest / capacity / rates / EMAs / cumulatives.
+- **`ProtocolFeeManager`** (one per network): owner-controlled, returns `protocolFee()` consumed by `Perp`.
+- **`ModuleRegistry`** (one per network): governance allowlist of acceptable module implementations. Not on the deploy fast path.
 
-### Deployment Process
-1. Perps are created via `PerpManager.createPerp()` with references to configuration modules
-2. Module addresses must be registered with PerpManager before use
-3. Different perps can use different module configurations for flexibility
-4. Configuration is queryable on-chain from the module contracts
+### Module set (`Modules` struct passed to `PerpFactory.createPerp`)
+Five module addresses, all required, all deployed once and reused across markets:
+- **`fees`** (`IFees`): trading fees (creator / insurance / LP), liquidation fee, utilization fees.
+- **`funding`** (`IFunding`, NEW in v0.1.0): per-second funding rate as a function of spots and EMAs.
+- **`marginRatios`** (`IMarginRatios`): initial / liquidation / backstop margin ratios for maker and taker.
+- **`priceImpact`** (`IPriceImpact`, NEW in v0.1.0): dynamic sqrt-price bounds for swaps.
+- **`pricing`** (`IPricing`, NEW in v0.1.0): `markPrice` from amm/index/EMA inputs.
 
-### Implementation Notes
-- Module addresses are loaded from environment variables on startup
-- Default starting price can be configured via `PERP_DEFAULT_STARTING_SQRT_PRICE_X96` (optional)
-- Deposit liquidity operations use reasonable defaults for tick range and liquidity scaling
-- Contracts enforce validation rules defined in their respective modules
+### Deploy → open flow (the-beaconator)
+1. `POST /create_perpcity_beacon` — deploy a beacon and register it with `BeaconRegistry`.
+2. `POST /deploy_perp_for_beacon` with `{ beacon_address, owner, name, symbol, token_uri, ema_window, salt? }`.
+   - Server reads module addresses from env, builds the `Modules` struct, calls `PerpFactory.createPerp`.
+   - Parses `PerpCreated` event from the receipt to extract the new per-market `Perp` address.
+   - Returns `{ perp_address, pool_id, perp_factory_address, sqrt_price_x96, tick, initial_index, ema_window, transaction_hash }`.
+3. `POST /deposit_liquidity_for_perp` with `{ perp_address, margin_amount_usdc, tick_*? }`.
+   - Server approves USDC against the per-market `Perp` contract (per-perp pulls via `safeTransferFrom`), then calls `Perp.openMaker(OpenMakerParams)`.
+   - Parses `MakerOpened` event for the position id.
+
+### Implementation notes
+- Approve target for USDC is the **per-Perp address**, NOT the factory.
+- `OpenMakerParams.liquidity` was widened from `uint120` (v0.0.1) to `uint128` (v0.1.0); `maxAmt0In` / `maxAmt1In` from `uint128` to `uint256`. The Rust DTOs reflect this.
+- `MakerOpened` and `TakerOpened` are now separate events (the old `PositionOpened` unified event no longer exists).
 
 ## Error Handling Standards
 - All API endpoints return standardized `ApiResponse<T>` format

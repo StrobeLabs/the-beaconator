@@ -48,7 +48,7 @@ pub struct WalletManagerConfig {
     pub lock_retry_delay: Duration,
     /// Optional instance ID - if not provided, a UUID will be generated
     pub instance_id: Option<String>,
-    /// Chain ID for EIP-155 signatures (e.g., 8453 for Base mainnet)
+    /// Chain ID for EIP-155 signatures (e.g., 42161 for Arbitrum One)
     pub chain_id: Option<u64>,
 }
 

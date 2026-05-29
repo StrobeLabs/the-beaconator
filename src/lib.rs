@@ -81,9 +81,181 @@ fn serve_openapi_spec(
 ///
 /// Initializes the application state, loads configuration from environment variables,
 /// sets up providers and wallets, and mounts all routes.
+/// Pre-flight audit of every env var the-beaconator reads at startup.
+///
+/// Validates each variable WITHOUT logging its value. The only log output is a single
+/// summary line at the end and one ERROR line per problem detected. This gives the
+/// operator a list of things to fix on a fresh boot without echoing any config
+/// (sensitive or otherwise) to the logs.
+///
+/// Detection rules:
+/// - Required var missing → ERROR `<KEY> is required but not set`.
+/// - Value contains leading/trailing space → ERROR with `raw_len` and `trimmed_len` only.
+/// - Address-typed var fails `Address::from_str` → ERROR with the alloy error class only,
+///   never the offending characters.
+/// - `PRIVATE_KEY` length not 64 / 66 → ERROR with the observed length only.
+/// - `WALLET_PRIVATE_KEYS` entry length not 64 / 66 → ERROR with index and observed
+///   length only.
+///
+/// Anything that passes is silent. Lengths and integer error metadata are emitted because
+/// they're necessary to fix the bug; raw values, addresses, URLs, and any portion of a
+/// secret are NEVER emitted.
+fn audit_environment() {
+    use std::env;
+    use std::str::FromStr;
+
+    // Categorise every env var the-beaconator reads. ADD NEW ENTRIES HERE whenever a new
+    // env var is plumbed in src/lib.rs — keeping the audit in sync with reality is the
+    // whole point.
+    const ADDRESS_VARS_REQUIRED: &[&str] = &[
+        // Beacons system (beacons@v0.0.1)
+        "PERPCITY_REGISTRY_ADDRESS",
+        "ECDSA_VERIFIER_FACTORY_ADDRESS",
+        // Perps system (perpcity-contracts@v0.1.0)
+        "PERP_FACTORY_ADDRESS",
+        // Per-perp Modules struct passed into PerpFactory.createPerp
+        "FEES_MODULE_ADDRESS",
+        "FUNDING_MODULE_ADDRESS",
+        "MARGIN_RATIOS_MODULE_ADDRESS",
+        "PRICE_IMPACT_MODULE_ADDRESS",
+        "PRICING_MODULE_ADDRESS",
+        // Tokens / utility
+        "USDC_ADDRESS",
+    ];
+    const ADDRESS_VARS_OPTIONAL: &[&str] = &[
+        "MULTICALL3_ADDRESS",
+        "LBCGBM_FACTORY_ADDRESS",
+        "WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS",
+        "SAFE_ADDRESS",
+        // Governance / diagnostic; not on the deploy/open path
+        "PROTOCOL_FEE_MANAGER_ADDRESS",
+        "MODULE_REGISTRY_ADDRESS",
+    ];
+    const SECRET_VARS_REQUIRED: &[&str] = &[
+        "RPC_URL",
+        "PRIVATE_KEY",
+        "WALLET_PRIVATE_KEYS",
+        "BEACONATOR_ACCESS_TOKEN",
+        "BEACONATOR_ADMIN_TOKEN",
+        "REDIS_URL",
+    ];
+    const SECRET_VARS_OPTIONAL: &[&str] = &["SENTRY_DSN", "SAFE_TX_SERVICE_URL"];
+    // Other env vars the-beaconator reads. We don't log their values either; we only
+    // check presence (for required) and whitespace cleanliness.
+    const OTHER_VARS_REQUIRED: &[&str] = &["ENV"];
+    const OTHER_VARS_OPTIONAL: &[&str] = &[
+        "USDC_TRANSFER_LIMIT",
+        "ETH_TRANSFER_LIMIT",
+        "BEACONATOR_INSTANCE_ID",
+        "RUST_LOG",
+    ];
+
+    let mut problems = 0usize;
+
+    // Required presence + whitespace checks (no value logging).
+    for &key in ADDRESS_VARS_REQUIRED
+        .iter()
+        .chain(SECRET_VARS_REQUIRED.iter())
+        .chain(OTHER_VARS_REQUIRED.iter())
+    {
+        match env::var(key) {
+            Ok(raw) => {
+                if raw.len() != raw.trim().len() {
+                    tracing::error!(
+                        "{key} has hidden leading/trailing whitespace (raw_len={}, trimmed_len={})",
+                        raw.len(),
+                        raw.trim().len()
+                    );
+                    problems += 1;
+                }
+            }
+            Err(_) => {
+                tracing::error!("{key} is required but not set");
+                problems += 1;
+            }
+        }
+    }
+
+    // Optional vars: only check whitespace if present. Missing is silent.
+    for &key in ADDRESS_VARS_OPTIONAL
+        .iter()
+        .chain(SECRET_VARS_OPTIONAL.iter())
+        .chain(OTHER_VARS_OPTIONAL.iter())
+    {
+        if let Ok(raw) = env::var(key)
+            && raw.len() != raw.trim().len()
+        {
+            tracing::error!(
+                "{key} has hidden leading/trailing whitespace (raw_len={}, trimmed_len={})",
+                raw.len(),
+                raw.trim().len()
+            );
+            problems += 1;
+        }
+    }
+
+    // Address-typed vars: validate parse without logging the value or the offending
+    // characters. The Address::from_str error class (e.g. "invalid string length") is
+    // safe to log; it doesn't echo the raw input.
+    for &key in ADDRESS_VARS_REQUIRED
+        .iter()
+        .chain(ADDRESS_VARS_OPTIONAL.iter())
+    {
+        if let Ok(raw) = env::var(key)
+            && let Err(e) = Address::from_str(raw.trim())
+        {
+            tracing::error!("{key} does not parse as Address: {e}");
+            problems += 1;
+        }
+    }
+
+    // PRIVATE_KEY: must be 64 (raw hex) or 66 (with 0x prefix) characters. We log only
+    // the observed length, never any portion of the value.
+    if let Ok(v) = env::var("PRIVATE_KEY") {
+        let len = v.trim().len();
+        if len != 64 && len != 66 {
+            tracing::error!(
+                "PRIVATE_KEY length is {len} after trim, expected 64 or 66; parse WILL fail"
+            );
+            problems += 1;
+        }
+    }
+
+    // WALLET_PRIVATE_KEYS: comma-separated list of keys, each must be 64 or 66 chars.
+    // We log only the index and length per malformed entry, never any portion of the
+    // value. This is how we caught WALLET_PRIVATE_KEYS[3] = a 42-char address on
+    // 2026-05-29.
+    if let Ok(v) = env::var("WALLET_PRIVATE_KEYS") {
+        for (i, raw) in v.split(',').enumerate() {
+            let len = raw.trim().len();
+            if len != 0 && len != 64 && len != 66 {
+                tracing::error!(
+                    "WALLET_PRIVATE_KEYS[{i}] length is {len} after trim, expected 64 or 66; \
+                     parse WILL fail"
+                );
+                problems += 1;
+            }
+        }
+    }
+
+    if problems == 0 {
+        tracing::info!("Pre-flight environment audit: all checks passed");
+    } else {
+        tracing::error!(
+            "Pre-flight environment audit: {problems} problem(s) detected; startup will likely fail"
+        );
+    }
+}
+
 pub async fn create_rocket() -> Rocket<Build> {
     // Load and cache environment variables
     dotenvy::dotenv().ok();
+
+    // Verbose pre-flight audit of every env var the-beaconator reads. Runs BEFORE any
+    // parse attempt so the operator can see every problem in one log dump even when the
+    // next step is going to panic. Secrets are never logged in plaintext (only lengths +
+    // whitespace warnings). See `audit_environment` above.
+    audit_environment();
 
     // Load RPC configuration from environment
     let rpc_config = services::rpc::RpcConfig::from_env()
@@ -99,11 +271,37 @@ pub async fn create_rocket() -> Rocket<Build> {
     )
     .expect("Failed to parse perpcity registry address");
 
-    let perp_manager_address = Address::from_str(
-        &env::var("PERP_MANAGER_ADDRESS")
-            .expect("PERP_MANAGER_ADDRESS environment variable not set"),
+    // PerpFactory deploys per-market `Perp` contracts. v0.1.0 architecture.
+    let perp_factory_address = Address::from_str(
+        &env::var("PERP_FACTORY_ADDRESS")
+            .expect("PERP_FACTORY_ADDRESS environment variable not set"),
     )
-    .expect("Failed to parse perp manager address");
+    .expect("Failed to parse perp factory address");
+
+    // Module addresses for the v0.1.0 perp Modules struct. All required at startup so
+    // /deploy_perp_for_beacon never has to ask the caller for them.
+    let parse_module_addr = |key: &str| -> Address {
+        Address::from_str(
+            &env::var(key).unwrap_or_else(|_| panic!("{key} environment variable not set")),
+        )
+        .unwrap_or_else(|e| panic!("Failed to parse {key}: {e}"))
+    };
+    let fees_module_address = parse_module_addr("FEES_MODULE_ADDRESS");
+    let funding_module_address = parse_module_addr("FUNDING_MODULE_ADDRESS");
+    let margin_ratios_module_address = parse_module_addr("MARGIN_RATIOS_MODULE_ADDRESS");
+    let price_impact_module_address = parse_module_addr("PRICE_IMPACT_MODULE_ADDRESS");
+    let pricing_module_address = parse_module_addr("PRICING_MODULE_ADDRESS");
+
+    // Optional governance / diagnostic addresses — not on the deploy path.
+    let parse_optional_addr = |key: &str| -> Option<Address> {
+        env::var(key).ok().and_then(|s| {
+            Address::from_str(&s)
+                .map_err(|e| tracing::warn!("Invalid {} '{}': {}", key, s, e))
+                .ok()
+        })
+    };
+    let protocol_fee_manager_address = parse_optional_addr("PROTOCOL_FEE_MANAGER_ADDRESS");
+    let module_registry_address = parse_optional_addr("MODULE_REGISTRY_ADDRESS");
 
     let usdc_address = Address::from_str(
         &env::var("USDC_ADDRESS").expect("USDC_ADDRESS environment variable not set"),
@@ -177,9 +375,9 @@ pub async fn create_rocket() -> Rocket<Build> {
     // Get environment configuration and chain ID
     let env_type = &rpc_config.env_type;
     let chain_id = match env_type.to_lowercase().as_str() {
-        "testnet" => 84532u64,  // Base Sepolia testnet
-        "mainnet" => 8453u64,   // Base mainnet
-        "localnet" => 84532u64, // Use testnet chain ID for local development/CI
+        "testnet" => 421614u64,  // Arbitrum Sepolia
+        "mainnet" => 42161u64,   // Arbitrum One
+        "localnet" => 421614u64, // Use testnet chain ID for local development/CI
         _ => panic!(
             "Invalid ENV value '{env_type}'. Must be either 'mainnet', 'testnet', or 'localnet'"
         ),
@@ -503,12 +701,19 @@ pub async fn create_rocket() -> Rocket<Build> {
         },
         contracts: ContractAddresses {
             perpcity_registry: perpcity_registry_address,
-            perp_manager: perp_manager_address,
+            perp_factory: perp_factory_address,
             usdc: usdc_address,
             ecdsa_verifier_factory: ecdsa_verifier_factory_address,
             multicall3: multicall3_address,
             identity_beacon_bytecode,
             safe: safe_config,
+            fees_module: fees_module_address,
+            funding_module: funding_module_address,
+            margin_ratios_module: margin_ratios_module_address,
+            price_impact_module: price_impact_module_address,
+            pricing_module: pricing_module_address,
+            protocol_fee_manager: protocol_fee_manager_address,
+            module_registry: module_registry_address,
         },
         auth: AuthConfig {
             access_token,

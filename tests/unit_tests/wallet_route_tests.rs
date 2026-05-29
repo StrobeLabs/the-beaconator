@@ -13,6 +13,13 @@ async fn create_test_state() -> the_beaconator::models::AppState {
     crate::test_utils::create_simple_test_app_state().await
 }
 
+/// Same fixture but override chain_id so we can assert against the mainnet guardrail.
+async fn create_state_with_chain_id(chain_id: u64) -> the_beaconator::models::AppState {
+    let mut state = crate::test_utils::create_simple_test_app_state().await;
+    state.provider.chain_id = chain_id;
+    state
+}
+
 #[tokio::test]
 async fn test_fund_wallet_invalid_address() {
     let test_state = create_test_state().await;
@@ -267,6 +274,78 @@ async fn test_fund_wallet_max_u128_amounts() {
     assert!(result.is_err());
     let (status, _) = result.unwrap_err();
     assert_eq!(status, Status::BadRequest);
+}
+
+#[tokio::test]
+async fn test_fund_wallet_disabled_on_arbitrum_one_mainnet() {
+    // chain_id 42161 = Arbitrum One. fund_guest_wallet must refuse with 403 Forbidden
+    // before any address/amount parsing happens.
+    let test_state = create_state_with_chain_id(42161).await;
+    let state = State::from(&test_state);
+    let token = ApiToken("test_token".to_string());
+
+    let request = Json(FundGuestWalletRequest {
+        wallet_address: "0x1234567890123456789012345678901234567890".to_string(),
+        usdc_amount: "1000000".to_string(),
+        eth_amount: "1000000000000000".to_string(),
+    });
+
+    let result = fund_guest_wallet(state, request, token).await;
+    assert!(result.is_err());
+    let (status, body) = result.unwrap_err();
+    assert_eq!(status, Status::Forbidden);
+    assert!(body.message.contains("disabled"));
+    assert!(body.message.contains("42161"));
+}
+
+#[tokio::test]
+async fn test_fund_wallet_disabled_on_unknown_production_chain() {
+    // Anything not in the allow-list (421614 Arbitrum Sepolia / 31337 Anvil) is treated as
+    // production. Use Base mainnet (8453) as the example: even if we accidentally re-enabled
+    // Base, the funding endpoint stays disabled.
+    let test_state = create_state_with_chain_id(8453).await;
+    let state = State::from(&test_state);
+    let token = ApiToken("test_token".to_string());
+
+    let request = Json(FundGuestWalletRequest {
+        wallet_address: "0x1234567890123456789012345678901234567890".to_string(),
+        usdc_amount: "1000000".to_string(),
+        eth_amount: "1000000000000000".to_string(),
+    });
+
+    let result = fund_guest_wallet(state, request, token).await;
+    assert!(result.is_err());
+    let (status, _) = result.unwrap_err();
+    assert_eq!(status, Status::Forbidden);
+}
+
+#[tokio::test]
+async fn test_fund_wallet_allowed_on_arbitrum_sepolia() {
+    // chain_id 421614 = Arbitrum Sepolia. Guardrail must NOT fire — we should fall through
+    // to the normal handler and (with the test stub provider) bottom out somewhere later.
+    // Concretely we expect the request to NOT return Forbidden.
+    let test_state = create_state_with_chain_id(421614).await;
+    let state = State::from(&test_state);
+    let token = ApiToken("test_token".to_string());
+
+    let request = Json(FundGuestWalletRequest {
+        wallet_address: "0x1234567890123456789012345678901234567890".to_string(),
+        usdc_amount: "1000000".to_string(),
+        eth_amount: "1000000000000000".to_string(),
+    });
+
+    let result = fund_guest_wallet(state, request, token).await;
+    // Whether this succeeds or fails depends on the local provider; we only care that the
+    // failure mode is *not* the mainnet guardrail.
+    if let Err((status, body)) = result {
+        assert_ne!(
+            status,
+            Status::Forbidden,
+            "Arbitrum Sepolia (chain 421614) should NOT trip the mainnet guardrail, \
+             but got Forbidden with message: {}",
+            body.message
+        );
+    }
 }
 
 #[test]
