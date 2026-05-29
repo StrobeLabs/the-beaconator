@@ -81,9 +81,194 @@ fn serve_openapi_spec(
 ///
 /// Initializes the application state, loads configuration from environment variables,
 /// sets up providers and wallets, and mounts all routes.
+/// Pre-flight audit of every env var the-beaconator reads at startup.
+///
+/// Logs each variable's presence and shape BEFORE any code tries to parse them, so the
+/// operator sees the full picture of what the container thinks its config is in a single
+/// log dump — even when the next step is going to panic. This is verbose by design:
+/// startup crashes are fatal-by-restart-loop, and the per-deploy debug cost of one extra
+/// log block is dwarfed by the cost of round-tripping through redeploys to find a typo.
+///
+/// **Secrets are never logged in plaintext.** For private keys, tokens, DSNs, and any URL
+/// known to carry an API key, we log only `<set, len=N>` plus a whitespace warning if the
+/// value would trim to a different length. For addresses and other non-sensitive vars the
+/// raw value is logged so parse failures are obvious.
+fn audit_environment() {
+    use std::env;
+
+    // Categorise every env var the-beaconator reads. ADD NEW ENTRIES HERE whenever a new
+    // env var is plumbed in src/lib.rs — keeping the audit in sync with reality is the
+    // whole point.
+    const ADDRESS_VARS_REQUIRED: &[&str] = &[
+        // Beacons system (beacons@v0.0.1)
+        "PERPCITY_REGISTRY_ADDRESS",
+        "ECDSA_VERIFIER_FACTORY_ADDRESS",
+        // Perps system (perpcity-contracts@v0.1.0)
+        "PERP_FACTORY_ADDRESS",
+        // Per-perp Modules struct passed into PerpFactory.createPerp
+        "FEES_MODULE_ADDRESS",
+        "FUNDING_MODULE_ADDRESS",
+        "MARGIN_RATIOS_MODULE_ADDRESS",
+        "PRICE_IMPACT_MODULE_ADDRESS",
+        "PRICING_MODULE_ADDRESS",
+        // Tokens / utility
+        "USDC_ADDRESS",
+    ];
+    const ADDRESS_VARS_OPTIONAL: &[&str] = &[
+        "MULTICALL3_ADDRESS",
+        "LBCGBM_FACTORY_ADDRESS",
+        "WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS",
+        "SAFE_ADDRESS",
+        // Governance / diagnostic; not on the deploy/open path
+        "PROTOCOL_FEE_MANAGER_ADDRESS",
+        "MODULE_REGISTRY_ADDRESS",
+    ];
+    const SECRET_VARS_REQUIRED: &[&str] = &[
+        "RPC_URL",
+        "PRIVATE_KEY",
+        "WALLET_PRIVATE_KEYS",
+        "BEACONATOR_ACCESS_TOKEN",
+        "BEACONATOR_ADMIN_TOKEN",
+        "REDIS_URL",
+    ];
+    const SECRET_VARS_OPTIONAL: &[&str] = &["SENTRY_DSN", "SAFE_TX_SERVICE_URL"];
+    const PLAIN_VARS: &[&str] = &[
+        "ENV",
+        "USDC_TRANSFER_LIMIT",
+        "ETH_TRANSFER_LIMIT",
+        "BEACONATOR_INSTANCE_ID",
+        "RUST_LOG",
+    ];
+
+    tracing::info!("=== Pre-flight environment audit ===");
+
+    // Addresses: log raw value (addresses are public), pre-validate parse, warn on
+    // hidden whitespace.
+    for &key in ADDRESS_VARS_REQUIRED {
+        audit_address(key, true);
+    }
+    for &key in ADDRESS_VARS_OPTIONAL {
+        audit_address(key, false);
+    }
+
+    // Secrets: log only length + whitespace warning. NEVER the value.
+    for &key in SECRET_VARS_REQUIRED {
+        audit_secret(key, true);
+    }
+    for &key in SECRET_VARS_OPTIONAL {
+        audit_secret(key, false);
+    }
+
+    // Plain non-sensitive scalars.
+    for &key in PLAIN_VARS {
+        audit_plain(key);
+    }
+
+    // Special case: PRIVATE_KEY's expected length. secp256k1 keys are 32 bytes = 64 hex
+    // characters, optionally with `0x` prefix. Anything else is the bug we keep seeing.
+    if let Ok(v) = env::var("PRIVATE_KEY") {
+        let trimmed = v.trim();
+        let len = trimmed.len();
+        if len != 64 && len != 66 {
+            tracing::error!(
+                "PRIVATE_KEY length is {len} (after trim) — expected 64 (raw hex) or 66 (with 0x prefix). \
+                 PRIVATE_KEY parse WILL fail. Generate a fresh key with `openssl rand -hex 32`."
+            );
+        }
+    }
+
+    // Same check for each comma-separated entry in WALLET_PRIVATE_KEYS.
+    if let Ok(v) = env::var("WALLET_PRIVATE_KEYS") {
+        for (i, raw) in v.split(',').enumerate() {
+            let trimmed = raw.trim();
+            let len = trimmed.len();
+            if !trimmed.is_empty() && len != 64 && len != 66 {
+                tracing::error!(
+                    "WALLET_PRIVATE_KEYS[{i}] length is {len} (after trim) — expected 64 or 66. \
+                     This entry WILL fail to parse."
+                );
+            }
+        }
+    }
+
+    tracing::info!("=== End pre-flight environment audit ===");
+}
+
+fn audit_address(key: &str, required: bool) {
+    use std::env;
+    use std::str::FromStr;
+    match env::var(key) {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            let whitespace_note = if raw.len() != trimmed.len() {
+                format!(
+                    " WARNING: raw_len={} trimmed_len={} — hidden leading/trailing whitespace!",
+                    raw.len(),
+                    trimmed.len()
+                )
+            } else {
+                String::new()
+            };
+            match Address::from_str(trimmed) {
+                Ok(parsed) => tracing::info!(
+                    "  {key} = {parsed} (parses OK, len={}){whitespace_note}",
+                    trimmed.len()
+                ),
+                Err(e) => tracing::error!(
+                    "  {key} = {trimmed:?} FAILS to parse as Address: {e}{whitespace_note}"
+                ),
+            }
+        }
+        Err(_) if required => tracing::error!("  {key} = (NOT SET — REQUIRED)"),
+        Err(_) => tracing::info!("  {key} = (not set, optional)"),
+    }
+}
+
+fn audit_secret(key: &str, required: bool) {
+    use std::env;
+    match env::var(key) {
+        Ok(raw) => {
+            let trimmed_len = raw.trim().len();
+            let whitespace_note = if raw.len() != trimmed_len {
+                format!(
+                    " WARNING: raw_len={} trimmed_len={trimmed_len} — hidden whitespace; likely cause of parse errors!",
+                    raw.len(),
+                )
+            } else {
+                String::new()
+            };
+            tracing::info!("  {key} = <set, len={trimmed_len}>{whitespace_note}");
+        }
+        Err(_) if required => tracing::error!("  {key} = (NOT SET — REQUIRED)"),
+        Err(_) => tracing::info!("  {key} = (not set, optional)"),
+    }
+}
+
+fn audit_plain(key: &str) {
+    use std::env;
+    match env::var(key) {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            let whitespace_note = if raw.len() != trimmed.len() {
+                format!(" WARNING: hidden whitespace, raw_len={}", raw.len())
+            } else {
+                String::new()
+            };
+            tracing::info!("  {key} = {trimmed:?}{whitespace_note}");
+        }
+        Err(_) => tracing::info!("  {key} = (not set)"),
+    }
+}
+
 pub async fn create_rocket() -> Rocket<Build> {
     // Load and cache environment variables
     dotenvy::dotenv().ok();
+
+    // Verbose pre-flight audit of every env var the-beaconator reads. Runs BEFORE any
+    // parse attempt so the operator can see every problem in one log dump even when the
+    // next step is going to panic. Secrets are never logged in plaintext (only lengths +
+    // whitespace warnings). See `audit_environment` above.
+    audit_environment();
 
     // Load RPC configuration from environment
     let rpc_config = services::rpc::RpcConfig::from_env()
