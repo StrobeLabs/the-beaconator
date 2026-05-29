@@ -91,19 +91,45 @@ setup_worktree() {
   # Submodules (lib/solady, lib/v4-core, etc.) aren't materialized by `worktree add`.
   # Rewrite git@github.com URLs to https so we don't need an SSH key configured here,
   # then init submodules in-place so forge can resolve remappings.
+  # Pass the whole `key=value` as a single shell token so ShellCheck SC2140
+  # doesn't trip on the embedded double-quote sandwich, and so the value
+  # propagates verbatim into git's config parser.
   git -C "$wt" \
-    -c url."https://github.com/".insteadOf="git@github.com:" \
+    -c 'url.https://github.com/.insteadOf=git@github.com:' \
     submodule update --init --recursive --jobs 4 >/dev/null
   echo "$wt"
 }
 
-inspect_abi_to() {
-  # inspect_abi_to <worktree> <ContractName> <output_filename>
+# Write the output of `forge inspect <contract> <what>` to $ABIS_DIR/$out
+# atomically: stream into a temp file in the same directory, and only mv to
+# the final name once forge succeeds. Prevents a failing forge run from
+# leaving a truncated artifact behind (which `set -e` would then propagate
+# silently into a half-broken `git diff abis/`). 2026-05-29: CodeRabbit
+# flagged the earlier non-atomic pattern.
+inspect_to() {
+  # inspect_to <worktree> <ContractName> <what> <output_filename> <label>
+  # <what>  is forge inspect's positional arg ("abi --json" or "bytecode").
+  # <label> is a short tag for the log line so callers don't have to repeat it.
   local wt="$1"
   local contract="$2"
-  local out="$3"
-  ( cd "$wt" && forge inspect "$contract" abi --json ) > "$ABIS_DIR/$out"
-  echo "  Wrote $ABIS_DIR/$out (abi)"
+  local what="$3"
+  local out="$4"
+  local label="$5"
+  local tmp
+  tmp="$(mktemp "$ABIS_DIR/.${out}.tmp.XXXXXX")"
+  if ( cd "$wt" && eval "forge inspect \"$contract\" $what" ) > "$tmp"; then
+    mv "$tmp" "$ABIS_DIR/$out"
+    echo "  Wrote $ABIS_DIR/$out ($label)"
+  else
+    rm -f "$tmp"
+    echo "  FAILED forge inspect $contract $what" >&2
+    return 1
+  fi
+}
+
+inspect_abi_to() {
+  # inspect_abi_to <worktree> <ContractName> <output_filename>
+  inspect_to "$1" "$2" "abi --json" "$3" "abi"
 }
 
 inspect_bytecode_to() {
@@ -113,11 +139,7 @@ inspect_bytecode_to() {
   # `state.contracts.identity_beacon_bytecode`. Forgetting to refresh this
   # in tandem with the source is exactly how we shipped IdentityBeacons
   # whose constructor pre-dated BindingLib (2026-05-29 incident).
-  local wt="$1"
-  local contract="$2"
-  local out="$3"
-  ( cd "$wt" && forge inspect "$contract" bytecode ) > "$ABIS_DIR/$out"
-  echo "  Wrote $ABIS_DIR/$out (deploy-time bytecode)"
+  inspect_to "$1" "$2" "bytecode" "$3" "deploy-time bytecode"
 }
 
 echo "Refreshing ABIs from beacons@$BEACONS_TAG and perpcity-contracts@$PERPCITY_TAG..."
