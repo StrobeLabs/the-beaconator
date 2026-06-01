@@ -43,9 +43,9 @@ fn identity_beacon_bytecode_is_non_trivial_creation_code() {
     let bytes = load_bytecode();
     assert!(
         bytes.len() >= 2_000,
-        "{BYTECODE_PATH} is suspiciously short ({} bytes); expected creation \
-         code on the order of 4-5 KiB. Either `forge inspect` produced a \
-         partial write or someone hand-edited the file.",
+"{BYTECODE_PATH} is suspiciously short ({} bytes); expected creation \
+ code on the order of 8-9 KiB. Either `forge inspect` produced a \
+ partial write or someone hand-edited the file.",
         bytes.len()
     );
     // Solady-compiled `solc 0.8.30` creation code starts with 0x60... (PUSH1).
