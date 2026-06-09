@@ -1,0 +1,16 @@
+{
+  "name": "the-beaconator-infra",
+  "private": true,
+  "description": "SST deployment for the-beaconator (AWS ECS Fargate). See docs/AWS_DEPLOY.md.",
+  "scripts": {
+    "deploy:testnet": "sst deploy --stage testnet",
+    "diff:testnet": "sst diff --stage testnet",
+    "remove:testnet": "sst remove --stage testnet"
+  },
+  "dependencies": {
+    "sst": "^4.15.2"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

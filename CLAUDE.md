@@ -239,11 +239,22 @@ Standard recipes define which component factories to call. 12 built-in recipes a
 - 4 Group: dominance, relative_dominance, discrete_allocation, continuous_allocation
 
 ### Redis Storage
-Factory addresses are pre-seeded into Redis (not env vars). Keys:
+Factory addresses are pre-seeded into Redis (not read from env vars at request time). Keys:
 - `beaconator:component_factory:{FactoryType}` - factory config JSON
 - `beaconator:component_factories` - set of factory type names
 - `beaconator:beacon_recipe:{slug}` - recipe config JSON
 - `beaconator:beacon_recipes` - set of recipe slugs
+
+Seeding paths: direct Redis writes (local dev, Railway), or the optional
+`COMPONENT_FACTORIES_JSON` env var — a `{"FactoryType": "0xaddr"}` map seeded at
+startup without overwriting existing entries. The AWS deployment uses the latter
+because ElastiCache is VPC-internal (see `sst.config.ts` and `docs/AWS_DEPLOY.md`).
+
+## AWS deployment (SST)
+`sst.config.ts` deploys the service to ECS Fargate (us-west-2) with Redis
+(ElastiCache Valkey, TLS) and secrets in AWS Secrets Manager, injected by ECS as
+env vars at container start. Stage `testnet` = perpcity-dev account + Arbitrum
+Sepolia. See `docs/AWS_DEPLOY.md` for the secret-creation and deploy runbook.
 
 ### Creation Flow
 1. Look up recipe by slug from RecipeRegistry

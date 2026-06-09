@@ -148,6 +148,9 @@ fn audit_environment() {
         "ETH_TRANSFER_LIMIT",
         "BEACONATOR_INSTANCE_ID",
         "RUST_LOG",
+        // JSON map of component factory addresses seeded into Redis at startup
+        // (set by the AWS deployment; see sst.config.ts)
+        "COMPONENT_FACTORIES_JSON",
     ];
 
     let mut problems = 0usize;
@@ -613,6 +616,27 @@ pub async fn create_rocket() -> Rocket<Build> {
         .unwrap_or_else(|e| {
             panic!("ComponentFactoryRegistry failed to initialize: {e}. Check Redis connectivity.")
         });
+
+    // Seed factory addresses from COMPONENT_FACTORIES_JSON when provided (the AWS
+    // deployment sets it because ElastiCache is VPC-internal and cannot be seeded by
+    // hand the way the Railway Redis was). Existing entries are never overwritten, so
+    // re-deploys and registry edits made through Redis stay intact.
+    if let Ok(factories_json) = env::var("COMPONENT_FACTORIES_JSON") {
+        let configs = models::component_factory::parse_component_factories_json(&factories_json)
+            .unwrap_or_else(|e| panic!("COMPONENT_FACTORIES_JSON is invalid: {e}"));
+        match component_factory_registry.seed_defaults(&configs).await {
+            Ok(result) => {
+                tracing::info!(
+                    "Component factory seed: {} seeded, {} already existed",
+                    result.seeded,
+                    result.skipped
+                );
+            }
+            Err(e) => {
+                panic!("Failed to seed component factories from COMPONENT_FACTORIES_JSON: {e}");
+            }
+        }
+    }
 
     match component_factory_registry.list_factories().await {
         Ok(factories) => {
