@@ -1,0 +1,82 @@
+# Release the beaconator image on every merge to main:
+#   build arm64 -> push to ECR (perpcity-dev) -> write the SSM image parameter
+#   -> dispatch a testnet deploy in perpcity-client.
+#
+# This repo ships the image only; deployment lives in the perpcity SST app
+# (perpcity-client/sst.config.ts), which resolves the image from the
+# /perpcity/testnet/beaconator-image SSM parameter this workflow writes.
+# Production promotion is deliberately manual: copy the image to the prod
+# account's ECR and put /perpcity/production/beaconator-image there.
+#
+# Auth: GitHub OIDC -> perpcity-gha-producer-push role (created by
+# perpcity-client/sst/scripts/gha-oidc-bootstrap.sh). The dispatch hop needs
+# the PERPCITY_DISPATCH_TOKEN secret (PAT with write access to
+# StrobeLabs/perpcity-client).
+name: Release image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-image
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REPO: the-beaconator
+  SSM_PARAM: /perpcity/testnet/beaconator-image
+
+jobs:
+  release:
+    # Native arm64: the Fargate tasks are arm64 and a Rust release build under
+    # QEMU emulation is unusably slow.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::267923960054:role/perpcity-gha-producer-push
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          # Immutable tag per commit (the ECR repo enforces immutability).
+          tags: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Write SSM image parameter
+        run: |
+          URI="${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}@${{ steps.build.outputs.digest }}"
+          aws ssm put-parameter --name "$SSM_PARAM" --type String --overwrite --value "$URI"
+          echo "wrote $SSM_PARAM = $URI"
+
+      - name: Trigger testnet deploy
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.PERPCITY_DISPATCH_TOKEN }}
+          repository: StrobeLabs/perpcity-client
+          event-type: producer-image-updated
+          client-payload: >-
+            {"image": "${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}@${{ steps.build.outputs.digest }}",
+             "repo": "${{ github.repository }}",
+             "sha": "${{ github.sha }}"}
