@@ -5,21 +5,30 @@ from `sst.config.ts` at the repo root. It follows the same conventions as the ma
 perpcity SST app (perpcity-client): same region, same AWS profiles, same delegated
 `aws.perp.city` Route 53 zone.
 
-Currently configured stage:
+Configured stages:
 
-| Stage     | AWS account                  | Chain                     | URL                                          |
-|-----------|------------------------------|---------------------------|----------------------------------------------|
-| `testnet` | perpcity-dev (267923960054)  | Arbitrum Sepolia (421614) | https://testnet-beaconator.aws.perp.city     |
+| Stage        | AWS account                         | Chain                     | URL                                       |
+|--------------|-------------------------------------|---------------------------|-------------------------------------------|
+| `testnet`    | perpcity-dev (267923960054)         | Arbitrum Sepolia (421614) | https://testnet-beaconator.aws.perp.city  |
+| `production` | perpcity-production (657231015195)  | Arbitrum One (42161)      | https://beaconator.aws.perp.city          |
 
-Mainnet stays on Railway until testnet has soaked; `sst.config.ts` refuses unknown
-stages by design.
+`sst.config.ts` refuses unknown stages by design.
+
+IMPORTANT: deploying `production` is the CUTOVER from Railway. Both run the same
+wallet keys, so two live instances signing concurrently would race nonces. Deploy
+production only when traffic is being moved off the Railway mainnet instance, and
+stop the Railway service promptly after.
+
+Production also needs a one-time DNS setup before its first deploy (see
+"Production DNS zone" below) — the config refuses to deploy until
+`STAGES.production.dnsZone` is filled in.
 
 ## How secrets work
 
 Sensitive values (wallet private keys, the RPC URL, API tokens) live in **AWS Secrets
 Manager**, one secret per variable, named `the-beaconator/<stage>/<VAR>`:
 
-```
+```text
 the-beaconator/testnet/RPC_URL
 the-beaconator/testnet/PRIVATE_KEY
 the-beaconator/testnet/WALLET_PRIVATE_KEYS
@@ -80,10 +89,52 @@ aws secretsmanager create-secret --name "$S/SENTRY_DSN" --secret-string "disable
 unset RPC_URL PRIVATE_KEY WALLET_KEYS ACCESS_TOKEN ADMIN_TOKEN
 ```
 
+For `production`, the same sequence with `AWS_PROFILE=perpcity-production`,
+`S=the-beaconator/production`, and mainnet values (done 2026-06-09). Reusing the
+Railway tokens keeps the backend and scripts working unchanged at cutover.
+
+## Production DNS zone (one-time, before first production deploy)
+
+SST validates ACM certs from a hosted zone in the account it deploys to. The
+production account only has the app/api child zones, so `beaconator.aws.perp.city`
+needs its own delegated child zone, same pattern as the perpcity app:
+
+```bash
+# 1. Create the child zone in perpcity-production; note its Id and NS servers
+AWS_PROFILE=perpcity-production aws route53 create-hosted-zone \
+  --name beaconator.aws.perp.city \
+  --caller-reference "beaconator-$(date +%s)" \
+  --query '{Id:HostedZone.Id,NS:DelegationSet.NameServers}'
+
+# 2. Delegate it from the aws.perp.city zone in perpcity-dev (paste the four NS
+#    values from step 1 into the ResourceRecords list)
+AWS_PROFILE=perpcity-dev aws route53 change-resource-record-sets \
+  --hosted-zone-id Z01504801S59A4HQBX4TS \
+  --change-batch '{
+    "Changes": [{
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "beaconator.aws.perp.city",
+        "Type": "NS",
+        "TTL": 300,
+        "ResourceRecords": [
+          {"Value": "<ns1>"}, {"Value": "<ns2>"}, {"Value": "<ns3>"}, {"Value": "<ns4>"}
+        ]
+      }
+    }]
+  }'
+
+# 3. Fill STAGES.production.dnsZone in sst.config.ts with the zone id from step 1
+#    (the bare id, without the /hostedzone/ prefix)
+```
+
 ## Deploy
 
 ```bash
 AWS_PROFILE=perpcity-dev npx sst deploy --stage testnet
+
+# Production - this is the Railway cutover, see the warning at the top
+AWS_PROFILE=perpcity-production npx sst deploy --stage production
 ```
 
 First deploy takes a while (VPC + NAT + ElastiCache + ACM cert validation + the
