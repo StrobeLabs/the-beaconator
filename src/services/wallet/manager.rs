@@ -4,7 +4,9 @@
 //! operations, locking, and beacon mappings into a unified interface.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
+use super::lock::LockHeartbeat;
 use super::{WalletLock, WalletLockGuard, WalletPool};
 use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, B256};
@@ -34,18 +36,45 @@ impl WalletSigner {
 /// A handle to a locked wallet ready for use
 ///
 /// This combines the signer with its lock guard, ensuring the wallet
-/// remains locked for the duration of operations.
+/// remains locked for the duration of operations. A background heartbeat
+/// keeps the Redis lock alive for as long as the handle lives — flows like
+/// USDC approval waits and modular recipes hold a wallet far longer than
+/// the lock TTL.
+///
+/// Field order matters: `heartbeat` is declared before `lock_guard` so it is
+/// dropped (and its extension task aborted) BEFORE the guard releases the lock.
 pub struct WalletHandle {
     /// The signer for this wallet
     pub signer: WalletSigner,
+    /// Background lock-extension task; aborted on drop, before the lock release
+    heartbeat: LockHeartbeat,
     /// The lock guard - wallet is locked until this is dropped
     pub lock_guard: WalletLockGuard,
 }
 
 impl WalletHandle {
+    /// Create a handle and start its lock heartbeat (extends every `lock_ttl / 3`)
+    fn new(signer: WalletSigner, lock_guard: WalletLockGuard, lock_ttl: Duration) -> Self {
+        let heartbeat = lock_guard.spawn_heartbeat(lock_ttl);
+        Self {
+            signer,
+            heartbeat,
+            lock_guard,
+        }
+    }
+
     /// Get the Ethereum address of this wallet
     pub fn address(&self) -> Address {
         self.signer.address()
+    }
+
+    /// Error if the distributed lock backing this handle has been lost.
+    ///
+    /// Call this immediately before every transaction send: a lost lock means
+    /// another instance may already be using this wallet, and sending would
+    /// risk a nonce collision.
+    pub fn ensure_lock_held(&self) -> Result<(), String> {
+        self.heartbeat.ensure_held()
     }
 
     /// Build an AlloyProvider using this wallet's signer
@@ -223,7 +252,7 @@ impl WalletManager {
             .ok_or_else(|| format!("No signer available for wallet {address}"))?;
 
         let lock = WalletLock::with_keys(
-            pool.redis_client().clone(),
+            pool.connection().clone(),
             *address,
             pool.instance_id().to_string(),
             config.lock_ttl,
@@ -234,13 +263,18 @@ impl WalletManager {
             .acquire(config.lock_retry_count, config.lock_retry_delay)
             .await?;
 
-        Ok(WalletHandle {
-            signer: WalletSigner(signer.clone()),
+        Ok(WalletHandle::new(
+            WalletSigner(signer.clone()),
             lock_guard,
-        })
+            config.lock_ttl,
+        ))
     }
 
     /// Acquire any available wallet from the pool
+    ///
+    /// First pass tries every wallet once without retrying (so one busy wallet
+    /// can't head-of-line block the rest of the pool); only if ALL wallets are
+    /// locked does it fall back to the retry loop.
     pub async fn acquire_any_wallet(&self) -> Result<WalletHandle, String> {
         let pool = self.require_pool();
         let config = self.require_config();
@@ -251,10 +285,32 @@ impl WalletManager {
             return Err("No available wallets in the pool".to_string());
         }
 
-        for wallet_info in available {
+        // Fast pass: one non-blocking attempt per wallet.
+        for wallet_info in &available {
             if let Some(signer) = self.signers.get(&wallet_info.address) {
                 let lock = WalletLock::with_keys(
-                    pool.redis_client().clone(),
+                    pool.connection().clone(),
+                    wallet_info.address,
+                    pool.instance_id().to_string(),
+                    config.lock_ttl,
+                    pool.keys(),
+                );
+
+                if let Ok(lock_guard) = lock.try_acquire().await {
+                    return Ok(WalletHandle::new(
+                        WalletSigner(signer.clone()),
+                        lock_guard,
+                        config.lock_ttl,
+                    ));
+                }
+            }
+        }
+
+        // Slow pass: everything was locked — wait with retries per wallet.
+        for wallet_info in &available {
+            if let Some(signer) = self.signers.get(&wallet_info.address) {
+                let lock = WalletLock::with_keys(
+                    pool.connection().clone(),
                     wallet_info.address,
                     pool.instance_id().to_string(),
                     config.lock_ttl,
@@ -265,10 +321,11 @@ impl WalletManager {
                     .acquire(config.lock_retry_count, config.lock_retry_delay)
                     .await
                 {
-                    return Ok(WalletHandle {
-                        signer: WalletSigner(signer.clone()),
+                    return Ok(WalletHandle::new(
+                        WalletSigner(signer.clone()),
                         lock_guard,
-                    });
+                        config.lock_ttl,
+                    ));
                 }
             }
         }
@@ -306,12 +363,17 @@ impl WalletManager {
         let pool = self.require_pool();
         let config = self.require_config();
         WalletLock::with_keys(
-            pool.redis_client().clone(),
+            pool.connection().clone(),
             *address,
             pool.instance_id().to_string(),
             config.lock_ttl,
             pool.keys(),
         )
+    }
+
+    /// The configured lock TTL (used to size lock heartbeats)
+    pub fn lock_ttl(&self) -> Duration {
+        self.require_config().lock_ttl
     }
 
     /// List all wallets in the pool

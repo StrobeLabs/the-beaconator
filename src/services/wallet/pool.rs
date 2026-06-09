@@ -5,13 +5,14 @@
 
 use alloy::primitives::Address;
 use redis::AsyncCommands;
+use redis::aio::ConnectionManager;
 use std::str::FromStr;
 
 use crate::models::wallet::{PrefixedRedisKeys, WalletInfo, WalletStatus};
 
 /// Redis-backed wallet pool
 pub struct WalletPool {
-    redis: redis::Client,
+    conn: ConnectionManager,
     instance_id: String,
     keys: PrefixedRedisKeys,
 }
@@ -34,9 +35,9 @@ impl WalletPool {
         let redis = redis::Client::open(redis_url)
             .map_err(|e| format!("Failed to connect to Redis: {e}"))?;
 
-        // Test connection
-        let mut conn = redis
-            .get_multiplexed_async_connection()
+        // One auto-reconnecting connection per pool; cloned per operation. This
+        // avoids opening a fresh (TLS) connection for every Redis command.
+        let mut conn = ConnectionManager::new(redis)
             .await
             .map_err(|e| format!("Failed to get Redis connection: {e}"))?;
 
@@ -48,18 +49,15 @@ impl WalletPool {
         tracing::info!("Wallet pool connected to Redis with prefix '{}'", prefix);
 
         Ok(Self {
-            redis,
+            conn,
             instance_id,
             keys: PrefixedRedisKeys::new(prefix),
         })
     }
 
-    /// Get a Redis connection
-    async fn get_conn(&self) -> Result<redis::aio::MultiplexedConnection, String> {
-        self.redis
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| format!("Redis connection failed: {e}"))
+    /// Get a Redis connection (cheap clone of the shared auto-reconnecting manager)
+    fn get_conn(&self) -> ConnectionManager {
+        self.conn.clone()
     }
 
     /// Get the instance ID
@@ -67,9 +65,9 @@ impl WalletPool {
         &self.instance_id
     }
 
-    /// Get the Redis client (for creating locks)
-    pub fn redis_client(&self) -> &redis::Client {
-        &self.redis
+    /// Get the shared Redis connection manager (for creating locks)
+    pub fn connection(&self) -> &ConnectionManager {
+        &self.conn
     }
 
     /// Get the Redis key generator (for creating locks with matching prefix)
@@ -79,39 +77,52 @@ impl WalletPool {
 
     /// List all wallets in the pool
     pub async fn list_wallets(&self) -> Result<Vec<WalletInfo>, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
         let addresses: Vec<String> = conn
             .smembers(self.keys.wallet_pool())
             .await
             .map_err(|e| format!("Failed to list wallets: {e}"))?;
 
-        let mut wallets = Vec::new();
-        for addr_str in addresses {
-            if let Ok(address) = Address::from_str(&addr_str)
-                && let Ok(info) = self.get_wallet_info(&address).await
-            {
-                wallets.push(info);
-            }
+        // Single MGET instead of one GET per wallet (avoids N+1 round trips).
+        let info_keys: Vec<String> = addresses
+            .iter()
+            .filter_map(|addr_str| Address::from_str(addr_str).ok())
+            .map(|address| self.keys.wallet_info(&address))
+            .collect();
+
+        if info_keys.is_empty() {
+            return Ok(Vec::new());
         }
+
+        let info_jsons: Vec<Option<String>> = conn
+            .mget(&info_keys)
+            .await
+            .map_err(|e| format!("Failed to fetch wallet info: {e}"))?;
+
+        let wallets = info_jsons
+            .into_iter()
+            .flatten()
+            .filter_map(|json| serde_json::from_str::<WalletInfo>(&json).ok())
+            .collect();
 
         Ok(wallets)
     }
 
-    /// List all available (not locked) wallets
+    /// List all wallets eligible for acquisition.
+    ///
+    /// NOTE: the `WalletInfo.status` field is informational only — nothing in
+    /// production ever sets `Locked` (locking is enforced through the Redis lock
+    /// keys, not this field), so wallets are listed regardless of status.
     pub async fn list_available_wallets(&self) -> Result<Vec<WalletInfo>, String> {
-        let wallets = self.list_wallets().await?;
-        Ok(wallets
-            .into_iter()
-            .filter(|w| matches!(w.status, WalletStatus::Available))
-            .collect())
+        self.list_wallets().await
     }
 
     /// Add a wallet to the pool
     ///
     /// Uses an atomic Redis pipeline to ensure both operations succeed or fail together.
     pub async fn add_wallet(&self, info: WalletInfo) -> Result<(), String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
         // Serialize wallet info
         let info_json = serde_json::to_string(&info)
@@ -133,7 +144,7 @@ impl WalletPool {
 
     /// Get wallet info by address
     pub async fn get_wallet_info(&self, address: &Address) -> Result<WalletInfo, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
         let info_json: Option<String> = conn
             .get(self.keys.wallet_info(address))
@@ -149,7 +160,7 @@ impl WalletPool {
 
     /// Update wallet info
     pub async fn update_wallet_info(&self, info: &WalletInfo) -> Result<(), String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
         let info_json = serde_json::to_string(info)
             .map_err(|e| format!("Failed to serialize wallet info: {e}"))?;
@@ -179,7 +190,7 @@ impl WalletPool {
     /// that were designated to this wallet. Uses an atomic Redis pipeline
     /// to ensure all operations succeed or fail together.
     pub async fn remove_wallet(&self, address: &Address) -> Result<(), String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
         // First, get all beacons designated to this wallet
         let beacon_strs: Vec<String> = conn
@@ -220,7 +231,7 @@ impl WalletPool {
 
     /// Check if a wallet exists in the pool
     pub async fn wallet_exists(&self, address: &Address) -> Result<bool, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
         let exists: bool = conn
             .sismember(self.keys.wallet_pool(), address.to_string())
@@ -232,7 +243,7 @@ impl WalletPool {
 
     /// Get the number of wallets in the pool
     pub async fn wallet_count(&self) -> Result<usize, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
         let count: usize = conn
             .scard(self.keys.wallet_pool())
@@ -257,7 +268,7 @@ impl WalletPool {
         wallet_address: &Address,
         beacon_address: &Address,
     ) -> Result<(), String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
         // Use atomic pipeline for the two Redis key operations
         let _: () = redis::pipe()
@@ -313,7 +324,7 @@ impl WalletPool {
         &self,
         beacon_address: &Address,
     ) -> Result<Option<Address>, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
         let wallet_str: Option<String> = conn
             .get(self.keys.beacon_wallet(beacon_address))
@@ -335,7 +346,7 @@ impl WalletPool {
         &self,
         wallet_address: &Address,
     ) -> Result<Vec<Address>, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
         let beacon_strs: Vec<String> = conn
             .smembers(self.keys.wallet_beacons(wallet_address))
@@ -361,7 +372,7 @@ impl WalletPool {
         wallet_address: &Address,
         beacon_address: &Address,
     ) -> Result<(), String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
         // Use atomic pipeline for the two Redis key operations
         let _: () = redis::pipe()
@@ -412,7 +423,7 @@ impl WalletPool {
     /// This is useful for test teardown to remove all keys created during a test.
     /// WARNING: This will delete ALL keys matching the prefix pattern.
     pub async fn cleanup(&self) -> Result<(), String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
         let pattern = format!("{}*", self.keys.prefix());
 
         // Use KEYS to find all keys with our prefix

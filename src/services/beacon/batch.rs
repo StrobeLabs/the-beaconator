@@ -1,5 +1,7 @@
 use alloy::primitives::{Address, keccak256};
 use std::str::FromStr;
+use std::time::Duration;
+use tokio::time::timeout;
 
 use crate::AlloyProvider;
 use crate::models::{AppState, BatchUpdateBeaconResponse, BeaconUpdateData, BeaconUpdateResult};
@@ -118,6 +120,14 @@ pub async fn batch_update_beacon(
 
         // Process this wallet's updates using multicall
         if let Some(multicall_address) = state.contracts.multicall3 {
+            // Abort before sending if the distributed wallet lock was lost.
+            if let Err(e) = wallet_handle.ensure_lock_held() {
+                tracing::error!("{}", e);
+                for update in wallet_updates {
+                    batch_results.push((update.beacon_address.clone(), Err(e.clone())));
+                }
+                continue;
+            }
             // Convert &[&BeaconUpdateData] to &[BeaconUpdateData] for the function call
             let updates_slice: Vec<BeaconUpdateData> =
                 wallet_updates.iter().map(|u| (*u).clone()).collect();
@@ -236,9 +246,10 @@ async fn batch_update_with_multicall3(
     // First send the transaction
     match multicall_contract.aggregate3(calls.clone()).send().await {
         Ok(pending_tx) => {
+            let batch_tx_hash = *pending_tx.tx_hash();
             tracing::info!("Multicall3 batch update transaction sent, waiting for receipt...");
-            match pending_tx.get_receipt().await {
-                Ok(receipt) => {
+            match timeout(Duration::from_secs(120), pending_tx.get_receipt()).await {
+                Ok(Ok(receipt)) => {
                     tracing::info!(
                         "Multicall3 batch update confirmed: {:?}",
                         receipt.transaction_hash
@@ -300,11 +311,28 @@ async fn batch_update_with_multicall3(
 
                     results
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     let error_msg = format!("Failed to get multicall3 batch update receipt: {e}");
                     tracing::error!("{}", error_msg);
 
                     // Return errors for all attempted updates
+                    let mut results = Vec::new();
+                    for beacon_address in beacon_addresses {
+                        results.push((beacon_address, Err(error_msg.clone())));
+                    }
+                    for (beacon_address, original_error) in invalid_addresses {
+                        results.push((beacon_address, Err(original_error)));
+                    }
+                    results
+                }
+                Err(_) => {
+                    let error_msg = format!(
+                        "Timeout waiting for multicall3 batch update receipt after 120s \
+                         (tx {batch_tx_hash:?}) — the batch may still confirm on-chain"
+                    );
+                    tracing::error!("{}", error_msg);
+                    sentry::capture_message(&error_msg, sentry::Level::Error);
+
                     let mut results = Vec::new();
                     for beacon_address in beacon_addresses {
                         results.push((beacon_address, Err(error_msg.clone())));

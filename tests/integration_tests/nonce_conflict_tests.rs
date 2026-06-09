@@ -29,14 +29,13 @@ async fn test_parallel_locks_different_wallets_no_conflict() {
     };
 
     // Check if Redis is actually running
-    if redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .is_err()
-    {
-        println!("Cannot connect to Redis, skipping test");
-        return;
-    }
+    let conn = match redis::aio::ConnectionManager::new(redis_client.clone()).await {
+        Ok(c) => c,
+        Err(_) => {
+            println!("Cannot connect to Redis, skipping test");
+            return;
+        }
+    };
 
     let wallet1_address = Address::repeat_byte(0x01);
     let wallet2_address = Address::repeat_byte(0x02);
@@ -45,10 +44,10 @@ async fn test_parallel_locks_different_wallets_no_conflict() {
     let mut join_set = JoinSet::new();
 
     // Spawn two concurrent tasks, each acquiring a different wallet lock
-    let redis1 = redis_client.clone();
+    let conn1 = conn.clone();
     join_set.spawn(async move {
         let lock = WalletLock::new(
-            redis1,
+            conn1,
             wallet1_address,
             "test-instance-1".to_string(),
             Duration::from_secs(60),
@@ -67,10 +66,10 @@ async fn test_parallel_locks_different_wallets_no_conflict() {
         }
     });
 
-    let redis2 = redis_client.clone();
+    let conn2 = conn.clone();
     join_set.spawn(async move {
         let lock = WalletLock::new(
-            redis2,
+            conn2,
             wallet2_address,
             "test-instance-2".to_string(),
             Duration::from_secs(60),
@@ -133,14 +132,13 @@ async fn test_serialized_locks_same_wallet_no_conflict() {
     };
 
     // Check if Redis is actually running
-    if redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .is_err()
-    {
-        println!("Cannot connect to Redis, skipping test");
-        return;
-    }
+    let conn = match redis::aio::ConnectionManager::new(redis_client.clone()).await {
+        Ok(c) => c,
+        Err(_) => {
+            println!("Cannot connect to Redis, skipping test");
+            return;
+        }
+    };
 
     // Both tasks try to lock the SAME wallet
     let wallet_address = Address::repeat_byte(0x11);
@@ -149,7 +147,7 @@ async fn test_serialized_locks_same_wallet_no_conflict() {
 
     // First, acquire the lock
     let lock1 = WalletLock::new(
-        redis_client.clone(),
+        conn.clone(),
         wallet_address,
         "instance-1".to_string(),
         Duration::from_secs(60),
@@ -167,10 +165,10 @@ async fn test_serialized_locks_same_wallet_no_conflict() {
     println!("First lock acquired in {first_acquired:?}");
 
     // Spawn a task to try acquiring the same wallet (should fail initially, then succeed after release)
-    let redis2 = redis_client.clone();
+    let conn2 = conn.clone();
     let acquire_task = tokio::spawn(async move {
         let lock2 = WalletLock::new(
-            redis2,
+            conn2,
             wallet_address,
             "instance-2".to_string(),
             Duration::from_secs(60),
@@ -230,20 +228,19 @@ async fn test_lock_ttl_prevents_deadlock() {
         }
     };
 
-    if redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .is_err()
-    {
-        println!("Cannot connect to Redis, skipping test");
-        return;
-    }
+    let conn = match redis::aio::ConnectionManager::new(redis_client.clone()).await {
+        Ok(c) => c,
+        Err(_) => {
+            println!("Cannot connect to Redis, skipping test");
+            return;
+        }
+    };
 
     let wallet_address = Address::repeat_byte(0xAA);
 
     // Create a lock with very short TTL (2 seconds)
     let lock1 = WalletLock::new(
-        redis_client.clone(),
+        conn.clone(),
         wallet_address,
         "test-instance-crash".to_string(),
         Duration::from_secs(2), // 2 second TTL
@@ -270,7 +267,7 @@ async fn test_lock_ttl_prevents_deadlock() {
 
     // Create a new lock (simulating a new instance after crash)
     let lock2 = WalletLock::new(
-        redis_client,
+        conn,
         wallet_address,
         "test-instance-recovery".to_string(),
         Duration::from_secs(60),
@@ -314,14 +311,13 @@ async fn test_multi_instance_lock_contention() {
         }
     };
 
-    if redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .is_err()
-    {
-        println!("Cannot connect to Redis, skipping test");
-        return;
-    }
+    let conn = match redis::aio::ConnectionManager::new(redis_client.clone()).await {
+        Ok(c) => c,
+        Err(_) => {
+            println!("Cannot connect to Redis, skipping test");
+            return;
+        }
+    };
 
     let wallet_address = Address::repeat_byte(0xBB);
 
@@ -329,10 +325,10 @@ async fn test_multi_instance_lock_contention() {
     let start = Instant::now();
     let mut join_set = JoinSet::new();
 
-    let redis1 = redis_client.clone();
+    let conn1 = conn.clone();
     join_set.spawn(async move {
         let lock = WalletLock::new(
-            redis1,
+            conn1,
             wallet_address,
             "instance-1".to_string(),
             Duration::from_secs(60),
@@ -350,10 +346,10 @@ async fn test_multi_instance_lock_contention() {
         }
     });
 
-    let redis2 = redis_client.clone();
+    let conn2 = conn.clone();
     join_set.spawn(async move {
         let lock = WalletLock::new(
-            redis2,
+            conn2,
             wallet_address,
             "instance-2".to_string(),
             Duration::from_secs(60),

@@ -49,6 +49,7 @@ pub async fn create_ecdsa_verifier(
     );
 
     // Execute the actual transaction
+    wallet_handle.ensure_lock_held()?;
     let pending_tx = factory
         .createVerifier(signer_address)
         .send()
@@ -75,6 +76,9 @@ pub async fn create_ecdsa_verifier(
     if !receipt.status() {
         return Err(format!("Verifier creation transaction {tx_hash} reverted"));
     }
+
+    // The address came from a pre-send simulation; verify code actually exists there.
+    super::verify_deployed(&provider, verifier_address, "ECDSAVerifier").await?;
 
     tracing::info!(
         "ECDSAVerifier created at {} (signer={})",

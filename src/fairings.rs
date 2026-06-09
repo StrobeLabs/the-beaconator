@@ -17,6 +17,11 @@ impl Fairing for RequestLogger {
     }
 
     async fn on_request(&self, request: &mut Request<'_>, _: &mut Data<'_>) {
+        // ECS / ALB health checks hit /health every few seconds; don't log them.
+        if request.uri().path() == "/health" {
+            return;
+        }
+
         let method = request.method();
         let uri = request.uri();
         let remote = request
@@ -33,6 +38,11 @@ impl Fairing for RequestLogger {
     }
 
     async fn on_response<'r>(&self, request: &'r Request<'_>, response: &mut Response<'r>) {
+        // ECS / ALB health checks hit /health every few seconds; don't log them.
+        if request.uri().path() == "/health" {
+            return;
+        }
+
         let method = request.method();
         let uri = request.uri();
         let status = response.status();
@@ -73,10 +83,9 @@ impl Fairing for PanicCatcher {
                 uri
             );
 
-            sentry::capture_message(
-                &format!("Internal Server Error: {method} {uri}"),
-                sentry::Level::Error,
-            );
+            // No Sentry capture here: the `catch_panic` 500 catcher in lib.rs
+            // already reports the same request, and reporting from both meant
+            // every 500 was double-counted.
         }
     }
 }

@@ -5,6 +5,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use redis::AsyncCommands;
+use redis::aio::ConnectionManager;
 
 use crate::models::beacon_type::SeedResult;
 use crate::models::recipe::*;
@@ -12,7 +13,8 @@ use crate::models::wallet::PrefixedRedisKeys;
 
 /// Redis-backed registry of beacon creation recipes
 pub struct RecipeRegistry {
-    redis: redis::Client,
+    /// Shared auto-reconnecting connection; None only for test stubs
+    conn: Option<ConnectionManager>,
     keys: PrefixedRedisKeys,
 }
 
@@ -24,12 +26,9 @@ impl RecipeRegistry {
 
     /// Create a test stub that will fail on actual Redis operations.
     /// Use this in tests that don't exercise recipe registry functionality.
-    /// Uses an invalid host so accidental operations fail fast instead of hitting real Redis.
     pub fn test_stub() -> Self {
-        let redis = redis::Client::open("redis://invalid-test-stub:0")
-            .expect("Failed to create Redis client for test stub");
         Self {
-            redis,
+            conn: None,
             keys: PrefixedRedisKeys::new("test-stub:"),
         }
     }
@@ -39,9 +38,9 @@ impl RecipeRegistry {
         let redis = redis::Client::open(redis_url)
             .map_err(|e| format!("Failed to connect to Redis: {e}"))?;
 
-        // Test connection
-        let mut conn = redis
-            .get_multiplexed_async_connection()
+        // One auto-reconnecting connection, cloned per operation (avoids a fresh
+        // TLS handshake per Redis command).
+        let mut conn = ConnectionManager::new(redis)
             .await
             .map_err(|e| format!("Failed to get Redis connection: {e}"))?;
 
@@ -53,17 +52,16 @@ impl RecipeRegistry {
         tracing::info!("RecipeRegistry connected to Redis with prefix '{}'", prefix);
 
         Ok(Self {
-            redis,
+            conn: Some(conn),
             keys: PrefixedRedisKeys::new(prefix),
         })
     }
 
-    /// Get a Redis connection
-    async fn get_conn(&self) -> Result<redis::aio::MultiplexedConnection, String> {
-        self.redis
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| format!("Redis connection failed: {e}"))
+    /// Get a Redis connection (cheap clone of the shared auto-reconnecting manager)
+    fn get_conn(&self) -> Result<ConnectionManager, String> {
+        self.conn
+            .clone()
+            .ok_or_else(|| "Redis connection not available (test stub)".to_string())
     }
 
     /// Get the key generator (useful for tests)
@@ -73,7 +71,7 @@ impl RecipeRegistry {
 
     /// Get a specific recipe by slug
     pub async fn get_recipe(&self, slug: &str) -> Result<Option<BeaconRecipe>, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         let config_json: Option<String> = conn
             .get(self.keys.beacon_recipe_config(slug))
@@ -92,7 +90,7 @@ impl RecipeRegistry {
 
     /// List all registered recipes
     pub async fn list_recipes(&self) -> Result<Vec<BeaconRecipe>, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         let slugs: Vec<String> = conn
             .smembers(self.keys.beacon_recipes_set())
@@ -120,7 +118,7 @@ impl RecipeRegistry {
 
     /// Register a new recipe (errors if slug already exists)
     pub async fn register_recipe(&self, recipe: &BeaconRecipe) -> Result<(), String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         // Check if slug already exists
         let exists: bool = conn
@@ -150,7 +148,7 @@ impl RecipeRegistry {
 
     /// Check if a recipe exists
     pub async fn recipe_exists(&self, slug: &str) -> Result<bool, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         conn.sismember(self.keys.beacon_recipes_set(), slug)
             .await
@@ -159,7 +157,7 @@ impl RecipeRegistry {
 
     /// Clean up all recipe keys (for tests)
     pub async fn cleanup(&self) -> Result<(), String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         // Get all slugs first
         let slugs: Vec<String> = conn

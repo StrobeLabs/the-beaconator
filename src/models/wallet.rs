@@ -60,8 +60,13 @@ impl WalletManagerConfig {
             .and_then(|s| s.parse::<u64>().ok());
 
         Ok(Self {
-            redis_url: std::env::var("REDIS_URL")
-                .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string()),
+            // No localhost fallback: a silently-wrong Redis would break distributed
+            // wallet locking (nonce safety), so missing config must fail loudly.
+            redis_url: std::env::var("REDIS_URL").map_err(|_| {
+                "REDIS_URL environment variable is required (e.g. redis://host:6379 or \
+                 rediss://user:pass@host:6379 for TLS)"
+                    .to_string()
+            })?,
             lock_ttl: Duration::from_secs(60),
             lock_retry_count: 10,
             lock_retry_delay: Duration::from_millis(500),

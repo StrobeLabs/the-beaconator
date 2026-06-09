@@ -33,12 +33,22 @@ async fn rocket() -> _ {
         .ok()
         .and_then(|s| s.parse().ok());
 
+    // Trace sampling: default 0.1 so steady-state traffic doesn't burn quota;
+    // override with SENTRY_TRACES_SAMPLE_RATE (e.g. 1.0 while debugging).
+    let traces_sample_rate = std::env::var("SENTRY_TRACES_SAMPLE_RATE")
+        .ok()
+        .and_then(|s| s.parse::<f32>().ok())
+        .unwrap_or(0.1);
+
     let _sentry = if dsn.is_some() {
-        tracing::info!("Initializing Sentry error tracking");
+        tracing::info!(
+            "Initializing Sentry error tracking (traces_sample_rate={})",
+            traces_sample_rate
+        );
         Some(sentry::init(sentry::ClientOptions {
             dsn,
             release: sentry::release_name!(),
-            traces_sample_rate: 1.0, // Capture all traces for debugging
+            traces_sample_rate,
             ..Default::default()
         }))
     } else {

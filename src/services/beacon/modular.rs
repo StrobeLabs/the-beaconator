@@ -25,6 +25,7 @@ use crate::routes::{
     IStandaloneBeaconFactory, ITernaryToBinaryFactory, IThresholdFactory, IUnboundedFactory,
     IWeightedSumComponentFactory,
 };
+use crate::services::wallet::WalletHandle;
 
 /// WAD constant (10^18)
 const WAD: u128 = 1_000_000_000_000_000_000;
@@ -86,7 +87,9 @@ pub async fn create_modular_beacon(
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
     match &recipe.beacon_kind {
-        BeaconKind::Identity => create_identity_beacon_modular(state, params, &provider).await,
+        BeaconKind::Identity => {
+            create_identity_beacon_modular(state, params, &wallet_handle, &provider).await
+        }
         BeaconKind::Standalone {
             preprocessor,
             base_fn,
@@ -95,6 +98,7 @@ pub async fn create_modular_beacon(
             create_standalone_beacon_modular(
                 state,
                 params,
+                &wallet_handle,
                 &provider,
                 preprocessor,
                 base_fn,
@@ -103,12 +107,23 @@ pub async fn create_modular_beacon(
             .await
         }
         BeaconKind::Composite { composer } => {
-            create_composite_beacon_modular(state, params, &provider, composer).await
+            create_composite_beacon_modular(state, params, &wallet_handle, &provider, composer)
+                .await
         }
         BeaconKind::Group {
             group_fn,
             group_transform,
-        } => create_group_beacon_modular(state, params, &provider, group_fn, group_transform).await,
+        } => {
+            create_group_beacon_modular(
+                state,
+                params,
+                &wallet_handle,
+                &provider,
+                group_fn,
+                group_transform,
+            )
+            .await
+        }
     }
 }
 
@@ -119,12 +134,13 @@ pub async fn create_modular_beacon(
 async fn create_identity_beacon_modular(
     state: &AppState,
     params: &ModularBeaconParams,
+    wallet_handle: &WalletHandle,
     provider: &AlloyProvider,
 ) -> Result<ModularCreationResult, String> {
     tracing::info!("Creating Identity beacon (verifier + identity beacon)");
 
     // Step 1: Create ECDSA verifier
-    let verifier_addr = create_verifier(state, provider).await?;
+    let verifier_addr = create_verifier(state, wallet_handle, provider).await?;
 
     // Step 2: Create identity beacon via factory
     let beacon_factory_addr = state
@@ -150,6 +166,7 @@ async fn create_identity_beacon_modular(
     );
 
     // Execute actual transaction
+    wallet_handle.ensure_lock_held()?;
     let pending_tx = factory
         .createBeacon(verifier_addr, initial_index)
         .send()
@@ -159,6 +176,7 @@ async fn create_identity_beacon_modular(
     tracing::info!("Identity beacon creation tx sent: {:?}", tx_hash);
 
     wait_for_receipt("identity beacon creation", tx_hash, pending_tx).await?;
+    super::verify_deployed(provider, beacon_addr, "identity beacon").await?;
 
     tracing::info!("Identity beacon created at {}", beacon_addr);
     sentry::capture_message(
@@ -180,6 +198,7 @@ async fn create_identity_beacon_modular(
 async fn create_standalone_beacon_modular(
     state: &AppState,
     params: &ModularBeaconParams,
+    wallet_handle: &WalletHandle,
     provider: &AlloyProvider,
     preprocessor_spec: &PreprocessorSpec,
     base_fn_spec: &BaseFnSpec,
@@ -193,16 +212,18 @@ async fn create_standalone_beacon_modular(
     );
 
     // Step 1: Create ECDSA verifier
-    let verifier_addr = create_verifier(state, provider).await?;
+    let verifier_addr = create_verifier(state, wallet_handle, provider).await?;
 
     // Step 2: Create preprocessor
-    let preprocessor_addr = create_preprocessor(state, params, provider, preprocessor_spec).await?;
+    let preprocessor_addr =
+        create_preprocessor(state, params, wallet_handle, provider, preprocessor_spec).await?;
 
     // Step 3: Create base function
-    let basefn_addr = create_base_fn(state, params, provider, base_fn_spec).await?;
+    let basefn_addr = create_base_fn(state, params, wallet_handle, provider, base_fn_spec).await?;
 
     // Step 4: Create transform
-    let transform_addr = create_transform(state, params, provider, transform_spec).await?;
+    let transform_addr =
+        create_transform(state, params, wallet_handle, provider, transform_spec).await?;
 
     // Step 5: Create standalone beacon
     let beacon_factory_addr = state
@@ -234,6 +255,7 @@ async fn create_standalone_beacon_modular(
     );
 
     // Execute
+    wallet_handle.ensure_lock_held()?;
     let pending_tx = factory
         .createBeacon(
             verifier_addr,
@@ -249,6 +271,7 @@ async fn create_standalone_beacon_modular(
     tracing::info!("Standalone beacon creation tx sent: {:?}", tx_hash);
 
     wait_for_receipt("standalone beacon creation", tx_hash, pending_tx).await?;
+    super::verify_deployed(provider, beacon_addr, "standalone beacon").await?;
 
     tracing::info!("Standalone beacon created at {}", beacon_addr);
     sentry::capture_message(
@@ -275,13 +298,15 @@ async fn create_standalone_beacon_modular(
 async fn create_composite_beacon_modular(
     state: &AppState,
     params: &ModularBeaconParams,
+    wallet_handle: &WalletHandle,
     provider: &AlloyProvider,
     composer_spec: &ComposerSpec,
 ) -> Result<ModularCreationResult, String> {
     tracing::info!("Creating Composite beacon ({:?})", composer_spec);
 
     // Step 1: Create composer
-    let composer_addr = create_composer(state, params, provider, composer_spec).await?;
+    let composer_addr =
+        create_composer(state, params, wallet_handle, provider, composer_spec).await?;
 
     // Step 2: Parse reference beacons
     let reference_beacon_strs = params
@@ -322,6 +347,7 @@ async fn create_composite_beacon_modular(
     );
 
     // Execute
+    wallet_handle.ensure_lock_held()?;
     let pending_tx = factory
         .createBeacon(reference_beacons, composer_addr)
         .send()
@@ -331,6 +357,7 @@ async fn create_composite_beacon_modular(
     tracing::info!("Composite beacon creation tx sent: {:?}", tx_hash);
 
     wait_for_receipt("composite beacon creation", tx_hash, pending_tx).await?;
+    super::verify_deployed(provider, beacon_addr, "composite beacon").await?;
 
     tracing::info!("Composite beacon created at {}", beacon_addr);
     sentry::capture_message(
@@ -355,6 +382,7 @@ async fn create_composite_beacon_modular(
 async fn create_group_beacon_modular(
     state: &AppState,
     params: &ModularBeaconParams,
+    wallet_handle: &WalletHandle,
     provider: &AlloyProvider,
     group_fn_spec: &GroupFnSpec,
     group_transform_spec: &GroupTransformSpec,
@@ -366,14 +394,16 @@ async fn create_group_beacon_modular(
     );
 
     // Step 1: Create ECDSA verifier
-    let verifier_addr = create_verifier(state, provider).await?;
+    let verifier_addr = create_verifier(state, wallet_handle, provider).await?;
 
     // Step 2: Create group function
-    let groupfn_addr = create_group_fn(state, params, provider, group_fn_spec).await?;
+    let groupfn_addr =
+        create_group_fn(state, params, wallet_handle, provider, group_fn_spec).await?;
 
     // Step 3: Create group transform
     let grouptransform_addr =
-        create_group_transform(state, params, provider, group_transform_spec).await?;
+        create_group_transform(state, params, wallet_handle, provider, group_transform_spec)
+            .await?;
 
     // Step 4: Create group manager
     let beacon_factory_addr = state
@@ -420,6 +450,7 @@ async fn create_group_beacon_modular(
     );
 
     // Execute
+    wallet_handle.ensure_lock_held()?;
     let pending_tx = factory
         .createGroupManager(
             initial_indices,
@@ -435,6 +466,7 @@ async fn create_group_beacon_modular(
     tracing::info!("Group manager creation tx sent: {:?}", tx_hash);
 
     wait_for_receipt("group manager creation", tx_hash, pending_tx).await?;
+    super::verify_deployed(provider, beacon_addr, "group manager").await?;
 
     tracing::info!("Group manager created at {}", beacon_addr);
     sentry::capture_message(
@@ -458,7 +490,11 @@ async fn create_group_beacon_modular(
 // ---------------------------------------------------------------------------
 
 /// Create an ECDSA verifier via the ECDSAVerifierFactory.
-async fn create_verifier(state: &AppState, provider: &AlloyProvider) -> Result<Address, String> {
+async fn create_verifier(
+    state: &AppState,
+    wallet_handle: &WalletHandle,
+    provider: &AlloyProvider,
+) -> Result<Address, String> {
     let signer_address = state.wallets.signer.address();
     tracing::info!(
         "Creating ECDSAVerifier via factory with signer={}",
@@ -486,6 +522,7 @@ async fn create_verifier(state: &AppState, provider: &AlloyProvider) -> Result<A
     );
 
     // Execute
+    wallet_handle.ensure_lock_held()?;
     let pending_tx = factory
         .createVerifier(signer_address)
         .send()
@@ -495,6 +532,7 @@ async fn create_verifier(state: &AppState, provider: &AlloyProvider) -> Result<A
     tracing::info!("ECDSA verifier creation tx sent: {:?}", tx_hash);
 
     wait_for_receipt("ECDSA verifier creation", tx_hash, pending_tx).await?;
+    super::verify_deployed(provider, verifier_addr, "ECDSA verifier").await?;
 
     tracing::info!("ECDSAVerifier created at {}", verifier_addr);
     Ok(verifier_addr)
@@ -504,6 +542,7 @@ async fn create_verifier(state: &AppState, provider: &AlloyProvider) -> Result<A
 async fn create_preprocessor(
     state: &AppState,
     params: &ModularBeaconParams,
+    wallet_handle: &WalletHandle,
     provider: &AlloyProvider,
     spec: &PreprocessorSpec,
 ) -> Result<Address, String> {
@@ -534,6 +573,8 @@ async fn create_preprocessor(
                 addr
             );
 
+            wallet_handle.ensure_lock_held()?;
+
             let pending_tx = factory
                 .createPreprocessor(measurement_scale)
                 .send()
@@ -545,6 +586,7 @@ async fn create_preprocessor(
             tracing::info!("Identity preprocessor creation tx sent: {:?}", tx_hash);
 
             wait_for_receipt("identity preprocessor creation", tx_hash, pending_tx).await?;
+            super::verify_deployed(provider, addr, "identity preprocessor creation").await?;
             addr
         }
         PreprocessorSpec::Threshold => {
@@ -563,6 +605,8 @@ async fn create_preprocessor(
                 addr
             );
 
+            wallet_handle.ensure_lock_held()?;
+
             let pending_tx = factory
                 .createPreprocessor(measurement_scale, threshold_val)
                 .send()
@@ -574,6 +618,7 @@ async fn create_preprocessor(
             tracing::info!("Threshold preprocessor creation tx sent: {:?}", tx_hash);
 
             wait_for_receipt("threshold preprocessor creation", tx_hash, pending_tx).await?;
+            super::verify_deployed(provider, addr, "threshold preprocessor creation").await?;
             addr
         }
         PreprocessorSpec::TernaryToBinary => {
@@ -593,6 +638,8 @@ async fn create_preprocessor(
                 "Simulated ternary-to-binary preprocessor creation - expected address: {}",
                 addr
             );
+
+            wallet_handle.ensure_lock_held()?;
 
             let pending_tx = factory
                 .createPreprocessor(measurement_scale, threshold_val)
@@ -615,6 +662,8 @@ async fn create_preprocessor(
                 pending_tx,
             )
             .await?;
+            super::verify_deployed(provider, addr, "ternary-to-binary preprocessor creation")
+                .await?;
             addr
         }
         PreprocessorSpec::Argmax => {
@@ -632,6 +681,8 @@ async fn create_preprocessor(
                 addr
             );
 
+            wallet_handle.ensure_lock_held()?;
+
             let pending_tx = factory
                 .createPreprocessor(measurement_scale)
                 .send()
@@ -643,6 +694,7 @@ async fn create_preprocessor(
             tracing::info!("Argmax preprocessor creation tx sent: {:?}", tx_hash);
 
             wait_for_receipt("argmax preprocessor creation", tx_hash, pending_tx).await?;
+            super::verify_deployed(provider, addr, "argmax preprocessor creation").await?;
             addr
         }
     };
@@ -655,6 +707,7 @@ async fn create_preprocessor(
 async fn create_base_fn(
     state: &AppState,
     params: &ModularBeaconParams,
+    wallet_handle: &WalletHandle,
     provider: &AlloyProvider,
     spec: &BaseFnSpec,
 ) -> Result<Address, String> {
@@ -698,6 +751,8 @@ async fn create_base_fn(
                 addr
             );
 
+            wallet_handle.ensure_lock_held()?;
+
             let pending_tx = factory
                 .createBaseFn(
                     sigma_base,
@@ -716,6 +771,7 @@ async fn create_base_fn(
             tracing::info!("CGBM base function creation tx sent: {:?}", tx_hash);
 
             wait_for_receipt("CGBM base function creation", tx_hash, pending_tx).await?;
+            super::verify_deployed(provider, addr, "CGBM base function creation").await?;
             addr
         }
         BaseFnSpec::DGBM => {
@@ -742,6 +798,8 @@ async fn create_base_fn(
                 addr
             );
 
+            wallet_handle.ensure_lock_held()?;
+
             let pending_tx = factory
                 .createBaseFn(sigma_base, scaling_factor, decay, initial_positive_rate)
                 .send()
@@ -753,6 +811,7 @@ async fn create_base_fn(
             tracing::info!("DGBM base function creation tx sent: {:?}", tx_hash);
 
             wait_for_receipt("DGBM base function creation", tx_hash, pending_tx).await?;
+            super::verify_deployed(provider, addr, "DGBM base function creation").await?;
             addr
         }
     };
@@ -765,6 +824,7 @@ async fn create_base_fn(
 async fn create_transform(
     state: &AppState,
     params: &ModularBeaconParams,
+    wallet_handle: &WalletHandle,
     provider: &AlloyProvider,
     spec: &TransformSpec,
 ) -> Result<Address, String> {
@@ -794,6 +854,8 @@ async fn create_transform(
                 addr
             );
 
+            wallet_handle.ensure_lock_held()?;
+
             let pending_tx = factory
                 .createTransform(min_index, max_index, steepness)
                 .send()
@@ -805,6 +867,7 @@ async fn create_transform(
             tracing::info!("Bounded transform creation tx sent: {:?}", tx_hash);
 
             wait_for_receipt("bounded transform creation", tx_hash, pending_tx).await?;
+            super::verify_deployed(provider, addr, "bounded transform creation").await?;
             addr
         }
         TransformSpec::Unbounded => {
@@ -827,6 +890,8 @@ async fn create_transform(
                 addr
             );
 
+            wallet_handle.ensure_lock_held()?;
+
             let pending_tx = factory
                 .createTransform(initial_index)
                 .send()
@@ -838,6 +903,7 @@ async fn create_transform(
             tracing::info!("Unbounded transform creation tx sent: {:?}", tx_hash);
 
             wait_for_receipt("unbounded transform creation", tx_hash, pending_tx).await?;
+            super::verify_deployed(provider, addr, "unbounded transform creation").await?;
             addr
         }
     };
@@ -850,6 +916,7 @@ async fn create_transform(
 async fn create_composer(
     state: &AppState,
     params: &ModularBeaconParams,
+    wallet_handle: &WalletHandle,
     provider: &AlloyProvider,
     spec: &ComposerSpec,
 ) -> Result<Address, String> {
@@ -881,6 +948,8 @@ async fn create_composer(
                 addr
             );
 
+            wallet_handle.ensure_lock_held()?;
+
             let pending_tx = factory.createComposer(weights).send().await.map_err(|e| {
                 format!("Failed to send weighted sum composer creation transaction: {e}")
             })?;
@@ -888,6 +957,7 @@ async fn create_composer(
             tracing::info!("WeightedSum composer creation tx sent: {:?}", tx_hash);
 
             wait_for_receipt("weighted sum composer creation", tx_hash, pending_tx).await?;
+            super::verify_deployed(provider, addr, "weighted sum composer creation").await?;
             addr
         }
     };
@@ -900,6 +970,7 @@ async fn create_composer(
 async fn create_group_fn(
     state: &AppState,
     params: &ModularBeaconParams,
+    wallet_handle: &WalletHandle,
     provider: &AlloyProvider,
     spec: &GroupFnSpec,
 ) -> Result<Address, String> {
@@ -933,6 +1004,8 @@ async fn create_group_fn(
                 addr
             );
 
+            wallet_handle.ensure_lock_held()?;
+
             let pending_tx = factory
                 .createGroupFn(num_classes, alpha, decay, initial_ema)
                 .send()
@@ -944,6 +1017,7 @@ async fn create_group_fn(
             tracing::info!("Dominance group function creation tx sent: {:?}", tx_hash);
 
             wait_for_receipt("dominance group function creation", tx_hash, pending_tx).await?;
+            super::verify_deployed(provider, addr, "dominance group function creation").await?;
             addr
         }
         GroupFnSpec::RelativeDominance => {
@@ -981,6 +1055,8 @@ async fn create_group_fn(
                 addr
             );
 
+            wallet_handle.ensure_lock_held()?;
+
             let pending_tx = factory
                 .createGroupFn(
                     num_classes,
@@ -1009,6 +1085,8 @@ async fn create_group_fn(
                 pending_tx,
             )
             .await?;
+            super::verify_deployed(provider, addr, "relative dominance group function creation")
+                .await?;
             addr
         }
         GroupFnSpec::ContinuousAllocation => {
@@ -1034,6 +1112,8 @@ async fn create_group_fn(
                 addr
             );
 
+            wallet_handle.ensure_lock_held()?;
+
             let pending_tx = factory
                 .createGroupFn(class_probs, sigma_base, scale_factor, decay)
                 .send()
@@ -1053,6 +1133,12 @@ async fn create_group_fn(
                 "continuous allocation group function creation",
                 tx_hash,
                 pending_tx,
+            )
+            .await?;
+            super::verify_deployed(
+                provider,
+                addr,
+                "continuous allocation group function creation",
             )
             .await?;
             addr
@@ -1080,6 +1166,8 @@ async fn create_group_fn(
                 addr
             );
 
+            wallet_handle.ensure_lock_held()?;
+
             let pending_tx = factory
                 .createGroupFn(class_probs, sigma_base, scale_factor, decay)
                 .send()
@@ -1101,6 +1189,12 @@ async fn create_group_fn(
                 pending_tx,
             )
             .await?;
+            super::verify_deployed(
+                provider,
+                addr,
+                "discrete allocation group function creation",
+            )
+            .await?;
             addr
         }
     };
@@ -1113,6 +1207,7 @@ async fn create_group_fn(
 async fn create_group_transform(
     state: &AppState,
     params: &ModularBeaconParams,
+    wallet_handle: &WalletHandle,
     provider: &AlloyProvider,
     spec: &GroupTransformSpec,
 ) -> Result<Address, String> {
@@ -1141,6 +1236,8 @@ async fn create_group_transform(
                 addr
             );
 
+            wallet_handle.ensure_lock_held()?;
+
             let pending_tx = factory
                 .createGroupTransform(steepness, index_scale)
                 .send()
@@ -1152,6 +1249,7 @@ async fn create_group_transform(
             tracing::info!("Softmax group transform creation tx sent: {:?}", tx_hash);
 
             wait_for_receipt("softmax group transform creation", tx_hash, pending_tx).await?;
+            super::verify_deployed(provider, addr, "softmax group transform creation").await?;
             addr
         }
         GroupTransformSpec::GMNormalize => {
@@ -1173,6 +1271,8 @@ async fn create_group_transform(
                 addr
             );
 
+            wallet_handle.ensure_lock_held()?;
+
             let pending_tx = factory
                 .createGroupTransform(index_scale)
                 .send()
@@ -1187,6 +1287,7 @@ async fn create_group_transform(
             );
 
             wait_for_receipt("gm-normalize group transform creation", tx_hash, pending_tx).await?;
+            super::verify_deployed(provider, addr, "gm-normalize group transform creation").await?;
             addr
         }
     };

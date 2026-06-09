@@ -19,11 +19,16 @@ hex = "0.4"
 rocket_okapi = "0.9.0"
 schemars = { version = "0.8", features = ["preserve_order"] }
 
-# Multi-wallet management with Redis
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager", "aio"] }
+# Multi-wallet management with Redis.
+# tokio-rustls-comp + webpki-roots: ElastiCache/Valkey on AWS requires in-transit
+# TLS, so the REDIS_URL is `rediss://` — without a TLS feature Client::open fails
+# to connect. Plain `redis://` (local/tests) still works; the scheme decides.
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager", "aio", "tokio-rustls-comp", "tls-rustls-webpki-roots"] }
 hostname = "0.4"
 # UUID for instance identification
 uuid = { version = "1.0", features = ["v4"] }
+# Constant-time comparison for bearer tokens (timing-attack resistance)
+subtle = "2"
 
 [dev-dependencies]
 rocket = { version = "0.5.1", features = ["json"] }

@@ -26,5 +26,6 @@ pub use responses::{
     ApiResponse, BatchUpdateBeaconResponse, BeaconComponentAddresses, BeaconTypeListResponse,
     BeaconUpdateResult, CreateBeaconResponse, CreateBeaconWithEcdsaResponse,
     CreateModularBeaconResponse, DeployPerpForBeaconResponse, DepositLiquidityForPerpResponse,
+    EcdsaUpdateResponse,
 };
 pub use wallet::{RedisKeys, WalletInfo, WalletManagerConfig, WalletStatus};

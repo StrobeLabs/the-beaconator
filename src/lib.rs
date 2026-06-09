@@ -77,6 +77,16 @@ fn serve_openapi_spec(
     )
 }
 
+/// Liveness probe for container orchestrators (ECS health checks, ALB).
+///
+/// No auth, no Redis, no RPC — returns 200 as long as the Rocket worker is
+/// serving requests. Per-request logging for this path is suppressed in the
+/// RequestLogger fairing so health checks don't spam the logs.
+#[rocket::get("/health")]
+fn health() -> (rocket::http::ContentType, &'static str) {
+    (rocket::http::ContentType::JSON, r#"{"status":"ok"}"#)
+}
+
 /// Creates and configures the Rocket application.
 ///
 /// Initializes the application state, loads configuration from environment variables,
@@ -148,6 +158,10 @@ fn audit_environment() {
         "ETH_TRANSFER_LIMIT",
         "BEACONATOR_INSTANCE_ID",
         "RUST_LOG",
+        "SENTRY_TRACES_SAMPLE_RATE",
+        // JSON map of component factory addresses seeded into Redis at startup
+        // (set by the AWS deployment; see perpcity-client/sst.config.ts)
+        "COMPONENT_FACTORIES_JSON",
     ];
 
     let mut problems = 0usize;
@@ -614,6 +628,27 @@ pub async fn create_rocket() -> Rocket<Build> {
             panic!("ComponentFactoryRegistry failed to initialize: {e}. Check Redis connectivity.")
         });
 
+    // Seed factory addresses from COMPONENT_FACTORIES_JSON when provided (the AWS
+    // deployment sets it because ElastiCache is VPC-internal and cannot be seeded by
+    // hand the way the Railway Redis was). Existing entries are never overwritten, so
+    // re-deploys and registry edits made through Redis stay intact.
+    if let Ok(factories_json) = env::var("COMPONENT_FACTORIES_JSON") {
+        let configs = models::component_factory::parse_component_factories_json(&factories_json)
+            .unwrap_or_else(|e| panic!("COMPONENT_FACTORIES_JSON is invalid: {e}"));
+        match component_factory_registry.seed_defaults(&configs).await {
+            Ok(result) => {
+                tracing::info!(
+                    "Component factory seed: {} seeded, {} already existed",
+                    result.seeded,
+                    result.skipped
+                );
+            }
+            Err(e) => {
+                panic!("Failed to seed component factories from COMPONENT_FACTORIES_JSON: {e}");
+            }
+        }
+    }
+
     match component_factory_registry.list_factories().await {
         Ok(factories) => {
             tracing::info!(
@@ -765,14 +800,16 @@ pub async fn create_rocket() -> Rocket<Build> {
         .attach(fairings::RequestLogger)
         .attach(fairings::PanicCatcher)
         .mount("/", routes)
-        .mount("/", rocket::routes![serve_openapi_spec])
+        .mount("/", rocket::routes![serve_openapi_spec, health])
         .manage(openapi_json)
         .register("/", catchers![catch_all_errors, catch_panic])
 }
 
 /// Catches all unhandled errors and returns a formatted error response.
 ///
-/// Logs the error and sends it to Sentry for monitoring.
+/// Logs the error; only 5xx are reported to Sentry — 4xx noise from scanners
+/// and bad clients should not page anyone. (Plain 500s are handled by the
+/// dedicated `catch_panic` catcher below, which does its own reporting.)
 #[catch(default)]
 fn catch_all_errors(status: rocket::http::Status, request: &Request) -> String {
     let error_msg = format!(
@@ -783,7 +820,9 @@ fn catch_all_errors(status: rocket::http::Status, request: &Request) -> String {
     );
 
     tracing::error!("Unhandled error: {}", error_msg);
-    sentry::capture_message(&error_msg, sentry::Level::Error);
+    if status.code >= 500 {
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+    }
 
     format!(
         "Error {}: {}",

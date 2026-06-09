@@ -51,6 +51,7 @@ pub async fn deploy_identity_beacon(
     let tx = TransactionRequest::default().with_deploy_code(Bytes::from(deploy_data));
 
     // Send deployment transaction
+    wallet_handle.ensure_lock_held()?;
     let pending_tx = provider
         .send_transaction(tx)
         .await
