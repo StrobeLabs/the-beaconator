@@ -6,8 +6,9 @@ COPY . .
 RUN cargo build --release
 
 FROM debian:bookworm-slim AS runtime
-# Install ca-certificates for HTTPS requests
-RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
+# ca-certificates/libssl3 for HTTPS requests; curl so ECS container health
+# checks can run `curl -f http://localhost:8000/health`.
+RUN apt-get update && apt-get install -y ca-certificates libssl3 curl && rm -rf /var/lib/apt/lists/*
 # Create non-root user to reduce blast radius if the process is compromised
 RUN groupadd --system beaconator && useradd --system --gid beaconator --create-home beaconator
 WORKDIR /app
@@ -17,41 +18,22 @@ COPY --from=builder --chown=beaconator:beaconator /app/target/release/the-beacon
 COPY --from=builder --chown=beaconator:beaconator /app/abis /app/abis
 USER beaconator
 
-# Accept build arguments for environment variables
-ARG RPC_URL
-ARG PRIVATE_KEY
-ARG SENTRY_DSN
-ARG ENV
-ARG BEACONATOR_ACCESS_TOKEN
-ARG BEACON_FACTORY_ADDRESS
-ARG PERPCITY_REGISTRY_ADDRESS
-ARG PERP_MANAGER_ADDRESS
-ARG USDC_ADDRESS
-ARG FEES_MODULE_ADDRESS
-ARG MARGIN_RATIOS_MODULE_ADDRESS
-ARG LOCKUP_PERIOD_MODULE_ADDRESS
-ARG SQRT_PRICE_IMPACT_LIMIT_MODULE_ADDRESS
-ARG PERP_DEFAULT_STARTING_SQRT_PRICE_X96
+# All app config (RPC_URL, PRIVATE_KEY, ENV, contract addresses, tokens) is
+# injected at RUNTIME as task-definition env by SST's link contract — NOT baked
+# in as build args. ECS task env overrides any image ENV, so nothing config-
+# related belongs here. Only the server bind is fixed at image level.
+#
+# Bind 0.0.0.0 (IPv4), not `::`: on ECS Fargate awsvpc the task ENI is reached
+# over IPv4 (Cloud Map service discovery + ALB health checks resolve to the
+# task's private IPv4), so an IPv6-only bind is unreachable service-to-service.
+ENV ROCKET_ADDRESS=0.0.0.0
+ENV ROCKET_PORT=8000
+# Graceful shutdown budget (Rocket 0.5 figment env syntax: a TOML-ish dict).
+# ECS sends SIGTERM on task stop; without this Rocket severs in-flight signing
+# after its 5s default grace. 60s grace + 30s mercy fits under a 120s ECS
+# stopTimeout and lets pending receipt waits finish or fail cleanly.
+ENV ROCKET_SHUTDOWN='{grace=60,mercy=30}'
 
-# Set environment variables for Rocket and application
-ENV ROCKET_ADDRESS=::
-ENV ROCKET_PORT=${PORT:-8000}
-ENV RPC_URL=${RPC_URL}
-ENV PRIVATE_KEY=${PRIVATE_KEY}
-ENV SENTRY_DSN=${SENTRY_DSN}
-ENV ENV=${ENV}
-ENV BEACONATOR_ACCESS_TOKEN=${BEACONATOR_ACCESS_TOKEN}
-ENV BEACON_FACTORY_ADDRESS=${BEACON_FACTORY_ADDRESS}
-ENV PERPCITY_REGISTRY_ADDRESS=${PERPCITY_REGISTRY_ADDRESS}
-ENV PERP_MANAGER_ADDRESS=${PERP_MANAGER_ADDRESS}
-ENV USDC_ADDRESS=${USDC_ADDRESS}
-ENV FEES_MODULE_ADDRESS=${FEES_MODULE_ADDRESS}
-ENV MARGIN_RATIOS_MODULE_ADDRESS=${MARGIN_RATIOS_MODULE_ADDRESS}
-ENV LOCKUP_PERIOD_MODULE_ADDRESS=${LOCKUP_PERIOD_MODULE_ADDRESS}
-ENV SQRT_PRICE_IMPACT_LIMIT_MODULE_ADDRESS=${SQRT_PRICE_IMPACT_LIMIT_MODULE_ADDRESS}
-ENV PERP_DEFAULT_STARTING_SQRT_PRICE_X96=${PERP_DEFAULT_STARTING_SQRT_PRICE_X96}
-
-# Expose the port (Railway will use the PORT environment variable)
-EXPOSE ${PORT:-8000}
+EXPOSE 8000
 # Run the binary
 CMD ["./the-beaconator"]

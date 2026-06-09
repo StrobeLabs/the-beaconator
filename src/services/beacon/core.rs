@@ -276,6 +276,7 @@ pub async fn register_beacon_with_registry(
 
     // Send the registration transaction
     tracing::info!("Registering beacon with wallet {}", wallet_address);
+    wallet_handle.ensure_lock_held()?;
     let pending_tx = match contract.registerBeacon(beacon_address).send().await {
         Ok(pending) => Ok(pending),
         Err(e) => {
@@ -504,6 +505,7 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
 
     // Send the update transaction
     tracing::info!("Updating beacon with wallet {}", wallet_address);
+    wallet_handle.ensure_lock_held()?;
     let pending_tx = match contract
         .update(proof_bytes.clone(), inputs_bytes.clone())
         .send()

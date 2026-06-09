@@ -18,8 +18,8 @@ use crate::models::{
     ApiResponse, AppState, BatchUpdateBeaconRequest, BatchUpdateBeaconResponse,
     CreateBeaconByTypeRequest, CreateBeaconResponse, CreateBeaconWithEcdsaRequest,
     CreateBeaconWithEcdsaResponse, CreateLBCGBMBeaconRequest,
-    CreateWeightedSumCompositeBeaconRequest, RegisterBeaconRequest, UpdateBeaconRequest,
-    UpdateBeaconWithEcdsaRequest,
+    CreateWeightedSumCompositeBeaconRequest, EcdsaUpdateResponse, RegisterBeaconRequest,
+    UpdateBeaconRequest, UpdateBeaconWithEcdsaRequest,
 };
 use crate::services::beacon::modular::create_modular_beacon as service_create_modular_beacon;
 use crate::services::beacon::{
@@ -507,7 +507,7 @@ pub async fn update_beacon_with_ecdsa_adapter(
     request: Json<UpdateBeaconWithEcdsaRequest>,
     _token: ApiToken,
     state: &State<AppState>,
-) -> Result<Json<ApiResponse<String>>, Status> {
+) -> Result<Json<EcdsaUpdateResponse>, Status> {
     tracing::info!("Received request: POST /update_beacon_with_ecdsa_adapter");
     let hub = sentry::Hub::new_from_top(sentry::Hub::main());
     hub.add_breadcrumb(sentry::Breadcrumb {
@@ -527,19 +527,34 @@ pub async fn update_beacon_with_ecdsa_adapter(
 
     let beacon_address_str = request.beacon_address.clone();
     match service_update_beacon_with_ecdsa(state.inner(), request.into_inner()).await {
-        Ok(tx_hash) => {
-            tracing::info!(
-                "Successfully updated beacon with ECDSA signature. TX: {:?}",
-                tx_hash
-            );
-            hub.capture_message(
-                &format!("Beacon updated with ECDSA signature. TX: {tx_hash:?}"),
-                sentry::Level::Info,
-            );
-            Ok(Json(ApiResponse {
+        Ok(outcome) => {
+            let tx_hash = outcome.tx_hash;
+            let message = if outcome.confirmed {
+                tracing::info!(
+                    "Successfully updated beacon with ECDSA signature. TX: {:?}",
+                    tx_hash
+                );
+                hub.capture_message(
+                    &format!("Beacon updated with ECDSA signature. TX: {tx_hash:?}"),
+                    sentry::Level::Info,
+                );
+                "Beacon updated successfully with ECDSA signature".to_string()
+            } else {
+                tracing::warn!(
+                    "Beacon update sent but unconfirmed at timeout. TX: {:?}",
+                    tx_hash
+                );
+                // Keep the "Transaction hash: 0x..." text — the Python client parses it.
+                format!(
+                    "Beacon update transaction sent but not confirmed within the wait window; \
+                     it may still confirm on-chain. Transaction hash: {tx_hash:?}"
+                )
+            };
+            Ok(Json(EcdsaUpdateResponse {
                 success: true,
                 data: Some(format!("Transaction hash: {tx_hash:?}")),
-                message: "Beacon updated successfully with ECDSA signature".to_string(),
+                message,
+                confirmed: outcome.confirmed,
             }))
         }
         Err(e) => {

@@ -5,13 +5,15 @@
 //! without requiring redeployment.
 
 use redis::AsyncCommands;
+use redis::aio::ConnectionManager;
 
 use crate::models::beacon_type::{BeaconTypeConfig, SeedResult};
 use crate::models::wallet::PrefixedRedisKeys;
 
 /// Redis-backed registry of beacon type configurations
 pub struct BeaconTypeRegistry {
-    redis: redis::Client,
+    /// Shared auto-reconnecting connection; None only for test stubs
+    conn: Option<ConnectionManager>,
     keys: PrefixedRedisKeys,
 }
 
@@ -24,10 +26,8 @@ impl BeaconTypeRegistry {
     /// Create a test stub that will fail on actual Redis operations.
     /// Use this in tests that don't exercise beacon type registry functionality.
     pub fn test_stub() -> Self {
-        let redis = redis::Client::open("redis://127.0.0.1:6379")
-            .expect("Failed to create Redis client for test stub");
         Self {
-            redis,
+            conn: None,
             keys: PrefixedRedisKeys::new("test-stub:"),
         }
     }
@@ -37,9 +37,9 @@ impl BeaconTypeRegistry {
         let redis = redis::Client::open(redis_url)
             .map_err(|e| format!("Failed to connect to Redis: {e}"))?;
 
-        // Test connection
-        let mut conn = redis
-            .get_multiplexed_async_connection()
+        // One auto-reconnecting connection, cloned per operation (avoids a fresh
+        // TLS handshake per Redis command).
+        let mut conn = ConnectionManager::new(redis)
             .await
             .map_err(|e| format!("Failed to get Redis connection: {e}"))?;
 
@@ -54,17 +54,16 @@ impl BeaconTypeRegistry {
         );
 
         Ok(Self {
-            redis,
+            conn: Some(conn),
             keys: PrefixedRedisKeys::new(prefix),
         })
     }
 
-    /// Get a Redis connection
-    async fn get_conn(&self) -> Result<redis::aio::MultiplexedConnection, String> {
-        self.redis
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| format!("Redis connection failed: {e}"))
+    /// Get a Redis connection (cheap clone of the shared auto-reconnecting manager)
+    fn get_conn(&self) -> Result<ConnectionManager, String> {
+        self.conn
+            .clone()
+            .ok_or_else(|| "Redis connection not available (test stub)".to_string())
     }
 
     /// Get the key generator (useful for tests)
@@ -74,7 +73,7 @@ impl BeaconTypeRegistry {
 
     /// List all registered beacon types
     pub async fn list_types(&self) -> Result<Vec<BeaconTypeConfig>, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         let slugs: Vec<String> = conn
             .smembers(self.keys.beacon_types_set())
@@ -99,7 +98,7 @@ impl BeaconTypeRegistry {
 
     /// Get a specific beacon type by slug
     pub async fn get_type(&self, slug: &str) -> Result<Option<BeaconTypeConfig>, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         let config_json: Option<String> = conn
             .get(self.keys.beacon_type_config(slug))
@@ -118,7 +117,7 @@ impl BeaconTypeRegistry {
 
     /// Register a new beacon type (errors if slug already exists)
     pub async fn register_type(&self, config: &BeaconTypeConfig) -> Result<(), String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         // Check if slug already exists
         let exists: bool = conn
@@ -148,7 +147,7 @@ impl BeaconTypeRegistry {
 
     /// Update an existing beacon type config
     pub async fn update_type(&self, slug: &str, updated: &BeaconTypeConfig) -> Result<(), String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         // Verify it exists
         let exists: bool = conn
@@ -174,7 +173,7 @@ impl BeaconTypeRegistry {
 
     /// Delete a beacon type
     pub async fn delete_type(&self, slug: &str) -> Result<(), String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         // Verify it exists
         let exists: bool = conn
@@ -201,7 +200,7 @@ impl BeaconTypeRegistry {
 
     /// Check if a beacon type exists
     pub async fn type_exists(&self, slug: &str) -> Result<bool, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         conn.sismember(self.keys.beacon_types_set(), slug)
             .await
@@ -236,7 +235,7 @@ impl BeaconTypeRegistry {
 
     /// Clean up all beacon type keys with our prefix (for testing)
     pub async fn cleanup(&self) -> Result<(), String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         // Get all slugs first
         let slugs: Vec<String> = conn

@@ -114,13 +114,14 @@ pub async fn deploy_perp_for_beacon(
     let ema_window_u24 = alloy::primitives::Uint::<24, 1>::from(ema_window);
 
     tracing::info!("Sending createPerp transaction to PerpFactory...");
+    wallet_handle.ensure_lock_held()?;
     let pending_tx = factory
         .createPerp(
             owner,
             name.clone(),
             symbol.clone(),
             token_uri.clone(),
-            modules,
+            modules.clone(),
             ema_window_u24,
             salt,
         )
@@ -185,6 +186,31 @@ pub async fn deploy_perp_for_beacon(
 
     let tx_hash = receipt.transaction_hash;
     tracing::info!("createPerp confirmed in block {:?}", receipt.block_number);
+
+    // Reverted transactions still produce receipts; check status before parsing
+    // events. Re-simulate to recover the revert reason (best effort).
+    if !receipt.status() {
+        let revert_detail = match factory
+            .createPerp(
+                owner,
+                name.clone(),
+                symbol.clone(),
+                token_uri.clone(),
+                modules,
+                ema_window_u24,
+                salt,
+            )
+            .call()
+            .await
+        {
+            Err(e) => try_decode_revert_reason(&e).unwrap_or_else(|| e.to_string()),
+            Ok(_) => "no revert reason available (re-simulation succeeded)".to_string(),
+        };
+        let error_msg = format!("createPerp transaction reverted: {revert_detail} (tx {tx_hash})");
+        tracing::error!("{}", error_msg);
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        return Err(error_msg);
+    }
 
     let event = parse_perp_created_event(&receipt, state.contracts.perp_factory)?;
 
@@ -306,6 +332,7 @@ pub async fn deposit_liquidity_for_perp(
     );
 
     let usdc_contract = IERC20::new(state.contracts.usdc, &provider);
+    wallet_handle.ensure_lock_held()?;
     let pending_approval = usdc_contract
         .approve(perp_address, U256::from(margin_amount_usdc))
         .send()
@@ -336,7 +363,25 @@ pub async fn deposit_liquidity_for_perp(
             }
         };
 
+    // A reverted approval means openMaker's safeTransferFrom would fail too.
+    if !approval_receipt.status() {
+        let revert_detail = match usdc_contract
+            .approve(perp_address, U256::from(margin_amount_usdc))
+            .call()
+            .await
+        {
+            Err(e) => try_decode_revert_reason(&e).unwrap_or_else(|| e.to_string()),
+            Ok(_) => "no revert reason available (re-simulation succeeded)".to_string(),
+        };
+        let error_msg =
+            format!("USDC approval transaction reverted: {revert_detail} (tx {approval_tx_hash})");
+        tracing::error!("{}", error_msg);
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        return Err(error_msg);
+    }
+
     tracing::info!("Opening maker position with wallet {}", wallet_address);
+    wallet_handle.ensure_lock_held()?;
     let pending_tx = perp
         .openMaker(open_maker_params.clone())
         .send()
@@ -371,6 +416,20 @@ pub async fn deposit_liquidity_for_perp(
     };
 
     tracing::info!("openMaker confirmed: {:?}", receipt.transaction_hash);
+
+    // Reverted transactions still produce receipts; check status before parsing
+    // events. Re-simulate to recover the revert reason (best effort).
+    if !receipt.status() {
+        let revert_detail = match perp.openMaker(open_maker_params).call().await {
+            Err(e) => try_decode_revert_reason(&e).unwrap_or_else(|| e.to_string()),
+            Ok(_) => "no revert reason available (re-simulation succeeded)".to_string(),
+        };
+        let error_msg =
+            format!("openMaker transaction reverted: {revert_detail} (tx {deposit_tx_hash})");
+        tracing::error!("{}", error_msg);
+        sentry::capture_message(&error_msg, sentry::Level::Error);
+        return Err(error_msg);
+    }
 
     let pos_id = parse_maker_opened_event(&receipt, perp_address)?;
     tracing::info!("Maker position opened with posId {}", pos_id);

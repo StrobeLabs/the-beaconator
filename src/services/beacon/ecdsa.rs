@@ -9,6 +9,17 @@ use tracing;
 use crate::models::{AppState, UpdateBeaconWithEcdsaRequest};
 use crate::routes::{IBeacon, IEcdsaVerifier};
 
+/// Outcome of an ECDSA beacon update.
+///
+/// `confirmed == false` means the transaction was SENT but its receipt did not
+/// arrive within the wait window — it may still confirm on-chain. The route
+/// surfaces this to the caller (the Python updater) instead of erroring, so the
+/// caller can poll the hash rather than blindly re-sending.
+pub struct EcdsaUpdateOutcome {
+    pub tx_hash: B256,
+    pub confirmed: bool,
+}
+
 /// Updates a beacon using ECDSA signature from the PRIVATE_KEY wallet.
 ///
 /// This function:
@@ -25,7 +36,7 @@ use crate::routes::{IBeacon, IEcdsaVerifier};
 pub async fn update_beacon_with_ecdsa(
     state: &AppState,
     request: UpdateBeaconWithEcdsaRequest,
-) -> Result<B256, String> {
+) -> Result<EcdsaUpdateOutcome, String> {
     // 1. Parse beacon address and measurement(s)
     let beacon_address = Address::from_str(&request.beacon_address)
         .map_err(|e| format!("Invalid beacon address: {e}"))?;
@@ -233,6 +244,7 @@ pub async fn update_beacon_with_ecdsa(
         "Sending update transaction to beacon with wallet {}",
         tx_wallet_address
     );
+    wallet_handle.ensure_lock_held()?;
     let pending_tx = beacon_write
         .update(sig_bytes.clone(), inputs_bytes.clone())
         .send()
@@ -256,9 +268,19 @@ pub async fn update_beacon_with_ecdsa(
             return Err(error_msg);
         }
         Err(_) => {
-            let error_msg = format!("Timeout waiting for transaction {tx_hash} receipt");
-            tracing::error!("{}", error_msg);
-            return Err(error_msg);
+            // The transaction WAS sent; it may still confirm. Report it as
+            // sent-but-unconfirmed so the caller can poll instead of re-sending.
+            tracing::warn!(
+                "Timeout waiting for transaction {tx_hash} receipt — returning unconfirmed"
+            );
+            sentry::capture_message(
+                &format!("ECDSA beacon update sent but unconfirmed at timeout (tx {tx_hash})"),
+                sentry::Level::Warning,
+            );
+            return Ok(EcdsaUpdateOutcome {
+                tx_hash,
+                confirmed: false,
+            });
         }
     };
 
@@ -285,7 +307,10 @@ pub async fn update_beacon_with_ecdsa(
             beacon_address,
             measurement_array.len()
         );
-        Ok(tx_hash)
+        Ok(EcdsaUpdateOutcome {
+            tx_hash,
+            confirmed: true,
+        })
     } else {
         // Transaction succeeded but event not found - still consider it a success
         // as the transaction was confirmed
@@ -294,7 +319,10 @@ pub async fn update_beacon_with_ecdsa(
              The update may have been applied but event parsing failed.",
             beacon_address
         );
-        Ok(tx_hash)
+        Ok(EcdsaUpdateOutcome {
+            tx_hash,
+            confirmed: true,
+        })
     }
 }
 

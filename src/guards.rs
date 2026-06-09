@@ -6,7 +6,13 @@ use rocket_okapi::{
     request::{OpenApiFromRequest, RequestHeaderInput},
 };
 use sentry;
+use subtle::ConstantTimeEq;
 use tracing;
+
+/// Constant-time bearer-token comparison (avoids leaking token prefixes via timing).
+fn token_matches(provided: &str, expected: &str) -> bool {
+    provided.as_bytes().ct_eq(expected.as_bytes()).into()
+}
 
 /// API token guard for request authentication.
 ///
@@ -28,7 +34,7 @@ impl<'r> FromRequest<'r> for ApiToken {
                 match auth_header {
                     Some(header) if header.starts_with("Bearer ") => {
                         let token = &header[7..]; // Remove "Bearer " prefix
-                        if token == state.auth.access_token {
+                        if token_matches(token, &state.auth.access_token) {
                             Outcome::Success(ApiToken(token.to_string()))
                         } else {
                             tracing::warn!("Invalid API token provided for: {}", endpoint);
@@ -125,7 +131,7 @@ impl<'r> FromRequest<'r> for AdminToken {
                 match auth_header {
                     Some(header) if header.starts_with("Bearer ") => {
                         let token = &header[7..];
-                        if token == state.auth.admin_token {
+                        if token_matches(token, &state.auth.admin_token) {
                             Outcome::Success(AdminToken(token.to_string()))
                         } else {
                             tracing::warn!("Invalid admin token provided for: {}", endpoint);

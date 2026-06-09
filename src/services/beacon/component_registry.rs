@@ -4,6 +4,7 @@
 //! Factory addresses are pre-seeded into Redis before deployment.
 
 use redis::AsyncCommands;
+use redis::aio::ConnectionManager;
 
 use crate::models::beacon_type::SeedResult;
 use crate::models::component_factory::{ComponentFactoryConfig, ComponentFactoryType};
@@ -12,7 +13,8 @@ use alloy::primitives::Address;
 
 /// Redis-backed registry of component factory addresses
 pub struct ComponentFactoryRegistry {
-    redis: redis::Client,
+    /// Shared auto-reconnecting connection; None only for test stubs
+    conn: Option<ConnectionManager>,
     keys: PrefixedRedisKeys,
 }
 
@@ -24,12 +26,9 @@ impl ComponentFactoryRegistry {
 
     /// Create a test stub that will fail on actual Redis operations.
     /// Use this in tests that don't exercise component factory registry functionality.
-    /// Uses an invalid host so accidental operations fail fast instead of hitting real Redis.
     pub fn test_stub() -> Self {
-        let redis = redis::Client::open("redis://invalid-test-stub:0")
-            .expect("Failed to create Redis client for test stub");
         Self {
-            redis,
+            conn: None,
             keys: PrefixedRedisKeys::new("test-stub:"),
         }
     }
@@ -39,9 +38,9 @@ impl ComponentFactoryRegistry {
         let redis = redis::Client::open(redis_url)
             .map_err(|e| format!("Failed to connect to Redis: {e}"))?;
 
-        // Test connection
-        let mut conn = redis
-            .get_multiplexed_async_connection()
+        // One auto-reconnecting connection, cloned per operation (avoids a fresh
+        // TLS handshake per Redis command).
+        let mut conn = ConnectionManager::new(redis)
             .await
             .map_err(|e| format!("Failed to get Redis connection: {e}"))?;
 
@@ -56,17 +55,16 @@ impl ComponentFactoryRegistry {
         );
 
         Ok(Self {
-            redis,
+            conn: Some(conn),
             keys: PrefixedRedisKeys::new(prefix),
         })
     }
 
-    /// Get a Redis connection
-    async fn get_conn(&self) -> Result<redis::aio::MultiplexedConnection, String> {
-        self.redis
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| format!("Redis connection failed: {e}"))
+    /// Get a Redis connection (cheap clone of the shared auto-reconnecting manager)
+    fn get_conn(&self) -> Result<ConnectionManager, String> {
+        self.conn
+            .clone()
+            .ok_or_else(|| "Redis connection not available (test stub)".to_string())
     }
 
     /// Get the key generator (useful for tests)
@@ -80,7 +78,7 @@ impl ComponentFactoryRegistry {
         factory_type: &ComponentFactoryType,
     ) -> Result<Address, String> {
         let type_name = factory_type.to_string();
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         let config_json: Option<String> =
             conn.get(self.keys.component_factory(&type_name))
@@ -104,7 +102,7 @@ impl ComponentFactoryRegistry {
 
     /// List all registered factories
     pub async fn list_factories(&self) -> Result<Vec<ComponentFactoryConfig>, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         let type_names: Vec<String> = conn
             .smembers(self.keys.component_factories_set())
@@ -172,7 +170,7 @@ impl ComponentFactoryRegistry {
     /// Register a new component factory (errors if type already exists)
     async fn register_factory(&self, config: &ComponentFactoryConfig) -> Result<(), String> {
         let type_name = config.factory_type.to_string();
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         // Check if type already exists
         let exists: bool = conn
@@ -206,7 +204,7 @@ impl ComponentFactoryRegistry {
         factory_type: &ComponentFactoryType,
     ) -> Result<bool, String> {
         let type_name = factory_type.to_string();
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         conn.sismember(self.keys.component_factories_set(), &type_name)
             .await
@@ -215,7 +213,7 @@ impl ComponentFactoryRegistry {
 
     /// Clean up all component factory keys (for tests)
     pub async fn cleanup(&self) -> Result<(), String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn()?;
 
         // Get all type names first
         let type_names: Vec<String> = conn

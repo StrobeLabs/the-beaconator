@@ -12,6 +12,25 @@ pub struct ApiResponse<T> {
     pub message: String,
 }
 
+/// Response for `/update_beacon_with_ecdsa_adapter`.
+///
+/// Same shape as `ApiResponse<String>` plus a `confirmed` flag: `true` when the
+/// update transaction was mined successfully, `false` when it was sent but its
+/// receipt did not arrive within the wait window (it may still confirm — the
+/// transaction hash in `data`/`message` can be polled). The Python updater
+/// parses the "Transaction hash: 0x..." text, so that format must be preserved.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct EcdsaUpdateResponse {
+    /// Whether the request succeeded (the transaction was sent)
+    pub success: bool,
+    /// "Transaction hash: 0x..." (null if request failed)
+    pub data: Option<String>,
+    /// Human-readable message about the result
+    pub message: String,
+    /// true = mined and succeeded; false = sent but unconfirmed at timeout
+    pub confirmed: bool,
+}
+
 /// Result of updating a single beacon
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BeaconUpdateResult {

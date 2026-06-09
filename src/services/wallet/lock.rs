@@ -5,13 +5,34 @@
 
 use alloy::primitives::Address;
 use redis::AsyncCommands;
+use redis::aio::ConnectionManager;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::models::wallet::PrefixedRedisKeys;
 
+/// Lua script: extend the lock TTL only if we still hold it.
+const EXTEND_SCRIPT: &str = r#"
+    if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("pexpire", KEYS[1], ARGV[2])
+    else
+        return 0
+    end
+"#;
+
+/// Lua script: delete the lock only if we still hold it.
+const RELEASE_SCRIPT: &str = r#"
+    if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("del", KEYS[1])
+    else
+        return 0
+    end
+"#;
+
 /// A distributed lock for a specific wallet
 pub struct WalletLock {
-    redis: redis::Client,
+    conn: ConnectionManager,
     wallet_address: Address,
     instance_id: String,
     lock_key: String,
@@ -21,13 +42,13 @@ pub struct WalletLock {
 impl WalletLock {
     /// Create a new wallet lock with default "beaconator:" prefix
     pub fn new(
-        redis: redis::Client,
+        conn: ConnectionManager,
         wallet_address: Address,
         instance_id: String,
         ttl: Duration,
     ) -> Self {
         Self::with_keys(
-            redis,
+            conn,
             wallet_address,
             instance_id,
             ttl,
@@ -39,7 +60,7 @@ impl WalletLock {
     ///
     /// This allows using a custom prefix for test isolation.
     pub fn with_keys(
-        redis: redis::Client,
+        conn: ConnectionManager,
         wallet_address: Address,
         instance_id: String,
         ttl: Duration,
@@ -47,7 +68,7 @@ impl WalletLock {
     ) -> Self {
         let lock_key = keys.wallet_lock(&wallet_address);
         Self {
-            redis,
+            conn,
             wallet_address,
             instance_id,
             lock_key,
@@ -55,12 +76,9 @@ impl WalletLock {
         }
     }
 
-    /// Get a Redis connection
-    async fn get_conn(&self) -> Result<redis::aio::MultiplexedConnection, String> {
-        self.redis
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| format!("Redis connection failed: {e}"))
+    /// Get a Redis connection (cheap clone of the shared auto-reconnecting manager)
+    fn get_conn(&self) -> ConnectionManager {
+        self.conn.clone()
     }
 
     /// Attempt to acquire the lock with retries
@@ -114,7 +132,7 @@ impl WalletLock {
 
     /// Try to acquire the lock once (non-blocking)
     pub async fn try_acquire(&self) -> Result<WalletLockGuard, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
         // SET NX with TTL (atomic operation)
         // SET key value NX PX milliseconds
@@ -136,7 +154,7 @@ impl WalletLock {
                     self.instance_id
                 );
                 Ok(WalletLockGuard {
-                    redis: self.redis.clone(),
+                    conn: self.conn.clone(),
                     lock_key: self.lock_key.clone(),
                     instance_id: self.instance_id.clone(),
                     wallet_address: self.wallet_address,
@@ -157,7 +175,7 @@ impl WalletLock {
 
     /// Check if the lock is currently held (by anyone)
     pub async fn is_locked(&self) -> Result<bool, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
         let exists: bool = conn
             .exists(&self.lock_key)
@@ -169,7 +187,7 @@ impl WalletLock {
 
     /// Get the current lock holder (if any)
     pub async fn get_holder(&self) -> Result<Option<String>, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
         let holder: Option<String> = conn
             .get(&self.lock_key)
@@ -181,18 +199,9 @@ impl WalletLock {
 
     /// Extend the lock TTL (only if we hold the lock)
     pub async fn extend(&self, new_ttl: Duration) -> Result<bool, String> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = self.get_conn();
 
-        // Lua script for atomic check-and-extend
-        let script = r#"
-            if redis.call("get", KEYS[1]) == ARGV[1] then
-                return redis.call("pexpire", KEYS[1], ARGV[2])
-            else
-                return 0
-            end
-        "#;
-
-        let extended: i32 = redis::Script::new(script)
+        let extended: i32 = redis::Script::new(EXTEND_SCRIPT)
             .key(&self.lock_key)
             .arg(&self.instance_id)
             .arg(new_ttl.as_millis() as u64)
@@ -219,7 +228,7 @@ impl WalletLock {
 
 /// RAII guard that releases the lock when dropped
 pub struct WalletLockGuard {
-    redis: redis::Client,
+    conn: ConnectionManager,
     lock_key: String,
     instance_id: String,
     wallet_address: Address,
@@ -238,23 +247,11 @@ impl WalletLockGuard {
 
     /// Internal release logic
     async fn release_internal(&self) -> Result<(), String> {
-        let mut conn = self
-            .redis
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| format!("Redis connection failed during lock release: {e}"))?;
+        let mut conn = self.conn.clone();
 
         // Lua script for atomic check-and-delete
         // Only delete if we still hold the lock
-        let script = r#"
-            if redis.call("get", KEYS[1]) == ARGV[1] then
-                return redis.call("del", KEYS[1])
-            else
-                return 0
-            end
-        "#;
-
-        let deleted: i32 = redis::Script::new(script)
+        let deleted: i32 = redis::Script::new(RELEASE_SCRIPT)
             .key(&self.lock_key)
             .arg(&self.instance_id)
             .invoke_async(&mut conn)
@@ -279,21 +276,9 @@ impl WalletLockGuard {
 
     /// Extend the lock TTL
     pub async fn extend(&self, new_ttl: Duration) -> Result<bool, String> {
-        let mut conn = self
-            .redis
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| format!("Redis connection failed: {e}"))?;
+        let mut conn = self.conn.clone();
 
-        let script = r#"
-            if redis.call("get", KEYS[1]) == ARGV[1] then
-                return redis.call("pexpire", KEYS[1], ARGV[2])
-            else
-                return 0
-            end
-        "#;
-
-        let extended: i32 = redis::Script::new(script)
+        let extended: i32 = redis::Script::new(EXTEND_SCRIPT)
             .key(&self.lock_key)
             .arg(&self.instance_id)
             .arg(new_ttl.as_millis() as u64)
@@ -303,13 +288,127 @@ impl WalletLockGuard {
 
         Ok(extended == 1)
     }
+
+    /// Spawn a background heartbeat that extends this lock every `ttl / 3`.
+    ///
+    /// Long flows (USDC approval waits, modular recipes with several sequential
+    /// transactions) hold a wallet far longer than the lock TTL. The heartbeat keeps
+    /// the lock alive while the holder is making progress; if the lock is observed
+    /// lost (TTL lapsed and another instance took it, or Redis stayed unreachable for
+    /// a full TTL) the returned [`LockHeartbeat`] flips its `lock_lost` flag so the
+    /// holder can abort before sending another transaction and risking a nonce
+    /// collision.
+    ///
+    /// The heartbeat task is aborted when the returned [`LockHeartbeat`] is dropped —
+    /// drop it BEFORE the guard so the lock cannot be re-extended after release.
+    pub fn spawn_heartbeat(&self, ttl: Duration) -> LockHeartbeat {
+        let mut conn = self.conn.clone();
+        let lock_key = self.lock_key.clone();
+        let instance_id = self.instance_id.clone();
+        let wallet_address = self.wallet_address;
+        let lost = Arc::new(AtomicBool::new(false));
+        let lost_flag = Arc::clone(&lost);
+
+        let interval = ttl / 3;
+        let task = tokio::spawn(async move {
+            // Allow up to a full TTL of consecutive Redis failures before declaring
+            // the lock lost: 3 failed beats at ttl/3 spacing = the lock has expired.
+            let mut consecutive_failures = 0u32;
+            loop {
+                tokio::time::sleep(interval).await;
+                let extended: Result<i32, redis::RedisError> = redis::Script::new(EXTEND_SCRIPT)
+                    .key(&lock_key)
+                    .arg(&instance_id)
+                    .arg(ttl.as_millis() as u64)
+                    .invoke_async(&mut conn)
+                    .await;
+                match extended {
+                    Ok(1) => {
+                        consecutive_failures = 0;
+                        tracing::trace!(
+                            "Heartbeat extended lock for wallet {} by {:?}",
+                            wallet_address,
+                            ttl
+                        );
+                    }
+                    Ok(_) => {
+                        tracing::error!(
+                            "Lock for wallet {} no longer held by this instance — flagging lock lost",
+                            wallet_address
+                        );
+                        lost_flag.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                    Err(e) => {
+                        consecutive_failures += 1;
+                        tracing::warn!(
+                            "Heartbeat extend failed for wallet {} ({} consecutive): {}",
+                            wallet_address,
+                            consecutive_failures,
+                            e
+                        );
+                        if consecutive_failures >= 3 {
+                            tracing::error!(
+                                "Lock for wallet {} could not be extended for a full TTL — flagging lock lost",
+                                wallet_address
+                            );
+                            lost_flag.store(true, Ordering::SeqCst);
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        LockHeartbeat {
+            task,
+            lost,
+            wallet_address,
+        }
+    }
+}
+
+/// Handle to a background lock-extension task (see [`WalletLockGuard::spawn_heartbeat`]).
+///
+/// Dropping this aborts the heartbeat task. Hold it for the lifetime of the lock and
+/// drop it before (or together with, declared before) the lock guard so the heartbeat
+/// can never keep a released lock alive.
+pub struct LockHeartbeat {
+    task: tokio::task::JoinHandle<()>,
+    lost: Arc<AtomicBool>,
+    wallet_address: Address,
+}
+
+impl LockHeartbeat {
+    /// Whether the heartbeat observed the lock as lost.
+    pub fn lock_lost(&self) -> bool {
+        self.lost.load(Ordering::SeqCst)
+    }
+
+    /// Error if the lock was lost. Call this before every transaction send.
+    pub fn ensure_held(&self) -> Result<(), String> {
+        if self.lock_lost() {
+            Err(format!(
+                "wallet lock lost for {} — aborting to avoid nonce collision",
+                self.wallet_address
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Drop for LockHeartbeat {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 impl Drop for WalletLockGuard {
     fn drop(&mut self) {
         // Only spawn release task if we have an active Tokio runtime
         // This prevents panics during shutdown when the runtime may not be available
-        let redis = self.redis.clone();
+        let mut conn = self.conn.clone();
         let lock_key = self.lock_key.clone();
         let instance_id = self.instance_id.clone();
         let wallet_address = self.wallet_address;
@@ -317,40 +416,24 @@ impl Drop for WalletLockGuard {
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
                 handle.spawn(async move {
-                    if let Ok(mut conn) = redis.get_multiplexed_async_connection().await {
-                        let script = r#"
-                            if redis.call("get", KEYS[1]) == ARGV[1] then
-                                return redis.call("del", KEYS[1])
-                            else
-                                return 0
-                            end
-                        "#;
+                    let result: Result<i32, _> = redis::Script::new(RELEASE_SCRIPT)
+                        .key(&lock_key)
+                        .arg(&instance_id)
+                        .invoke_async(&mut conn)
+                        .await;
 
-                        let result: Result<i32, _> = redis::Script::new(script)
-                            .key(&lock_key)
-                            .arg(&instance_id)
-                            .invoke_async(&mut conn)
-                            .await;
-
-                        match result {
-                            Ok(1) => {
-                                tracing::debug!(
-                                    "Lock released on drop for wallet {}",
-                                    wallet_address
-                                )
-                            }
-                            Ok(_) => {
-                                tracing::debug!(
-                                    "Lock already released for wallet {}",
-                                    wallet_address
-                                )
-                            }
-                            Err(e) => tracing::error!(
-                                "Failed to release lock on drop for wallet {}: {}",
-                                wallet_address,
-                                e
-                            ),
+                    match result {
+                        Ok(1) => {
+                            tracing::debug!("Lock released on drop for wallet {}", wallet_address)
                         }
+                        Ok(_) => {
+                            tracing::debug!("Lock already released for wallet {}", wallet_address)
+                        }
+                        Err(e) => tracing::error!(
+                            "Failed to release lock on drop for wallet {}: {}",
+                            wallet_address,
+                            e
+                        ),
                     }
                 });
             }
@@ -373,6 +456,13 @@ mod tests {
     // Note: These tests require a running Redis instance
     // Run with: cargo test --lib wallet -- --ignored
 
+    async fn test_conn() -> ConnectionManager {
+        let client = redis::Client::open("redis://127.0.0.1:6379").expect("Failed to open Redis");
+        ConnectionManager::new(client)
+            .await
+            .expect("Failed to connect to Redis")
+    }
+
     #[tokio::test]
     #[ignore = "requires Redis"]
     async fn test_lock_acquire_release() {
@@ -380,11 +470,11 @@ mod tests {
         let test_prefix = format!("test-{}:", uuid::Uuid::new_v4());
         let keys = PrefixedRedisKeys::new(&test_prefix);
 
-        let redis = redis::Client::open("redis://127.0.0.1:6379").expect("Failed to open Redis");
+        let conn = test_conn().await;
         let address = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
 
         let lock = WalletLock::with_keys(
-            redis,
+            conn,
             address,
             "test-instance".to_string(),
             Duration::from_secs(10),
@@ -418,12 +508,12 @@ mod tests {
         let test_prefix = format!("test-{}:", uuid::Uuid::new_v4());
         let keys = PrefixedRedisKeys::new(&test_prefix);
 
-        let redis = redis::Client::open("redis://127.0.0.1:6379").expect("Failed to open Redis");
+        let conn = test_conn().await;
         let address = Address::from_str("0x2234567890123456789012345678901234567890").unwrap();
 
         // Instance 1 acquires lock
         let lock1 = WalletLock::with_keys(
-            redis.clone(),
+            conn.clone(),
             address,
             "instance-1".to_string(),
             Duration::from_secs(10),
@@ -436,7 +526,7 @@ mod tests {
 
         // Instance 2 tries to acquire - should fail
         let lock2 = WalletLock::with_keys(
-            redis,
+            conn,
             address,
             "instance-2".to_string(),
             Duration::from_secs(10),
@@ -453,11 +543,11 @@ mod tests {
         let test_prefix = format!("test-{}:", uuid::Uuid::new_v4());
         let keys = PrefixedRedisKeys::new(&test_prefix);
 
-        let redis = redis::Client::open("redis://127.0.0.1:6379").expect("Failed to open Redis");
+        let conn = test_conn().await;
         let address = Address::from_str("0x3234567890123456789012345678901234567890").unwrap();
 
         let lock = WalletLock::with_keys(
-            redis,
+            conn,
             address,
             "test-instance".to_string(),
             Duration::from_secs(5),
@@ -477,5 +567,53 @@ mod tests {
         assert!(extended);
 
         guard.release().await.expect("Failed to release lock");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Redis"]
+    async fn test_heartbeat_keeps_lock_alive_and_detects_loss() {
+        let test_prefix = format!("test-{}:", uuid::Uuid::new_v4());
+        let keys = PrefixedRedisKeys::new(&test_prefix);
+
+        let conn = test_conn().await;
+        let address = Address::from_str("0x4234567890123456789012345678901234567890").unwrap();
+
+        let lock = WalletLock::with_keys(
+            conn.clone(),
+            address,
+            "test-instance".to_string(),
+            Duration::from_secs(2),
+            &keys,
+        );
+
+        let guard = lock
+            .acquire(1, Duration::from_millis(100))
+            .await
+            .expect("Failed to acquire lock");
+        let heartbeat = guard.spawn_heartbeat(Duration::from_secs(2));
+
+        // After 3s (longer than the 2s TTL) the heartbeat must have kept the lock alive
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        assert!(lock.is_locked().await.expect("Failed to check lock"));
+        assert!(heartbeat.ensure_held().is_ok());
+
+        // Steal the lock out from under the holder: delete + re-set as another instance
+        let mut raw = conn.clone();
+        let _: () = redis::cmd("SET")
+            .arg(keys.wallet_lock(&address))
+            .arg("other-instance")
+            .arg("PX")
+            .arg(60_000u64)
+            .query_async(&mut raw)
+            .await
+            .expect("Failed to steal lock");
+
+        // Next heartbeat tick observes the loss and flips the flag
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(heartbeat.lock_lost());
+        assert!(heartbeat.ensure_held().is_err());
+
+        drop(heartbeat);
+        drop(guard);
     }
 }

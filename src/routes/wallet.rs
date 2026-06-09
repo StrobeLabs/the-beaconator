@@ -6,7 +6,12 @@ use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
 use rocket_okapi::openapi;
 use std::str::FromStr;
+use std::time::Duration;
+use tokio::time::timeout;
 use tracing;
+
+/// How long to wait for each funding transfer (ETH, USDC) to confirm.
+const FUNDING_RECEIPT_TIMEOUT: Duration = Duration::from_secs(120);
 
 use super::{IERC20, sentry_error};
 use crate::guards::ApiToken;
@@ -266,7 +271,7 @@ pub async fn fund_guest_wallet(
 
     // Acquire distributed lock on funding wallet to prevent nonce conflicts
     // across concurrent requests and multiple beaconator instances
-    let _funding_lock = state
+    let funding_lock = state
         .wallets
         .manager
         .acquire_lock(&state.wallets.funding_address)
@@ -285,15 +290,29 @@ pub async fn fund_guest_wallet(
             )
         })?;
 
+    // Keep the lock alive across the two transfer confirmations (up to 2 x 120s,
+    // far longer than the lock TTL). Declared after the lock so it drops first:
+    // the heartbeat is aborted BEFORE the lock is released.
+    let funding_heartbeat = funding_lock.spawn_heartbeat(state.wallets.manager.lock_ttl());
+
     // Build a fresh provider per-request to avoid stale nonce caching
     let funding_wallet = EthereumWallet::from(state.wallets.signer.clone());
-    let funding_provider = ProviderBuilder::new().wallet(funding_wallet).connect_http(
-        state
-            .provider
-            .rpc_url
-            .parse()
-            .expect("Invalid RPC URL in AppState"),
-    );
+    let rpc_url = state.provider.rpc_url.parse().map_err(|e| {
+        let detailed_error = format!("Invalid RPC URL in AppState: {e}");
+        tracing::error!("{}", detailed_error);
+        sentry_error(&hub, "ConfigError", detailed_error, vec![]);
+        (
+            Status::InternalServerError,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "Server RPC configuration is invalid".to_string(),
+            }),
+        )
+    })?;
+    let funding_provider = ProviderBuilder::new()
+        .wallet(funding_wallet)
+        .connect_http(rpc_url);
 
     // Send ETH using funding provider
     let tx_request = TransactionRequest::default()
@@ -301,22 +320,49 @@ pub async fn fund_guest_wallet(
         .value(U256::from(eth_amount));
 
     let eth_tx_hash = match funding_provider.send_transaction(tx_request).await {
-        Ok(pending) => match pending.get_receipt().await {
-            Ok(receipt) => receipt.transaction_hash,
-            Err(e) => {
-                let detailed_error = format!("Failed to get ETH transaction receipt: {e}");
-                tracing::error!("{}", detailed_error);
-                sentry_error(&hub, "TransactionError", detailed_error, vec![]);
-                return Err((
-                    Status::InternalServerError,
-                    Json(ApiResponse {
-                        success: false,
-                        data: None,
-                        message: "Failed to confirm ETH transaction".to_string(),
-                    }),
-                ));
+        Ok(pending) => {
+            let tx_hash = *pending.tx_hash();
+            match timeout(FUNDING_RECEIPT_TIMEOUT, pending.get_receipt()).await {
+                Ok(Ok(receipt)) => receipt.transaction_hash,
+                Ok(Err(e)) => {
+                    let detailed_error = format!("Failed to get ETH transaction receipt: {e}");
+                    tracing::error!("{}", detailed_error);
+                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
+                    return Err((
+                        Status::InternalServerError,
+                        Json(ApiResponse {
+                            success: false,
+                            data: None,
+                            message: format!(
+                                "ETH transfer sent (tx {tx_hash:?}) but confirmation failed; \
+                                 USDC was NOT sent — verify on-chain before retrying to avoid \
+                                 double-funding"
+                            ),
+                        }),
+                    ));
+                }
+                Err(_) => {
+                    let detailed_error = format!(
+                        "Timeout waiting for ETH transfer receipt (tx {tx_hash:?}) after {}s",
+                        FUNDING_RECEIPT_TIMEOUT.as_secs()
+                    );
+                    tracing::error!("{}", detailed_error);
+                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
+                    return Err((
+                        Status::InternalServerError,
+                        Json(ApiResponse {
+                            success: false,
+                            data: None,
+                            message: format!(
+                                "ETH transfer unconfirmed after {}s (tx {tx_hash:?}); USDC was \
+                                 NOT sent — verify on-chain before retrying to avoid double-funding",
+                                FUNDING_RECEIPT_TIMEOUT.as_secs()
+                            ),
+                        }),
+                    ));
+                }
             }
-        },
+        }
         Err(e) => {
             let detailed_error = format!("Failed to send ETH: {e}");
             tracing::error!("{}", detailed_error);
@@ -334,6 +380,24 @@ pub async fn fund_guest_wallet(
 
     tracing::info!("ETH transfer hash: {:?}", eth_tx_hash);
 
+    // The ETH transfer may have taken longer than the lock TTL; abort before the
+    // second transaction if the heartbeat observed the lock as lost.
+    if let Err(e) = funding_heartbeat.ensure_held() {
+        let detailed_error = format!("Funding wallet lock lost before USDC transfer: {e}");
+        tracing::error!("{}", detailed_error);
+        sentry_error(&hub, "WalletError", detailed_error, vec![]);
+        return Err((
+            Status::InternalServerError,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: format!(
+                    "ETH sent (tx {eth_tx_hash:?}), but USDC transfer was aborted: {e}"
+                ),
+            }),
+        ));
+    }
+
     // Send USDC using funding provider
     let usdc_send_contract = IERC20::new(state.contracts.usdc, &funding_provider);
     let usdc_receipt = match usdc_send_contract
@@ -341,22 +405,50 @@ pub async fn fund_guest_wallet(
         .send()
         .await
     {
-        Ok(pending) => match pending.get_receipt().await {
-            Ok(receipt) => receipt,
-            Err(e) => {
-                let detailed_error = format!("Failed to get USDC transaction receipt: {e}");
-                tracing::error!("{}", detailed_error);
-                sentry_error(&hub, "TransactionError", detailed_error, vec![]);
-                return Err((
-                    Status::InternalServerError,
-                    Json(ApiResponse {
-                        success: false,
-                        data: None,
-                        message: "Failed to confirm USDC transaction".to_string(),
-                    }),
-                ));
+        Ok(pending) => {
+            let usdc_tx_hash = *pending.tx_hash();
+            match timeout(FUNDING_RECEIPT_TIMEOUT, pending.get_receipt()).await {
+                Ok(Ok(receipt)) => receipt,
+                Ok(Err(e)) => {
+                    let detailed_error = format!("Failed to get USDC transaction receipt: {e}");
+                    tracing::error!("{}", detailed_error);
+                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
+                    return Err((
+                        Status::InternalServerError,
+                        Json(ApiResponse {
+                            success: false,
+                            data: None,
+                            message: format!(
+                                "ETH sent (tx {eth_tx_hash:?}), USDC transfer confirmation \
+                                 failed (tx {usdc_tx_hash:?}) — verify on-chain before retrying \
+                                 to avoid double-funding"
+                            ),
+                        }),
+                    ));
+                }
+                Err(_) => {
+                    let detailed_error = format!(
+                        "Timeout waiting for USDC transfer receipt (tx {usdc_tx_hash:?}) after {}s",
+                        FUNDING_RECEIPT_TIMEOUT.as_secs()
+                    );
+                    tracing::error!("{}", detailed_error);
+                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
+                    return Err((
+                        Status::InternalServerError,
+                        Json(ApiResponse {
+                            success: false,
+                            data: None,
+                            message: format!(
+                                "ETH sent (tx {eth_tx_hash:?}), USDC transfer unconfirmed after \
+                                 {}s (tx {usdc_tx_hash:?}) — verify on-chain before retrying to \
+                                 avoid double-funding",
+                                FUNDING_RECEIPT_TIMEOUT.as_secs()
+                            ),
+                        }),
+                    ));
+                }
             }
-        },
+        }
         Err(e) => {
             let detailed_error = format!("Failed to send USDC: {e}");
             tracing::error!("{}", detailed_error);
@@ -366,7 +458,7 @@ pub async fn fund_guest_wallet(
                 Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: "Failed to send USDC".to_string(),
+                    message: format!("ETH sent (tx {eth_tx_hash:?}), but USDC send failed"),
                 }),
             ));
         }
