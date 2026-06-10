@@ -100,8 +100,32 @@ inspect_to() {
   echo "  Wrote $ABIS_DIR/$out"
 }
 
+# Same as inspect_to but emits creation BYTECODE instead of the ABI. The
+# beaconator deploys IdentityBeacon directly from this snapshot (the verifier
+# comes from the on-chain factory), so a stale snapshot silently deploys a
+# DIFFERENT contract than the pinned tag: the pre-v0.0.1 IdentityBeacon never
+# bound its verifier, leaving every beacon un-updatable against v0.0.1
+# CallerBound verifiers (UnauthorizedCaller on every update).
+bytecode_to() {
+  local repo="$1"
+  local tag="$2"
+  local contract="$3"
+  local out="$4"
+  local wt
+  wt="$(mktemp -d -t "$(basename "$repo")-${tag}-XXXXXX")"
+  WORKTREES+=("$repo::$wt")
+  echo "  Worktree: $repo @ $tag -> $wt"
+  git -C "$repo" worktree add --detach "$wt" "$tag" >/dev/null
+  git -C "$wt" \
+    -c url."https://github.com/".insteadOf="git@github.com:" \
+    submodule update --init --recursive --jobs 4 >/dev/null
+  ( cd "$wt" && forge inspect "$contract" bytecode ) > "$ABIS_DIR/$out"
+  echo "  Wrote $ABIS_DIR/$out"
+}
+
 echo "Refreshing ABIs from beacons@$BEACONS_TAG and perpcity-contracts@$PERPCITY_TAG..."
 inspect_to "$BEACONS_REPO" "$BEACONS_TAG" BeaconRegistry BeaconRegistry.json
+bytecode_to "$BEACONS_REPO" "$BEACONS_TAG" IdentityBeacon IdentityBeacon.bytecode
 inspect_to "$PERPCITY_REPO" "$PERPCITY_TAG" Perp Perp.json
 inspect_to "$PERPCITY_REPO" "$PERPCITY_TAG" PerpFactory PerpFactory.json
 inspect_to "$PERPCITY_REPO" "$PERPCITY_TAG" ProtocolFeeManager ProtocolFeeManager.json
