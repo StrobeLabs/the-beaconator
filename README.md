@@ -146,3 +146,33 @@ You can view interactive API documentation using any OpenAPI UI viewer:
 
 
 This project is open source and available under the [MIT License](LICENSE).
+
+## Releases and deployment
+
+`main` is the integration branch: every merge auto-deploys to the **testnet**
+beaconator (Railway, `the-beaconator` service) for soak. Production never
+tracks `main`.
+
+The **`release` branch is what production deploys** (Railway
+`the-mainnet-beaconator`; the AWS image promotion described in the workflow
+follows the same philosophy). Promoting to production is a deliberate act:
+
+```bash
+# 1. After the candidate commit has soaked on testnet:
+git fetch origin
+git push origin <commit>:release
+
+# 2. Tag it (always; bump minor for contract-pin changes):
+git tag -a vX.Y.Z <commit> -m "what changed"
+git push origin vX.Y.Z
+```
+
+Rules:
+- Never point production at `main`. The 2026-06-09 incident: an ECS-targeted
+  Dockerfile change merged to `main` and auto-deployed to the production
+  beaconator overnight, silently breaking Railway private networking for
+  every updater that calls it.
+- `release` only ever fast-forwards to commits that are ancestors of `main`
+  (i.e. went through PR review + CI + testnet soak). No direct commits.
+- Cut a tag per promotion. Contract-pin bumps (`.contracts-versions`) always
+  get their own tag.
