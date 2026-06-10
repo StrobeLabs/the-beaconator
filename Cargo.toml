@@ -24,6 +24,12 @@ schemars = { version = "0.8", features = ["preserve_order"] }
 # TLS, so the REDIS_URL is `rediss://` — without a TLS feature Client::open fails
 # to connect. Plain `redis://` (local/tests) still works; the scheme decides.
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager", "aio", "tokio-rustls-comp", "tls-rustls-webpki-roots"] }
+# Direct dep solely to install the process-level CryptoProvider at startup
+# (src/main.rs): with redis's tls-rustls + reqwest's rustls-tls in the same
+# tree, rustls 0.23 cannot infer a provider on its own and panics at the first
+# TLS connection (the ElastiCache rediss:// connect). ring matches the provider
+# already present in the dependency tree.
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 hostname = "0.4"
 # UUID for instance identification
 uuid = { version = "1.0", features = ["v4"] }
