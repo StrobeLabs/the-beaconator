@@ -2,6 +2,14 @@ use the_beaconator::create_rocket;
 
 #[rocket::launch]
 async fn rocket() -> _ {
+    // Pin the process-level rustls CryptoProvider BEFORE anything opens a TLS
+    // connection. The dependency tree carries rustls via both redis
+    // (tls-rustls, for ElastiCache rediss://) and reqwest (rustls-tls), and
+    // rustls 0.23 panics at the first TLS handshake when it cannot infer
+    // exactly one provider. Ignore the Err case: it means a provider is
+    // already installed, which is the desired end state.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Initialize logging first with environment variable support
     use tracing_subscriber::{EnvFilter, fmt};
 
