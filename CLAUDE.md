@@ -306,6 +306,12 @@ Five module addresses, all required, all deployed once and reused across markets
 - Batch operations continue on individual failures with detailed error reporting
 - Network errors gracefully handled in test environment
 
+## Releases
+`main` auto-deploys to testnet only. Production (Railway `the-mainnet-beaconator`)
+deploys the `release` branch; promotion = fast-forward `release` to a soaked
+main commit + annotated tag (see README "Releases and deployment"). Never point
+production at `main`.
+
 ## Git Commit Guidelines
 - Use concise commit messages (1 sentence max)
 - Do not include Claude Code attribution or co-author tags (private repo)
