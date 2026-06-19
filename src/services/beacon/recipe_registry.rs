@@ -187,7 +187,7 @@ impl RecipeRegistry {
         Ok(())
     }
 
-    /// Seed the 12 standard beacon recipes.
+    /// Seed the 13 standard beacon recipes.
     /// Only writes entries whose slugs do NOT already exist in Redis.
     pub async fn seed_standard_recipes(&self) -> Result<SeedResult, String> {
         let now = SystemTime::now()
@@ -345,6 +345,18 @@ impl RecipeRegistry {
                 beacon_kind: BeaconKind::Group {
                     group_fn: GroupFnSpec::RelativeDominance,
                     group_transform: GroupTransformSpec::GMNormalize,
+                },
+                enabled: true,
+                created_at: now,
+                updated_at: now,
+            },
+            // Composite recipes: composer over reference beacons
+            BeaconRecipe {
+                slug: "weighted_sum".to_string(),
+                name: "Weighted Sum Composite".to_string(),
+                description: Some("WeightedSum composer over reference beacons".to_string()),
+                beacon_kind: BeaconKind::Composite {
+                    composer: ComposerSpec::WeightedSum,
                 },
                 enabled: true,
                 created_at: now,

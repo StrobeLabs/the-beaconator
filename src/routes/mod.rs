@@ -316,8 +316,7 @@ mod component_factories {
                 uint256 scalingFactor,
                 uint256 alpha,
                 uint256 decay,
-                uint256 initialSigmaRatio,
-                bool varianceScaling
+                uint256 initialSigmaRatio
             ) external returns (address);
         }
 
