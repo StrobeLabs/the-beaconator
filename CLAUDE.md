@@ -306,6 +306,32 @@ Five module addresses, all required, all deployed once and reused across markets
 - Batch operations continue on individual failures with detailed error reporting
 - Network errors gracefully handled in test environment
 
+## Releases & deployment
+
+`main` is the only long-lived branch — there is NO `release` branch.
+
+Every merge to `main`:
+- builds + publishes the container image (`release-image.yml` -> ECR -> the
+  `/perpcity/testnet/beaconator-image` SSM param), and
+- auto-deploys the Railway `the-mainnet-beaconator` service, which tracks `main`.
+
+The Railway box is a BACKUP. The PRIMARY mainnet beaconator is the AWS
+`Beaconator` service in the perpcity-production SST app, which runs an image
+promoted by a deliberate, manual cross-account copy
+(`/perpcity/production/beaconator-image`) plus the perpcity-client production
+deploy. That manual promotion — not a branch in this repo — is the production
+gate (identical to bot-api / gator-liquidators).
+
+Why `main`-tracking is acceptable for the Railway prod box: it used to be the
+PRIMARY mainnet path, so a bad `main` merge was an outage — the 2026-06-09
+incident, where an ECS-only Dockerfile change auto-deployed overnight and broke
+Railway private networking for ~13h of stale Hormuz beacons. It is now a backup
+behind AWS, so a bad merge degrades the backup, not mainnet. If the Railway box
+is ever promoted back to primary, reinstate a gated `release` branch first.
+
+Tagging convention (unchanged): cut an annotated tag per production image
+promotion; contract-pin bumps (`.contracts-versions`) always get their own tag.
+
 ## Git Commit Guidelines
 - Use concise commit messages (1 sentence max)
 - Do not include Claude Code attribution or co-author tags (private repo)
