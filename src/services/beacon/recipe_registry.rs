@@ -350,6 +350,18 @@ impl RecipeRegistry {
                 created_at: now,
                 updated_at: now,
             },
+            // Composite recipes: composer over reference beacons
+            BeaconRecipe {
+                slug: "weighted_sum".to_string(),
+                name: "Weighted Sum Composite".to_string(),
+                description: Some("WeightedSum composer over reference beacons".to_string()),
+                beacon_kind: BeaconKind::Composite {
+                    composer: ComposerSpec::WeightedSum,
+                },
+                enabled: true,
+                created_at: now,
+                updated_at: now,
+            },
         ];
 
         let mut seeded = 0;
