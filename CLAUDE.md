@@ -245,19 +245,10 @@ Factory addresses are pre-seeded into Redis (not read from env vars at request t
 - `beaconator:beacon_recipe:{slug}` - recipe config JSON
 - `beaconator:beacon_recipes` - set of recipe slugs
 
-Seeding paths: direct Redis writes (local dev, Railway), or the optional
-`COMPONENT_FACTORIES_JSON` env var — a `{"FactoryType": "0xaddr"}` map seeded at
-startup without overwriting existing entries. The AWS deployment uses the latter
-because its ElastiCache Redis is VPC-internal and cannot be seeded by hand.
-
-## AWS deployment
-This repo ships a Docker image only — there is no SST config here. The service
-deploys from the main perpcity SST app (perpcity-client/sst.config.ts), which
-runs it on ECS Fargate in-VPC (no public load balancer), wires ElastiCache
-Valkey over TLS (`rediss://`, hence the redis crate's rustls features), and
-injects secrets from AWS Secrets Manager (`the-beaconator/<env>/*`). Build the
-arm64 image, push to ECR, and pass the URI as `BEACONATOR_IMAGE` to that app's
-deploy.
+Seeding paths: direct Redis writes, or the optional `COMPONENT_FACTORIES_JSON`
+env var — a `{"FactoryType": "0xaddr"}` map seeded at startup without
+overwriting existing entries (use this when the Redis instance cannot be seeded
+by hand).
 
 ### Creation Flow
 1. Look up recipe by slug from RecipeRegistry
