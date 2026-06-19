@@ -728,7 +728,6 @@ async fn create_base_fn(
                 &params.initial_sigma_ratio,
                 "initial_sigma_ratio",
             )?);
-            let variance_scaling = params.variance_scaling.unwrap_or(false);
 
             tracing::info!("Creating CGBM base function");
             let factory = ICGBMFactory::new(factory_addr, provider);
@@ -740,7 +739,6 @@ async fn create_base_fn(
                     alpha,
                     decay,
                     initial_sigma_ratio,
-                    variance_scaling,
                 )
                 .call()
                 .await
@@ -760,7 +758,6 @@ async fn create_base_fn(
                     alpha,
                     decay,
                     initial_sigma_ratio,
-                    variance_scaling,
                 )
                 .send()
                 .await
