@@ -207,8 +207,8 @@ async fn test_recipe_registry_seed_standard_recipes() {
 
     let result = registry.seed_standard_recipes().await.unwrap();
     assert_eq!(
-        result.seeded, 12,
-        "Expected 12 standard recipes seeded, got: {}",
+        result.seeded, 13,
+        "Expected 13 standard recipes seeded, got: {}",
         result.seeded
     );
     assert_eq!(result.skipped, 0);
@@ -278,12 +278,12 @@ async fn test_recipe_registry_seed_idempotent() {
         .expect("Failed to create RecipeRegistry");
 
     let first = registry.seed_standard_recipes().await.unwrap();
-    assert_eq!(first.seeded, 12);
+    assert_eq!(first.seeded, 13);
     assert_eq!(first.skipped, 0);
 
     let second = registry.seed_standard_recipes().await.unwrap();
     assert_eq!(second.seeded, 0);
-    assert_eq!(second.skipped, 12);
+    assert_eq!(second.skipped, 13);
 
     registry.cleanup().await.unwrap();
 }
@@ -301,8 +301,8 @@ async fn test_recipe_registry_list_all() {
     let recipes = registry.list_recipes().await.unwrap();
     assert_eq!(
         recipes.len(),
-        12,
-        "Expected 12 standard recipes, got: {}",
+        13,
+        "Expected 13 standard recipes, got: {}",
         recipes.len()
     );
 

@@ -187,7 +187,7 @@ impl RecipeRegistry {
         Ok(())
     }
 
-    /// Seed the 12 standard beacon recipes.
+    /// Seed the 13 standard beacon recipes.
     /// Only writes entries whose slugs do NOT already exist in Redis.
     pub async fn seed_standard_recipes(&self) -> Result<SeedResult, String> {
         let now = SystemTime::now()
