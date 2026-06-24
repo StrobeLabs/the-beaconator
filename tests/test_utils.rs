@@ -568,6 +568,7 @@ pub async fn create_test_app_state() -> AppState {
             signer: test_signer,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
+            usdc_bonus_limit: 50_000_000,       // 50 USDC
         },
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
@@ -636,6 +637,7 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
             signer: test_signer,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
+            usdc_bonus_limit: 50_000_000,       // 50 USDC
         },
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
@@ -729,6 +731,7 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
             signer: test_signer,
             usdc_transfer_limit: 1_000_000_000,
             eth_transfer_limit: 10_000_000_000_000_000,
+            usdc_bonus_limit: 50_000_000,
         },
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
@@ -794,6 +797,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
             signer,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
+            usdc_bonus_limit: 50_000_000,       // 50 USDC
         },
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
@@ -909,6 +913,7 @@ pub async fn create_simple_test_app_state() -> AppState {
             signer,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
+            usdc_bonus_limit: 50_000_000,       // 50 USDC
         },
         contracts: ContractAddresses {
             perpcity_registry: Address::from_str("0x2345678901234567890123456789012345678901")
@@ -974,6 +979,7 @@ pub async fn create_test_app_state_with_provider(
             signer,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
+            usdc_bonus_limit: 50_000_000,       // 50 USDC
         },
         contracts: ContractAddresses {
             perpcity_registry: Address::from_str("0x2345678901234567890123456789012345678901")

@@ -156,6 +156,7 @@ fn audit_environment() {
     const OTHER_VARS_OPTIONAL: &[&str] = &[
         "USDC_TRANSFER_LIMIT",
         "ETH_TRANSFER_LIMIT",
+        "USDC_BONUS_LIMIT",
         "BEACONATOR_INSTANCE_ID",
         "RUST_LOG",
         "SENTRY_TRACES_SAMPLE_RATE",
@@ -385,6 +386,11 @@ pub async fn create_rocket() -> Rocket<Build> {
         .unwrap_or_else(|_| "10000000000000000".to_string()) // Default 0.01 ETH
         .parse::<u128>()
         .expect("Failed to parse ETH_TRANSFER_LIMIT");
+
+    let usdc_bonus_limit = env::var("USDC_BONUS_LIMIT")
+        .unwrap_or_else(|_| "50000000".to_string()) // Default 50 USDC
+        .parse::<u128>()
+        .expect("Failed to parse USDC_BONUS_LIMIT");
 
     // Get environment configuration and chain ID
     let env_type = &rpc_config.env_type;
@@ -733,6 +739,7 @@ pub async fn create_rocket() -> Rocket<Build> {
             signer,
             usdc_transfer_limit,
             eth_transfer_limit,
+            usdc_bonus_limit,
         },
         contracts: ContractAddresses {
             perpcity_registry: perpcity_registry_address,
@@ -779,6 +786,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::perp::deploy_perp_for_beacon_endpoint,
         routes::perp::deposit_liquidity_for_perp_endpoint,
         routes::wallet::fund_guest_wallet,
+        routes::wallet::fund_bonus_wallet,
         routes::beacon_type::list_beacon_types,
         routes::beacon_type::get_beacon_type,
         routes::beacon_type::register_beacon_type,
