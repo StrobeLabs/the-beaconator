@@ -685,6 +685,27 @@ pub async fn fund_bonus_wallet(
         Ok(pending) => {
             let usdc_tx_hash = *pending.tx_hash();
             match timeout(FUNDING_RECEIPT_TIMEOUT, pending.get_receipt()).await {
+                // A receipt can come back for a REVERTED transfer — accepting it
+                // would report a successful payout when no USDC moved. Treat a
+                // non-success status as a failure (no funds moved on a revert, so
+                // it is safe to retry once the cause is understood).
+                Ok(Ok(receipt)) if !receipt.status() => {
+                    let detailed_error =
+                        format!("USDC transfer reverted on-chain (tx {usdc_tx_hash:?})");
+                    tracing::error!("{}", detailed_error);
+                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
+                    return Err((
+                        Status::InternalServerError,
+                        Json(ApiResponse {
+                            success: false,
+                            data: None,
+                            message: format!(
+                                "USDC transfer reverted on-chain (tx {usdc_tx_hash:?}); \
+                                 no USDC moved"
+                            ),
+                        }),
+                    ));
+                }
                 Ok(Ok(receipt)) => receipt,
                 Ok(Err(e)) => {
                     let detailed_error = format!("Failed to get USDC transaction receipt: {e}");
@@ -739,17 +760,21 @@ pub async fn fund_bonus_wallet(
         }
     };
 
-    tracing::info!("Bonus USDC transfer hash: {:?}", usdc_receipt.transaction_hash);
+    tracing::info!(
+        "Bonus USDC transfer hash: {:?}",
+        usdc_receipt.transaction_hash
+    );
 
+    // `data` is the transaction hash itself (not a sentence) so callers can
+    // consume it directly without parsing prose. The human-readable summary
+    // lives in `message`.
     Ok(Json(ApiResponse {
         success: true,
-        data: Some(format!(
-            "Successfully funded wallet {} with {} USDC. USDC tx: {:?}",
-            wallet_address,
-            usdc_amount / 1_000_000,
-            usdc_receipt.transaction_hash
-        )),
-        message: "Bonus wallet funded successfully".to_string(),
+        data: Some(usdc_receipt.transaction_hash.to_string()),
+        message: format!(
+            "Successfully funded wallet {wallet_address} with {} USDC",
+            usdc_amount / 1_000_000
+        ),
     }))
 }
 

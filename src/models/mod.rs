@@ -18,8 +18,7 @@ pub use requests::{
     CreateBeaconWithEcdsaRequest, CreateLBCGBMBeaconRequest,
     CreateWeightedSumCompositeBeaconRequest, DeployPerpForBeaconRequest,
     DepositLiquidityForPerpRequest, FundBonusWalletRequest, FundGuestWalletRequest,
-    RegisterBeaconRequest,
-    RegisterBeaconTypeRequest, UpdateBeaconRequest, UpdateBeaconTypeRequest,
+    RegisterBeaconRequest, RegisterBeaconTypeRequest, UpdateBeaconRequest, UpdateBeaconTypeRequest,
     UpdateBeaconWithEcdsaRequest,
 };
 pub use requests::{CreateModularBeaconRequest, ModularBeaconParams};
