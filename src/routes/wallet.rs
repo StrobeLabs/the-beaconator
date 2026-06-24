@@ -15,7 +15,7 @@ const FUNDING_RECEIPT_TIMEOUT: Duration = Duration::from_secs(120);
 
 use super::{IERC20, sentry_error};
 use crate::guards::ApiToken;
-use crate::models::{ApiResponse, AppState, FundGuestWalletRequest};
+use crate::models::{ApiResponse, AppState, FundBonusWalletRequest, FundGuestWalletRequest};
 
 /// Production chain ids the beaconator can target. Any chain id NOT in the testnet/local
 /// allow-list (Arbitrum Sepolia = 421614, Anvil default = 31337) is treated as production
@@ -477,6 +477,279 @@ pub async fn fund_guest_wallet(
             usdc_receipt.transaction_hash
         )),
         message: "Guest wallet funded successfully".to_string(),
+    }))
+}
+
+/// Funds a wallet with the new-user bonus USDC (mainnet-capable).
+///
+/// The sibling of `fund_guest_wallet` for the real-money $50 bonus. Differences:
+///   - USDC only, NO ETH leg — the recipient is a smart account whose trades are
+///     paymaster-sponsored, so it never needs gas.
+///   - Runs on ALL chains, including Arbitrum One: there is NO production
+///     guardrail here, because disbursing real mainnet USDC is the entire point.
+///     The real-money safety lives in (a) the tighter `usdc_bonus_limit` cap,
+///     (b) the bearer-token auth, and (c) the caller's own kill-switch + atomic
+///     single-use claim. The faucet route keeps its mainnet guard untouched.
+#[openapi(tag = "Wallet")]
+#[post("/fund_bonus_wallet", format = "json", data = "<request>")]
+pub async fn fund_bonus_wallet(
+    state: &State<AppState>,
+    request: Json<FundBonusWalletRequest>,
+    _token: ApiToken,
+) -> Result<Json<ApiResponse<String>>, (Status, Json<ApiResponse<String>>)> {
+    tracing::info!("Received request: POST /fund_bonus_wallet");
+    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
+    hub.add_breadcrumb(sentry::Breadcrumb {
+        ty: "http".into(),
+        category: Some("request".into()),
+        message: Some(format!(
+            "POST /fund_bonus_wallet wallet={}",
+            request.wallet_address
+        )),
+        ..Default::default()
+    });
+    hub.configure_scope(|scope| {
+        scope.set_tag("endpoint", "/fund_bonus_wallet");
+        scope.set_extra("wallet_address", request.wallet_address.clone().into());
+        scope.set_extra("usdc_amount", request.usdc_amount.clone().into());
+    });
+
+    let wallet_address = match Address::from_str(&request.wallet_address) {
+        Ok(addr) => addr,
+        Err(e) => {
+            return Err((
+                Status::BadRequest,
+                Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: format!("Invalid wallet address: {e}"),
+                }),
+            ));
+        }
+    };
+
+    let usdc_amount = match request.usdc_amount.parse::<u128>() {
+        Ok(amount) => amount,
+        Err(e) => {
+            return Err((
+                Status::BadRequest,
+                Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: format!("Invalid USDC amount: {e}"),
+                }),
+            ));
+        }
+    };
+
+    // Bound each payout by the dedicated bonus cap (real money — fail closed).
+    if usdc_amount == 0 || usdc_amount > state.wallets.usdc_bonus_limit {
+        return Err((
+            Status::BadRequest,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: format!(
+                    "USDC amount out of range. Requested: {} USDC, Limit: {} USDC",
+                    usdc_amount / 1_000_000,
+                    state.wallets.usdc_bonus_limit / 1_000_000
+                ),
+            }),
+        ));
+    }
+
+    tracing::info!(
+        "Funding bonus wallet: {} with {} USDC",
+        wallet_address,
+        usdc_amount / 1_000_000
+    );
+
+    // Check funding wallet USDC balance using read provider
+    let usdc_read_contract = IERC20::new(state.contracts.usdc, &*state.provider.read_provider);
+    let usdc_balance = match usdc_read_contract
+        .balanceOf(state.wallets.funding_address)
+        .call()
+        .await
+    {
+        Ok(result) => result,
+        Err(e) => {
+            let detailed_error = format!("Failed to get USDC balance: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "RpcError", detailed_error, vec![]);
+            return Err((
+                Status::InternalServerError,
+                Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: "Failed to retrieve USDC balance".to_string(),
+                }),
+            ));
+        }
+    };
+
+    if usdc_balance < U256::from(usdc_amount) {
+        tracing::warn!(
+            "Insufficient USDC balance in funding wallet {}. Have: {} USDC, Need: {} USDC",
+            state.wallets.funding_address,
+            usdc_balance / U256::from(1_000_000),
+            usdc_amount / 1_000_000
+        );
+        hub.capture_message(
+            &format!(
+                "Insufficient USDC balance in bonus funding wallet. Have: {} USDC, Need: {} USDC",
+                usdc_balance / U256::from(1_000_000),
+                usdc_amount / 1_000_000
+            ),
+            sentry::Level::Warning,
+        );
+        return Err((
+            Status::InternalServerError,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: format!(
+                    "Insufficient USDC balance. Have: {} USDC, Need: {} USDC",
+                    usdc_balance / U256::from(1_000_000),
+                    usdc_amount / 1_000_000
+                ),
+            }),
+        ));
+    }
+
+    // Acquire distributed lock on funding wallet to prevent nonce conflicts
+    // across concurrent requests and multiple beaconator instances.
+    let funding_lock = state
+        .wallets
+        .manager
+        .acquire_lock(&state.wallets.funding_address)
+        .await
+        .map_err(|e| {
+            let detailed_error = format!("Failed to acquire funding wallet lock: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "WalletError", detailed_error, vec![]);
+            (
+                Status::ServiceUnavailable,
+                Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: "Funding wallet temporarily unavailable".to_string(),
+                }),
+            )
+        })?;
+
+    // Keep the lock alive across the transfer confirmation. Declared after the
+    // lock so it drops first: the heartbeat is aborted BEFORE the lock releases.
+    let funding_heartbeat = funding_lock.spawn_heartbeat(state.wallets.manager.lock_ttl());
+
+    // Build a fresh provider per-request to avoid stale nonce caching.
+    let funding_wallet = EthereumWallet::from(state.wallets.signer.clone());
+    let rpc_url = state.provider.rpc_url.parse().map_err(|e| {
+        let detailed_error = format!("Invalid RPC URL in AppState: {e}");
+        tracing::error!("{}", detailed_error);
+        sentry_error(&hub, "ConfigError", detailed_error, vec![]);
+        (
+            Status::InternalServerError,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "Server RPC configuration is invalid".to_string(),
+            }),
+        )
+    })?;
+    let funding_provider = ProviderBuilder::new()
+        .wallet(funding_wallet)
+        .connect_http(rpc_url);
+
+    // Confirm the lock is still held immediately before submitting.
+    if let Err(e) = funding_heartbeat.ensure_held() {
+        let detailed_error = format!("Funding wallet lock lost before USDC transfer: {e}");
+        tracing::error!("{}", detailed_error);
+        sentry_error(&hub, "WalletError", detailed_error, vec![]);
+        return Err((
+            Status::InternalServerError,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: format!("USDC transfer aborted: {e}"),
+            }),
+        ));
+    }
+
+    // Send USDC using funding provider.
+    let usdc_send_contract = IERC20::new(state.contracts.usdc, &funding_provider);
+    let usdc_receipt = match usdc_send_contract
+        .transfer(wallet_address, U256::from(usdc_amount))
+        .send()
+        .await
+    {
+        Ok(pending) => {
+            let usdc_tx_hash = *pending.tx_hash();
+            match timeout(FUNDING_RECEIPT_TIMEOUT, pending.get_receipt()).await {
+                Ok(Ok(receipt)) => receipt,
+                Ok(Err(e)) => {
+                    let detailed_error = format!("Failed to get USDC transaction receipt: {e}");
+                    tracing::error!("{}", detailed_error);
+                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
+                    return Err((
+                        Status::InternalServerError,
+                        Json(ApiResponse {
+                            success: false,
+                            data: None,
+                            message: format!(
+                                "USDC transfer sent (tx {usdc_tx_hash:?}) but confirmation \
+                                 failed — verify on-chain before retrying to avoid double-funding"
+                            ),
+                        }),
+                    ));
+                }
+                Err(_) => {
+                    let detailed_error = format!(
+                        "Timeout waiting for USDC transfer receipt (tx {usdc_tx_hash:?}) after {}s",
+                        FUNDING_RECEIPT_TIMEOUT.as_secs()
+                    );
+                    tracing::error!("{}", detailed_error);
+                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
+                    return Err((
+                        Status::InternalServerError,
+                        Json(ApiResponse {
+                            success: false,
+                            data: None,
+                            message: format!(
+                                "USDC transfer unconfirmed after {}s (tx {usdc_tx_hash:?}) — \
+                                 verify on-chain before retrying to avoid double-funding",
+                                FUNDING_RECEIPT_TIMEOUT.as_secs()
+                            ),
+                        }),
+                    ));
+                }
+            }
+        }
+        Err(e) => {
+            let detailed_error = format!("Failed to send USDC: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "TransactionError", detailed_error, vec![]);
+            return Err((
+                Status::InternalServerError,
+                Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: "Failed to send USDC".to_string(),
+                }),
+            ));
+        }
+    };
+
+    tracing::info!("Bonus USDC transfer hash: {:?}", usdc_receipt.transaction_hash);
+
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some(format!(
+            "Successfully funded wallet {} with {} USDC. USDC tx: {:?}",
+            wallet_address,
+            usdc_amount / 1_000_000,
+            usdc_receipt.transaction_hash
+        )),
+        message: "Bonus wallet funded successfully".to_string(),
     }))
 }
 

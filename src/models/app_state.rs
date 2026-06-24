@@ -206,6 +206,9 @@ pub struct WalletConfig {
     pub signer: PrivateKeySigner,
     pub usdc_transfer_limit: u128,
     pub eth_transfer_limit: u128,
+    /// Per-request USDC cap for the mainnet bonus route (`/fund_bonus_wallet`).
+    /// Tighter than `usdc_transfer_limit` because it bounds real-money payouts.
+    pub usdc_bonus_limit: u128,
 }
 
 #[derive(Clone)]

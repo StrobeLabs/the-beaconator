@@ -234,6 +234,19 @@ pub struct FundGuestWalletRequest {
     pub eth_amount: String,
 }
 
+/// Fund a wallet with the new-user bonus USDC.
+///
+/// Unlike `FundGuestWalletRequest`, this carries NO ETH leg: the recipient is a
+/// smart account whose trades are paymaster-sponsored, so it never needs gas.
+/// This request backs the mainnet-capable `/fund_bonus_wallet` route.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct FundBonusWalletRequest {
+    /// Smart-account address to fund (counterfactual is fine)
+    pub wallet_address: String,
+    /// USDC amount in 6 decimals (e.g., "50000000" for 50 USDC)
+    pub usdc_amount: String,
+}
+
 /// Update a beacon using ECDSA signature from the beaconator wallet
 ///
 /// This endpoint signs the measurement with the beaconator wallet and submits
