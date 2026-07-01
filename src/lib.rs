@@ -1,7 +1,7 @@
 use alloy::{
     primitives::{Address, Bytes, utils::format_ether},
     providers::Provider,
-    signers::{Signer, local::PrivateKeySigner},
+    signers::{Signer, aws::AwsSigner, local::PrivateKeySigner},
 };
 use rocket::{Build, Rocket};
 use rocket_okapi::{openapi_get_routes_spec, settings::OpenApiSettings};
@@ -22,7 +22,7 @@ use crate::models::{
 use crate::services::beacon::BeaconTypeRegistry;
 use crate::services::beacon::ComponentFactoryRegistry;
 use crate::services::beacon::RecipeRegistry;
-use crate::services::wallet::{WalletManager, WalletSyncService};
+use crate::services::wallet::{PoolSigner, WalletManager, WalletSyncService};
 use rocket::{Request, catch, catchers};
 
 // Provider type with embedded wallet for signing transactions
@@ -442,23 +442,55 @@ pub async fn create_rocket() -> Rocket<Build> {
         }
     }
 
-    // Parse wallet private keys from WALLET_PRIVATE_KEYS env var
-    let wallet_keys_str =
-        env::var("WALLET_PRIVATE_KEYS").expect("WALLET_PRIVATE_KEYS environment variable not set");
-    let wallet_signers: Vec<PrivateKeySigner> = wallet_keys_str
-        .split(',')
-        .map(|k| {
-            k.trim()
-                .parse::<PrivateKeySigner>()
-                .unwrap_or_else(|e| panic!("Invalid private key in WALLET_PRIVATE_KEYS: {e}"))
-                .with_chain_id(Some(chain_id))
-        })
-        .collect();
+    // Build the gas-payer pool signers. Production uses WALLET_KMS_KEY_IDS
+    // (comma-separated KMS key ids / aliases / ARNs); the private key never
+    // leaves KMS. Dev/CI falls back to WALLET_PRIVATE_KEYS (comma-separated raw
+    // keys) when WALLET_KMS_KEY_IDS is unset, so the suite runs without KMS.
+    let pool_signers: Vec<PoolSigner> = if let Ok(kms_ids) = env::var("WALLET_KMS_KEY_IDS") {
+        // aws-config resolves credentials from the standard chain (the ECS task
+        // role on Fargate); one shared KMS client is reused across pool signers.
+        let aws_cfg = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let kms_client = aws_sdk_kms::Client::new(&aws_cfg);
+        let mut signers = Vec::new();
+        for id in kms_ids.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let signer = AwsSigner::new(kms_client.clone(), id.to_string(), Some(chain_id))
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("Failed to build AwsSigner for WALLET_KMS_KEY_IDS entry '{id}': {e}")
+                });
+            signers.push(PoolSigner::Kms(signer));
+        }
+        tracing::info!(
+            "Loaded {} wallet signers from WALLET_KMS_KEY_IDS (KMS)",
+            signers.len()
+        );
+        signers
+    } else {
+        let wallet_keys_str = env::var("WALLET_PRIVATE_KEYS").expect(
+            "Either WALLET_KMS_KEY_IDS or WALLET_PRIVATE_KEYS must be set for the wallet pool",
+        );
+        let signers: Vec<PoolSigner> = wallet_keys_str
+            .split(',')
+            .map(|k| {
+                PoolSigner::Local(
+                    k.trim()
+                        .parse::<PrivateKeySigner>()
+                        .unwrap_or_else(|e| {
+                            panic!("Invalid private key in WALLET_PRIVATE_KEYS: {e}")
+                        })
+                        .with_chain_id(Some(chain_id)),
+                )
+            })
+            .collect();
+        tracing::info!(
+            "Loaded {} wallet signers from WALLET_PRIVATE_KEYS (local)",
+            signers.len()
+        );
+        signers
+    };
 
-    tracing::info!(
-        "Loaded {} wallet signers from WALLET_PRIVATE_KEYS",
-        wallet_signers.len()
-    );
+    // Pool addresses, derived once for the Redis sync below (works for both backends).
+    let pool_addresses: Vec<Address> = pool_signers.iter().map(PoolSigner::address).collect();
 
     // Initialize WalletManager (REQUIRED for contract operations)
     let mut wallet_config = WalletManagerConfig::from_env().unwrap_or_else(|e| {
@@ -469,7 +501,7 @@ pub async fn create_rocket() -> Rocket<Build> {
     // Set chain_id from the already-determined chain_id
     wallet_config.chain_id = Some(chain_id);
 
-    let wallet_manager = WalletManager::new(wallet_config, wallet_signers.clone())
+    let wallet_manager = WalletManager::new(wallet_config, pool_signers)
         .await
         .unwrap_or_else(|e| {
             panic!("WalletManager failed to initialize: {e}. Check Redis connectivity.")
@@ -477,8 +509,8 @@ pub async fn create_rocket() -> Rocket<Build> {
 
     tracing::info!("WalletManager initialized for contract operations");
 
-    // Sync local wallet signers to Redis pool on startup
-    let sync_service = WalletSyncService::new(&wallet_signers, wallet_manager.pool());
+    // Sync pool wallet addresses to Redis pool on startup
+    let sync_service = WalletSyncService::new(&pool_addresses, wallet_manager.pool());
     match sync_service.sync().await {
         Ok(result) => {
             tracing::info!(

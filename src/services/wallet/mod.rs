@@ -12,7 +12,7 @@ pub mod pool;
 pub mod sync;
 
 pub use lock::{LockHeartbeat, WalletLock, WalletLockGuard};
-pub use manager::{WalletHandle, WalletManager, WalletSigner};
+pub use manager::{PoolSigner, WalletHandle, WalletManager, WalletSigner};
 pub use mock::{MockWalletHandle, MockWalletManager};
 pub use pool::WalletPool;
 pub use sync::{SyncResult, WalletSyncService};

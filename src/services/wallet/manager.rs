@@ -11,15 +11,52 @@ use super::{WalletLock, WalletLockGuard, WalletPool};
 use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, B256};
 use alloy::providers::ProviderBuilder;
+use alloy::signers::aws::AwsSigner;
 use alloy::signers::local::PrivateKeySigner;
 use alloy::signers::{Error as SignerError, Signature, Signer};
 
 use crate::AlloyProvider;
 use crate::models::wallet::{WalletInfo, WalletManagerConfig};
 
-/// Local private key signer wrapper
+/// A gas-payer pool signer: either a local private key (dev/CI) or an AWS KMS
+/// key (production). The pool is keyed by Ethereum address regardless of backend.
 #[derive(Clone)]
-pub struct WalletSigner(PrivateKeySigner);
+pub enum PoolSigner {
+    /// Local secp256k1 private key held in memory.
+    Local(PrivateKeySigner),
+    /// AWS KMS `ECC_SECG_P256K1` key; the private key never leaves KMS.
+    Kms(AwsSigner),
+}
+
+impl PoolSigner {
+    /// The Ethereum address of this signer (cached at construction for KMS).
+    pub fn address(&self) -> Address {
+        match self {
+            PoolSigner::Local(s) => s.address(),
+            PoolSigner::Kms(s) => s.address(),
+        }
+    }
+
+    /// Sign a 32-byte hash with the underlying backend.
+    pub async fn sign_hash(&self, hash: &B256) -> Result<Signature, SignerError> {
+        match self {
+            PoolSigner::Local(s) => s.sign_hash(hash).await,
+            PoolSigner::Kms(s) => s.sign_hash(hash).await,
+        }
+    }
+
+    /// Wrap this signer into an `EthereumWallet` for transaction sending.
+    fn ethereum_wallet(&self) -> EthereumWallet {
+        match self {
+            PoolSigner::Local(s) => EthereumWallet::from(s.clone()),
+            PoolSigner::Kms(s) => EthereumWallet::from(s.clone()),
+        }
+    }
+}
+
+/// Pool signer wrapper (local key or KMS).
+#[derive(Clone)]
+pub struct WalletSigner(PoolSigner);
 
 impl WalletSigner {
     /// Get the address of the signer
@@ -87,7 +124,7 @@ impl WalletHandle {
     /// # Returns
     /// An AlloyProvider configured with this wallet's signer
     pub fn build_provider(&self, rpc_url: &str) -> Result<AlloyProvider, String> {
-        let wallet = EthereumWallet::from(self.signer.0.clone());
+        let wallet = self.signer.0.ethereum_wallet();
 
         let provider = ProviderBuilder::new().wallet(wallet).connect_http(
             rpc_url
@@ -112,8 +149,8 @@ pub struct WalletManager {
     config: Option<WalletManagerConfig>,
     /// Whether this is a test stub that will panic on use
     is_test_stub: bool,
-    /// Local private key signers keyed by address
-    signers: HashMap<Address, PrivateKeySigner>,
+    /// Pool signers (local key or KMS) keyed by address
+    signers: HashMap<Address, PoolSigner>,
 }
 
 impl WalletManager {
@@ -121,10 +158,10 @@ impl WalletManager {
     ///
     /// # Arguments
     /// * `config` - Configuration for the wallet manager
-    /// * `signers` - Local private key signers for the wallet pool
+    /// * `signers` - Pool signers (local key or KMS) for the wallet pool
     pub async fn new(
         config: WalletManagerConfig,
-        signers: Vec<PrivateKeySigner>,
+        signers: Vec<PoolSigner>,
     ) -> Result<Self, String> {
         let instance_id = config
             .instance_id
@@ -133,7 +170,7 @@ impl WalletManager {
 
         let pool = WalletPool::new(&config.redis_url, instance_id).await?;
 
-        let signers_map: HashMap<Address, PrivateKeySigner> =
+        let signers_map: HashMap<Address, PoolSigner> =
             signers.into_iter().map(|s| (s.address(), s)).collect();
 
         Ok(Self {
@@ -177,8 +214,10 @@ impl WalletManager {
         let instance_id = format!("test-{}", uuid::Uuid::new_v4());
         let pool = WalletPool::with_prefix(redis_url, instance_id, prefix).await?;
 
-        let signers_map: HashMap<Address, PrivateKeySigner> =
-            signers.into_iter().map(|s| (s.address(), s)).collect();
+        let signers_map: HashMap<Address, PoolSigner> = signers
+            .into_iter()
+            .map(|s| (s.address(), PoolSigner::Local(s)))
+            .collect();
 
         Ok(Self {
             pool: Some(pool),
