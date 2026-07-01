@@ -199,7 +199,10 @@ pub struct ProviderConfig {
 #[derive(Clone)]
 pub struct WalletConfig {
     pub manager: Arc<WalletManager>,
-    pub funding_address: Address,
+    /// Address of the PRIVATE_KEY measurement signer. This wallet only signs EIP-712
+    /// digests — it never holds or sends funds. All on-chain sends (gas + guest
+    /// funding transfers) go through the KMS-capable pool wallets instead.
+    pub signer_address: Address,
     /// Signer from PRIVATE_KEY - used for ECDSA beacon signatures.
     /// This wallet's address must match the designated signer configured
     /// in each ECDSA beacon's verifier adapter.

@@ -92,7 +92,9 @@ Create a `.env` file in the project root with the following variables:
 # Arbitrum RPC URL (Arbitrum One mainnet shown; replace with your private endpoint)
 RPC_URL=https://arb1.arbitrum.io/rpc
 
-# Private key for the wallet that will pay for gas (without 0x prefix)
+# Private key for the EIP-712 measurement signer (without 0x prefix). This
+# wallet signs beacon-update digests only — it never holds or sends funds.
+# Gas and guest funding transfers come from the WALLET_PRIVATE_KEYS pool.
 PRIVATE_KEY=your_private_key_here_without_0x_prefix
 
 # Contract addresses (replace with actual deployed contract addresses)

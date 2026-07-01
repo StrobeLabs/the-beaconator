@@ -113,6 +113,14 @@ impl PrefixedRedisKeys {
         format!("{}wallet_lock:{address}", self.prefix)
     }
 
+    /// Lock key serializing ECDSA updates for one beacon: beacon_update_lock:{beacon}.
+    /// The verifier nonce is per-beacon, so concurrent updates for the same beacon
+    /// race on it (the later-nonced tx can land first and revert the other); this
+    /// lock orders them. Distinct namespace from wallet_lock.
+    pub fn beacon_update_lock(&self, beacon: &Address) -> String {
+        format!("{}beacon_update_lock:{beacon}", self.prefix)
+    }
+
     /// Mapping from beacon address to designated wallet: beacon_wallet:{beacon}
     pub fn beacon_wallet(&self, beacon: &Address) -> String {
         format!("{}beacon_wallet:{beacon}", self.prefix)

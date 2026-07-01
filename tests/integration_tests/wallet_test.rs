@@ -169,13 +169,13 @@ mod tests {
         let (app_state, _anvil) = create_isolated_test_app_state().await;
 
         // Verify test setup
-        assert_ne!(app_state.wallets.funding_address, Address::ZERO);
+        assert_ne!(app_state.wallets.signer_address, Address::ZERO);
         assert_ne!(app_state.contracts.usdc, Address::ZERO);
 
         // Check that we can get the balance (even if it's zero)
         let balance_result = TestUtils::get_balance(
             &app_state.provider.read_provider,
-            app_state.wallets.funding_address,
+            app_state.wallets.signer_address,
         )
         .await;
         assert!(balance_result.is_ok());

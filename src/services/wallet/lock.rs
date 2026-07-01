@@ -76,6 +76,26 @@ impl WalletLock {
         }
     }
 
+    /// Create a lock that serializes ECDSA updates for one BEACON (the locked
+    /// address is the beacon, not a pool wallet). Same acquire/heartbeat/release
+    /// semantics as a wallet lock, distinct Redis key namespace.
+    pub fn for_beacon_update(
+        conn: ConnectionManager,
+        beacon_address: Address,
+        instance_id: String,
+        ttl: Duration,
+        keys: &PrefixedRedisKeys,
+    ) -> Self {
+        let lock_key = keys.beacon_update_lock(&beacon_address);
+        Self {
+            conn,
+            wallet_address: beacon_address,
+            instance_id,
+            lock_key,
+            ttl,
+        }
+    }
+
     /// Get a Redis connection (cheap clone of the shared auto-reconnecting manager)
     fn get_conn(&self) -> ConnectionManager {
         self.conn.clone()
@@ -461,6 +481,76 @@ mod tests {
         ConnectionManager::new(client)
             .await
             .expect("Failed to connect to Redis")
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Redis"]
+    async fn test_beacon_update_lock_serializes_per_beacon() {
+        let test_prefix = format!("test-{}:", uuid::Uuid::new_v4());
+        let keys = PrefixedRedisKeys::new(&test_prefix);
+        let conn = test_conn().await;
+
+        let beacon_a = Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
+        let beacon_b = Address::from_str("0x2222222222222222222222222222222222222222").unwrap();
+        let ttl = Duration::from_secs(10);
+
+        let lock_a = WalletLock::for_beacon_update(
+            conn.clone(),
+            beacon_a,
+            "instance-1".to_string(),
+            ttl,
+            &keys,
+        );
+        let guard_a = lock_a
+            .acquire(1, Duration::from_millis(50))
+            .await
+            .expect("first acquire for beacon A should succeed");
+
+        // A second updater (different instance) must NOT get the same beacon.
+        let lock_a2 = WalletLock::for_beacon_update(
+            conn.clone(),
+            beacon_a,
+            "instance-2".to_string(),
+            ttl,
+            &keys,
+        );
+        assert!(
+            lock_a2.try_acquire().await.is_err(),
+            "concurrent update for the same beacon must be blocked"
+        );
+
+        // A DIFFERENT beacon is independent.
+        let lock_b = WalletLock::for_beacon_update(
+            conn.clone(),
+            beacon_b,
+            "instance-2".to_string(),
+            ttl,
+            &keys,
+        );
+        let guard_b = lock_b
+            .try_acquire()
+            .await
+            .expect("different beacon must not be blocked");
+
+        // The beacon namespace must not collide with the wallet lock for the
+        // same address (a beacon lock must never block a pool-wallet lock).
+        let wallet_lock_same_addr =
+            WalletLock::with_keys(conn.clone(), beacon_a, "instance-3".to_string(), ttl, &keys);
+        let guard_w = wallet_lock_same_addr
+            .try_acquire()
+            .await
+            .expect("wallet lock namespace must be independent of beacon locks");
+
+        guard_a.release().await.expect("release A");
+        guard_b.release().await.expect("release B");
+        guard_w.release().await.expect("release W");
+
+        // After release, the beacon is acquirable again.
+        let guard_a2 = lock_a2
+            .try_acquire()
+            .await
+            .expect("beacon lock must be acquirable after release");
+        guard_a2.release().await.expect("release A2");
     }
 
     #[tokio::test]

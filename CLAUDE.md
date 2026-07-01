@@ -138,8 +138,8 @@ Copy `env.example` to `.env.local` (preferred) or `.env` and configure. Required
 RPC_URL=https://arb1.arbitrum.io/rpc          # Arbitrum RPC URL
 ENV=mainnet|testnet|localnet                  # mainnet=Arbitrum One (42161), testnet=Arbitrum Sepolia (421614)
 BEACONATOR_ACCESS_TOKEN=your_secret_token     # API authentication
-PRIVATE_KEY=...                               # Funding wallet private key (no 0x prefix)
-WALLET_PRIVATE_KEYS=...                       # Comma-separated wallet pool keys
+PRIVATE_KEY=...                               # EIP-712 measurement signer key (no 0x prefix); signs only, holds no funds
+WALLET_PRIVATE_KEYS=...                       # Comma-separated pool keys (gas + guest funding transfers; need ETH + testnet USDC)
 PERPCITY_REGISTRY_ADDRESS=0x...               # BeaconRegistry (beacons@v0.0.1)
 PERP_FACTORY_ADDRESS=0x...                    # PerpFactory (perpcity-contracts@v0.1.0)
 ECDSA_VERIFIER_FACTORY_ADDRESS=0x...          # ECDSAVerifierFactory (beacons@v0.0.1)

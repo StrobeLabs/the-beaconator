@@ -1,7 +1,6 @@
 use alloy::{
-    primitives::{Address, Bytes, utils::format_ether},
-    providers::Provider,
-    signers::{Signer, local::PrivateKeySigner},
+    primitives::{Address, Bytes},
+    signers::{Signer, aws::AwsSigner, local::PrivateKeySigner},
 };
 use rocket::{Build, Rocket};
 use rocket_okapi::{openapi_get_routes_spec, settings::OpenApiSettings};
@@ -22,7 +21,7 @@ use crate::models::{
 use crate::services::beacon::BeaconTypeRegistry;
 use crate::services::beacon::ComponentFactoryRegistry;
 use crate::services::beacon::RecipeRegistry;
-use crate::services::wallet::{WalletManager, WalletSyncService};
+use crate::services::wallet::{PoolSigner, WalletManager, WalletSyncService};
 use rocket::{Request, catch, catchers};
 
 // Provider type with embedded wallet for signing transactions
@@ -144,12 +143,20 @@ fn audit_environment() {
     const SECRET_VARS_REQUIRED: &[&str] = &[
         "RPC_URL",
         "PRIVATE_KEY",
-        "WALLET_PRIVATE_KEYS",
         "BEACONATOR_ACCESS_TOKEN",
         "BEACONATOR_ADMIN_TOKEN",
         "REDIS_URL",
     ];
-    const SECRET_VARS_OPTIONAL: &[&str] = &["SENTRY_DSN", "SAFE_TX_SERVICE_URL"];
+    // The wallet pool takes exactly one of WALLET_KMS_KEY_IDS /
+    // WALLET_KMS_ALIAS_PREFIX / WALLET_PRIVATE_KEYS (checked separately below),
+    // so none is individually required.
+    const SECRET_VARS_OPTIONAL: &[&str] = &[
+        "SENTRY_DSN",
+        "SAFE_TX_SERVICE_URL",
+        "WALLET_PRIVATE_KEYS",
+        "WALLET_KMS_KEY_IDS",
+        "WALLET_KMS_ALIAS_PREFIX",
+    ];
     // Other env vars the-beaconator reads. We don't log their values either; we only
     // check presence (for required) and whitespace cleanliness.
     const OTHER_VARS_REQUIRED: &[&str] = &["ENV"];
@@ -253,6 +260,19 @@ fn audit_environment() {
         }
     }
 
+    // Wallet pool source: exactly one of the three vars must be set. (KMS vars
+    // carry key ids/aliases, not secrets, but the pool cannot start without one.)
+    if env::var("WALLET_KMS_KEY_IDS").is_err()
+        && env::var("WALLET_KMS_ALIAS_PREFIX").is_err()
+        && env::var("WALLET_PRIVATE_KEYS").is_err()
+    {
+        tracing::error!(
+            "wallet pool source missing: set one of WALLET_KMS_KEY_IDS, \
+             WALLET_KMS_ALIAS_PREFIX, or WALLET_PRIVATE_KEYS"
+        );
+        problems += 1;
+    }
+
     if problems == 0 {
         tracing::info!("Pre-flight environment audit: all checks passed");
     } else {
@@ -260,6 +280,28 @@ fn audit_environment() {
             "Pre-flight environment audit: {problems} problem(s) detected; startup will likely fail"
         );
     }
+}
+
+/// Discover gas-payer wallet keys by KMS alias prefix (e.g.
+/// "alias/perpcity/testnet/wallet-") via kms:ListAliases. Returns the matching
+/// alias names, sorted for deterministic pool ordering. Aliases without a
+/// target key are skipped. Requires kms:ListAliases on the caller's role.
+async fn discover_wallet_aliases(client: &aws_sdk_kms::Client, prefix: &str) -> Vec<String> {
+    let mut aliases = Vec::new();
+    let mut pages = client.list_aliases().into_paginator().send();
+    while let Some(page) = pages.next().await {
+        let page = page.unwrap_or_else(|e| panic!("kms:ListAliases failed: {e}"));
+        for entry in page.aliases() {
+            let Some(name) = entry.alias_name() else {
+                continue;
+            };
+            if name.starts_with(prefix) && entry.target_key_id().is_some() {
+                aliases.push(name.to_string());
+            }
+        }
+    }
+    aliases.sort();
+    aliases
 }
 
 pub async fn create_rocket() -> Rocket<Build> {
@@ -413,12 +455,15 @@ pub async fn create_rocket() -> Rocket<Build> {
             .unwrap_or_else(|e| panic!("Failed to build read-only RPC provider: {e}")),
     );
 
-    // Parse the funding wallet private key (ONLY for fund_guest_wallet endpoint)
+    // Parse the measurement signer private key. This signer ONLY signs EIP-712
+    // digests for ECDSA beacon updates — it never holds or sends funds. All
+    // on-chain sends (gas + guest funding transfers) go through the KMS-capable
+    // pool wallets configured below.
     let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY environment variable not set");
 
-    // Get funding wallet address
-    let funding_wallet_address = services::rpc::RpcConfig::get_wallet_address(&private_key)
-        .expect("Failed to get funding wallet address");
+    // Get measurement signer address
+    let signer_address = services::rpc::RpcConfig::get_wallet_address(&private_key)
+        .expect("Failed to get measurement signer address");
 
     // Parse the private key into a signer for ECDSA operations
     let signer = private_key
@@ -426,39 +471,99 @@ pub async fn create_rocket() -> Rocket<Build> {
         .expect("Failed to parse private key into signer")
         .with_chain_id(Some(chain_id));
 
-    // Log funding wallet configuration
-    tracing::info!("Funding wallet configured (for fund_guest_wallet only):");
-    tracing::info!("  - Address: {:?}", funding_wallet_address);
+    // Log measurement signer configuration. No balance check here by design: this
+    // signer holds no funds — the pool wallets carry the float for gas and guest
+    // funding transfers.
+    tracing::info!("Measurement signer configured (EIP-712 signing only, holds no funds):");
+    tracing::info!("  - Address: {:?}", signer_address);
     tracing::info!("  - Chain ID: {:?}", chain_id);
     tracing::info!("  - ENV: {}", env_type);
 
-    // Check funding wallet balance for debugging
-    match read_provider.get_balance(funding_wallet_address).await {
-        Ok(balance) => {
-            tracing::info!("Funding wallet balance: {} ETH", format_ether(balance));
-        }
-        Err(e) => {
-            tracing::warn!("Failed to get funding wallet balance: {}", e);
-        }
-    }
+    // Build the gas-payer pool signers, in precedence order:
+    //   1. WALLET_KMS_KEY_IDS - explicit comma-separated KMS key ids / aliases / ARNs.
+    //   2. WALLET_KMS_ALIAS_PREFIX - discover pool keys by KMS alias prefix
+    //      (e.g. "alias/perpcity/testnet/wallet-") via kms:ListAliases. Expanding
+    //      the pool is then just `kms-wallet create` + fund + service restart:
+    //      no env or IAM change when the grant uses a kms:RequestAlias condition.
+    //   3. WALLET_PRIVATE_KEYS - comma-separated raw keys (dev/CI, no KMS access).
+    // For 1 and 2 the private key never leaves KMS.
+    let explicit_kms_ids = env::var("WALLET_KMS_KEY_IDS").ok();
+    let kms_alias_prefix = env::var("WALLET_KMS_ALIAS_PREFIX").ok();
+    let pool_signers: Vec<PoolSigner> = if explicit_kms_ids.is_some() || kms_alias_prefix.is_some()
+    {
+        // aws-config resolves credentials from the standard chain (the ECS task
+        // role on Fargate); one shared KMS client is reused across pool signers.
+        let aws_cfg = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let kms_client = aws_sdk_kms::Client::new(&aws_cfg);
 
-    // Parse wallet private keys from WALLET_PRIVATE_KEYS env var
-    let wallet_keys_str =
-        env::var("WALLET_PRIVATE_KEYS").expect("WALLET_PRIVATE_KEYS environment variable not set");
-    let wallet_signers: Vec<PrivateKeySigner> = wallet_keys_str
-        .split(',')
-        .map(|k| {
-            k.trim()
-                .parse::<PrivateKeySigner>()
-                .unwrap_or_else(|e| panic!("Invalid private key in WALLET_PRIVATE_KEYS: {e}"))
-                .with_chain_id(Some(chain_id))
-        })
-        .collect();
+        let (ids, source): (Vec<String>, &str) = if let Some(kms_ids) = explicit_kms_ids {
+            let ids: Vec<String> = kms_ids
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect();
+            // Fail fast on a present-but-blank value ("", ","), which would
+            // otherwise boot the service with an empty wallet pool.
+            if ids.is_empty() {
+                panic!("WALLET_KMS_KEY_IDS is set but contains no usable KMS key ids");
+            }
+            (ids, "WALLET_KMS_KEY_IDS")
+        } else {
+            let prefix = kms_alias_prefix.unwrap();
+            let prefix = prefix.trim();
+            // A blank prefix would starts_with-match EVERY alias in the account.
+            if prefix.is_empty() {
+                panic!("WALLET_KMS_ALIAS_PREFIX is set but blank");
+            }
+            let ids = discover_wallet_aliases(&kms_client, prefix).await;
+            if ids.is_empty() {
+                panic!("WALLET_KMS_ALIAS_PREFIX '{prefix}' matched no KMS aliases");
+            }
+            (ids, "WALLET_KMS_ALIAS_PREFIX")
+        };
 
-    tracing::info!(
-        "Loaded {} wallet signers from WALLET_PRIVATE_KEYS",
-        wallet_signers.len()
-    );
+        let mut signers = Vec::new();
+        for id in &ids {
+            let signer = AwsSigner::new(kms_client.clone(), id.clone(), Some(chain_id))
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("Failed to build AwsSigner for {source} entry '{id}': {e}")
+                });
+            tracing::info!("Pool wallet {} <- {id} (KMS)", signer.address());
+            signers.push(PoolSigner::Kms(signer));
+        }
+        tracing::info!(
+            "Loaded {} wallet signers from {source} (KMS)",
+            signers.len()
+        );
+        signers
+    } else {
+        let wallet_keys_str = env::var("WALLET_PRIVATE_KEYS").expect(
+            "One of WALLET_KMS_KEY_IDS, WALLET_KMS_ALIAS_PREFIX, or WALLET_PRIVATE_KEYS must be set for the wallet pool",
+        );
+        let signers: Vec<PoolSigner> = wallet_keys_str
+            .split(',')
+            .map(|k| {
+                PoolSigner::Local(
+                    k.trim()
+                        .parse::<PrivateKeySigner>()
+                        .unwrap_or_else(|e| {
+                            panic!("Invalid private key in WALLET_PRIVATE_KEYS: {e}")
+                        })
+                        .with_chain_id(Some(chain_id)),
+                )
+            })
+            .collect();
+        tracing::info!(
+            "Loaded {} wallet signers from WALLET_PRIVATE_KEYS (local)",
+            signers.len()
+        );
+        signers
+    };
+
+    // Pool addresses, derived once for the Redis sync below (works for both backends).
+    let pool_addresses: Vec<Address> = pool_signers.iter().map(PoolSigner::address).collect();
 
     // Initialize WalletManager (REQUIRED for contract operations)
     let mut wallet_config = WalletManagerConfig::from_env().unwrap_or_else(|e| {
@@ -469,7 +574,7 @@ pub async fn create_rocket() -> Rocket<Build> {
     // Set chain_id from the already-determined chain_id
     wallet_config.chain_id = Some(chain_id);
 
-    let wallet_manager = WalletManager::new(wallet_config, wallet_signers.clone())
+    let wallet_manager = WalletManager::new(wallet_config, pool_signers)
         .await
         .unwrap_or_else(|e| {
             panic!("WalletManager failed to initialize: {e}. Check Redis connectivity.")
@@ -477,8 +582,8 @@ pub async fn create_rocket() -> Rocket<Build> {
 
     tracing::info!("WalletManager initialized for contract operations");
 
-    // Sync local wallet signers to Redis pool on startup
-    let sync_service = WalletSyncService::new(&wallet_signers, wallet_manager.pool());
+    // Sync pool wallet addresses to Redis pool on startup
+    let sync_service = WalletSyncService::new(&pool_addresses, wallet_manager.pool());
     match sync_service.sync().await {
         Ok(result) => {
             tracing::info!(
@@ -735,7 +840,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         },
         wallets: WalletConfig {
             manager: std::sync::Arc::new(wallet_manager),
-            funding_address: funding_wallet_address,
+            signer_address,
             signer,
             usdc_transfer_limit,
             eth_transfer_limit,

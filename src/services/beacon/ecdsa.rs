@@ -1,13 +1,71 @@
 use alloy::primitives::{Address, B256, Bytes, U256};
+use alloy::providers::Provider;
 use alloy::signers::Signer;
 use alloy::sol_types::SolType;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tracing;
 
+use crate::ReadOnlyProvider;
 use crate::models::{AppState, UpdateBeaconWithEcdsaRequest};
 use crate::routes::{IBeacon, IEcdsaVerifier};
+use crate::services::wallet::{LockHeartbeat, WalletLockGuard};
+
+/// How long a sent-but-unresolved update tx keeps its beacon lock alive while a
+/// background watcher polls for the receipt, and how often it polls.
+const PENDING_TX_LOCK_GRACE: Duration = Duration::from_secs(240);
+const PENDING_TX_POLL_INTERVAL: Duration = Duration::from_secs(3);
+/// Per-poll RPC timeout so one hung request cannot stall the watcher loop
+/// (deadline is only checked between polls).
+const PENDING_TX_POLL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Keep the per-beacon update lock held while a SENT update tx is still
+/// unresolved, so a second update cannot race it on the verifier nonce. The
+/// lock is released (guard drop) as soon as the tx gets a receipt, or when the
+/// grace window ends; if this instance dies, the lock's Redis TTL expires it.
+fn hold_beacon_lock_until_receipt(
+    lock: (LockHeartbeat, WalletLockGuard),
+    provider: Arc<ReadOnlyProvider>,
+    tx_hash: B256,
+    beacon_address: Address,
+) {
+    tokio::spawn(async move {
+        // Tuple order matches the manager's return: heartbeat drops before the
+        // guard releases when this task ends.
+        let _lock = lock;
+        let deadline = tokio::time::Instant::now() + PENDING_TX_LOCK_GRACE;
+        while tokio::time::Instant::now() < deadline {
+            match timeout(
+                PENDING_TX_POLL_TIMEOUT,
+                provider.get_transaction_receipt(tx_hash),
+            )
+            .await
+            {
+                Ok(Ok(Some(_))) => {
+                    tracing::info!(
+                        "Pending update tx {tx_hash} for beacon {beacon_address} resolved; releasing beacon update lock"
+                    );
+                    return;
+                }
+                Ok(Ok(None)) => {}
+                Ok(Err(e)) => {
+                    tracing::warn!("Receipt poll for pending update tx {tx_hash} failed: {e}");
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Receipt poll for pending update tx {tx_hash} timed out after {PENDING_TX_POLL_TIMEOUT:?}"
+                    );
+                }
+            }
+            tokio::time::sleep(PENDING_TX_POLL_INTERVAL).await;
+        }
+        tracing::warn!(
+            "Releasing beacon {beacon_address} update lock: tx {tx_hash} still unresolved after {PENDING_TX_LOCK_GRACE:?} grace window"
+        );
+    });
+}
 
 /// Outcome of an ECDSA beacon update.
 ///
@@ -26,13 +84,14 @@ pub struct EcdsaUpdateOutcome {
 /// 1. Gets the verifier address from the beacon via `verifier()`
 /// 2. Gets the designated signer from the ECDSAVerifier via `SIGNER()`
 /// 3. Verifies PRIVATE_KEY signer matches designated signer
-/// 4. Acquires any available wallet from pool for transaction sending
-/// 5. Generates a nonce from the current timestamp
-/// 6. Gets the EIP-712 digest from the verifier via `digest(uint256[], uint256)`
-/// 7. Signs the digest with PRIVATE_KEY signer
-/// 8. Packs the signature as r || s || v (65 bytes)
-/// 9. ABI-encodes the inputs as (uint256[] measurement, uint256 nonce)
-/// 10. Calls beacon.update(signature, inputs)
+/// 4. Acquires the per-beacon update lock (serializes verifier-nonce use)
+/// 5. Acquires any available wallet from pool for transaction sending
+/// 6. Generates a nonce from the current timestamp
+/// 7. Gets the EIP-712 digest from the verifier via `digest(uint256[], uint256)`
+/// 8. Signs the digest with PRIVATE_KEY signer
+/// 9. Packs the signature as r || s || v (65 bytes)
+/// 10. ABI-encodes the inputs as (uint256[] measurement, uint256 nonce)
+/// 11. Calls beacon.update(signature, inputs)
 pub async fn update_beacon_with_ecdsa(
     state: &AppState,
     request: UpdateBeaconWithEcdsaRequest,
@@ -98,7 +157,19 @@ pub async fn update_beacon_with_ecdsa(
         beacon_address
     );
 
-    // 4. Acquire any available wallet from pool for sending the transaction
+    // 4. Serialize updates per beacon BEFORE taking a pool wallet: the verifier
+    // nonce is per-beacon, and two in-flight updates (via different gas payers)
+    // can land out of nonce order, reverting the loser on-chain. The guard is
+    // held through receipt-wait so the next update reads post-landing state.
+    // Lock order is always beacon -> wallet, so no deadlock is possible; taking
+    // the beacon lock first also avoids parking a pool wallet while queued.
+    let beacon_update_lock = state
+        .wallets
+        .manager
+        .acquire_beacon_update_lock(beacon_address)
+        .await?;
+
+    // 5. Acquire any available wallet from pool for sending the transaction
     let wallet_handle = state
         .wallets
         .manager
@@ -117,7 +188,7 @@ pub async fn update_beacon_with_ecdsa(
         .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
-    // 5. Generate nonce from high-resolution timestamp (nanoseconds) to avoid collisions
+    // 6. Generate nonce from high-resolution timestamp (nanoseconds) to avoid collisions
     let nonce = U256::from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -127,7 +198,7 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Using nonce (timestamp_nanos): {}", nonce);
 
-    // 6. Get EIP-712 digest from verifier (measurement is uint256[])
+    // 7. Get EIP-712 digest from verifier (measurement is uint256[])
     let digest_raw = verifier
         .digest(measurement_array.clone(), nonce)
         .call()
@@ -137,7 +208,7 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Got EIP-712 digest: {:?}", digest);
 
-    // 7. Sign the digest with PRIVATE_KEY signer (state.wallets.signer)
+    // 8. Sign the digest with PRIVATE_KEY signer (state.wallets.signer)
     let signature = state
         .wallets
         .signer
@@ -147,7 +218,7 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Signed digest successfully");
 
-    // 8. Pack signature as r || s || v (65 bytes)
+    // 9. Pack signature as r || s || v (65 bytes)
     // Alloy signature.as_bytes() returns [r (32 bytes) | s (32 bytes) | v (1 byte)]
     let sig_bytes = Bytes::from(signature.as_bytes().to_vec());
 
@@ -165,7 +236,7 @@ pub async fn update_beacon_with_ecdsa(
         signature.s()
     );
 
-    // 9. ABI-encode inputs as (uint256[] measurement, uint256 nonce)
+    // 10. ABI-encode inputs as (uint256[] measurement, uint256 nonce)
     // Use abi_encode_params to match Solidity's abi.encode(uint256[], uint256)
     let inputs = <(
         alloy::sol_types::sol_data::Array<alloy::sol_types::sol_data::Uint<256>>,
@@ -186,7 +257,7 @@ pub async fn update_beacon_with_ecdsa(
         nonce
     );
 
-    // 10. Simulate the update call first to get revert reason if it would fail
+    // 11. Simulate the update call first to get revert reason if it would fail
     let beacon_write = IBeacon::new(beacon_address, &provider);
     match beacon_write
         .update(sig_bytes.clone(), inputs_bytes.clone())
@@ -239,7 +310,7 @@ pub async fn update_beacon_with_ecdsa(
         }
     }
 
-    // 11. Send the actual transaction
+    // 12. Send the actual transaction
     tracing::info!(
         "Sending update transaction to beacon with wallet {}",
         tx_wallet_address
@@ -256,20 +327,42 @@ pub async fn update_beacon_with_ecdsa(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Transaction hash: {:?}", tx_hash);
 
-    // 12. Wait for confirmation with timeout
+    // 13. Wait for confirmation with timeout
     let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
         Ok(Ok(receipt)) => {
             tracing::info!("Transaction confirmed via get_receipt()");
             receipt
         }
         Ok(Err(e)) => {
-            let error_msg = format!("Failed to get transaction receipt: {e}");
-            tracing::error!("{}", error_msg);
-            return Err(error_msg);
+            // The tx WAS sent; the receipt fetch failed but it may still land.
+            // Keep the beacon lock alive in the background so no second update
+            // races the pending one on the verifier nonce, and return the hash
+            // as sent-but-unconfirmed so the caller polls instead of re-sending.
+            hold_beacon_lock_until_receipt(
+                beacon_update_lock,
+                state.provider.read_provider.clone(),
+                tx_hash,
+                beacon_address,
+            );
+            tracing::error!(
+                "Failed to get receipt for sent update tx {tx_hash}: {e} - returning unconfirmed"
+            );
+            return Ok(EcdsaUpdateOutcome {
+                tx_hash,
+                confirmed: false,
+            });
         }
         Err(_) => {
             // The transaction WAS sent; it may still confirm. Report it as
-            // sent-but-unconfirmed so the caller can poll instead of re-sending.
+            // sent-but-unconfirmed so the caller can poll instead of re-sending,
+            // and keep the beacon lock alive until the tx resolves so a retry
+            // cannot race it on the verifier nonce.
+            hold_beacon_lock_until_receipt(
+                beacon_update_lock,
+                state.provider.read_provider.clone(),
+                tx_hash,
+                beacon_address,
+            );
             tracing::warn!(
                 "Timeout waiting for transaction {tx_hash} receipt — returning unconfirmed"
             );
@@ -284,7 +377,7 @@ pub async fn update_beacon_with_ecdsa(
         }
     };
 
-    // 13. Validate transaction status
+    // 14. Validate transaction status
     if !receipt.status() {
         let error_msg = format!("update() transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
@@ -293,7 +386,7 @@ pub async fn update_beacon_with_ecdsa(
         return Err(error_msg);
     }
 
-    // 14. Validate IndexUpdated event was emitted
+    // 15. Validate IndexUpdated event was emitted
     let index_updated_found = receipt.inner.logs().iter().any(|log| {
         // IndexUpdated event signature: keccak256("IndexUpdated(uint256)")
         log.address() == beacon_address

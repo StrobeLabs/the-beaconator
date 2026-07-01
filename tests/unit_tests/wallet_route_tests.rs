@@ -169,6 +169,7 @@ async fn test_fund_wallet_eth_exceeds_limit() {
 }
 
 #[tokio::test]
+#[ignore = "requires WalletManager with Redis"]
 async fn test_fund_wallet_zero_amounts() {
     let test_state = create_test_state().await;
     let state = State::from(&test_state);
@@ -187,6 +188,7 @@ async fn test_fund_wallet_zero_amounts() {
 }
 
 #[tokio::test]
+#[ignore = "requires WalletManager with Redis"]
 async fn test_fund_wallet_valid_format_network_failure() {
     let test_state = create_test_state().await;
     let state = State::from(&test_state);
@@ -240,6 +242,7 @@ async fn test_fund_wallet_scientific_notation() {
 }
 
 #[tokio::test]
+#[ignore = "requires WalletManager with Redis"]
 async fn test_fund_wallet_address_with_mixed_case() {
     let test_state = create_test_state().await;
     let state = State::from(&test_state);
@@ -320,6 +323,7 @@ async fn test_fund_wallet_disabled_on_unknown_production_chain() {
 }
 
 #[tokio::test]
+#[ignore = "requires WalletManager with Redis"]
 async fn test_fund_wallet_allowed_on_arbitrum_sepolia() {
     // chain_id 421614 = Arbitrum Sepolia. Guardrail must NOT fire — we should fall through
     // to the normal handler and (with the test stub provider) bottom out somewhere later.

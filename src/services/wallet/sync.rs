@@ -1,25 +1,25 @@
 //! Wallet sync service for syncing local wallets to Redis pool
 //!
-//! This module provides [`WalletSyncService`] which synchronizes wallets from
-//! local private key signers to the Redis wallet pool. It handles adding new
-//! wallets while preserving existing wallet state (status and designated beacons).
+//! This module provides [`WalletSyncService`] which synchronizes the pool wallet
+//! addresses (local key or KMS backed) to the Redis wallet pool. It handles
+//! adding new wallets while preserving existing wallet state (status and
+//! designated beacons).
 //!
 //! # Example
 //!
 //! ```rust,ignore
 //! use the_beaconator::services::wallet::{WalletPool, WalletSyncService};
-//! use alloy::signers::local::PrivateKeySigner;
+//! use alloy::primitives::Address;
 //!
-//! let signers: Vec<PrivateKeySigner> = vec![/* ... */];
+//! let addresses: Vec<Address> = vec![/* ... */];
 //! let pool = WalletPool::new("redis://localhost:6379", "instance-1").await?;
-//! let sync_service = WalletSyncService::new(&signers, &pool);
+//! let sync_service = WalletSyncService::new(&addresses, &pool);
 //!
 //! let result = sync_service.sync().await?;
 //! println!("Added {} wallets, {} unchanged", result.added.len(), result.unchanged.len());
 //! ```
 
 use alloy::primitives::Address;
-use alloy::signers::local::PrivateKeySigner;
 
 use crate::models::wallet::{WalletInfo, WalletStatus};
 use crate::services::wallet::WalletPool;
@@ -177,9 +177,9 @@ impl SyncResult {
     }
 }
 
-/// Service for syncing local wallet signers to Redis pool
+/// Service for syncing pool wallet addresses to Redis pool
 pub struct WalletSyncService<'a> {
-    signers: &'a [PrivateKeySigner],
+    addresses: &'a [Address],
     pool: &'a WalletPool,
 }
 
@@ -188,10 +188,10 @@ impl<'a> WalletSyncService<'a> {
     ///
     /// # Arguments
     ///
-    /// * `signers` - Local private key signers to sync to the pool
+    /// * `addresses` - Pool wallet addresses to sync to the pool
     /// * `pool` - Reference to Redis wallet pool for storage
-    pub fn new(signers: &'a [PrivateKeySigner], pool: &'a WalletPool) -> Self {
-        Self { signers, pool }
+    pub fn new(addresses: &'a [Address], pool: &'a WalletPool) -> Self {
+        Self { addresses, pool }
     }
 
     /// Sync local wallet signers to the Redis pool
@@ -210,8 +210,7 @@ impl<'a> WalletSyncService<'a> {
 
         let mut result = SyncResult::new();
 
-        for signer in self.signers {
-            let address = signer.address();
+        for &address in self.addresses {
             let key_id = format!("{address}");
 
             match self.sync_single_wallet(address, key_id).await {
