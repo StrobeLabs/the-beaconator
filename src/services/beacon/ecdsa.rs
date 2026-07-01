@@ -26,13 +26,14 @@ pub struct EcdsaUpdateOutcome {
 /// 1. Gets the verifier address from the beacon via `verifier()`
 /// 2. Gets the designated signer from the ECDSAVerifier via `SIGNER()`
 /// 3. Verifies PRIVATE_KEY signer matches designated signer
-/// 4. Acquires any available wallet from pool for transaction sending
-/// 5. Generates a nonce from the current timestamp
-/// 6. Gets the EIP-712 digest from the verifier via `digest(uint256[], uint256)`
-/// 7. Signs the digest with PRIVATE_KEY signer
-/// 8. Packs the signature as r || s || v (65 bytes)
-/// 9. ABI-encodes the inputs as (uint256[] measurement, uint256 nonce)
-/// 10. Calls beacon.update(signature, inputs)
+/// 4. Acquires the per-beacon update lock (serializes verifier-nonce use)
+/// 5. Acquires any available wallet from pool for transaction sending
+/// 6. Generates a nonce from the current timestamp
+/// 7. Gets the EIP-712 digest from the verifier via `digest(uint256[], uint256)`
+/// 8. Signs the digest with PRIVATE_KEY signer
+/// 9. Packs the signature as r || s || v (65 bytes)
+/// 10. ABI-encodes the inputs as (uint256[] measurement, uint256 nonce)
+/// 11. Calls beacon.update(signature, inputs)
 pub async fn update_beacon_with_ecdsa(
     state: &AppState,
     request: UpdateBeaconWithEcdsaRequest,
@@ -98,7 +99,19 @@ pub async fn update_beacon_with_ecdsa(
         beacon_address
     );
 
-    // 4. Acquire any available wallet from pool for sending the transaction
+    // 4. Serialize updates per beacon BEFORE taking a pool wallet: the verifier
+    // nonce is per-beacon, and two in-flight updates (via different gas payers)
+    // can land out of nonce order, reverting the loser on-chain. The guard is
+    // held through receipt-wait so the next update reads post-landing state.
+    // Lock order is always beacon -> wallet, so no deadlock is possible; taking
+    // the beacon lock first also avoids parking a pool wallet while queued.
+    let _beacon_update_lock = state
+        .wallets
+        .manager
+        .acquire_beacon_update_lock(beacon_address)
+        .await?;
+
+    // 5. Acquire any available wallet from pool for sending the transaction
     let wallet_handle = state
         .wallets
         .manager
@@ -117,7 +130,7 @@ pub async fn update_beacon_with_ecdsa(
         .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider: {e}"))?;
 
-    // 5. Generate nonce from high-resolution timestamp (nanoseconds) to avoid collisions
+    // 6. Generate nonce from high-resolution timestamp (nanoseconds) to avoid collisions
     let nonce = U256::from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -127,7 +140,7 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Using nonce (timestamp_nanos): {}", nonce);
 
-    // 6. Get EIP-712 digest from verifier (measurement is uint256[])
+    // 7. Get EIP-712 digest from verifier (measurement is uint256[])
     let digest_raw = verifier
         .digest(measurement_array.clone(), nonce)
         .call()
@@ -137,7 +150,7 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Got EIP-712 digest: {:?}", digest);
 
-    // 7. Sign the digest with PRIVATE_KEY signer (state.wallets.signer)
+    // 8. Sign the digest with PRIVATE_KEY signer (state.wallets.signer)
     let signature = state
         .wallets
         .signer
@@ -147,7 +160,7 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Signed digest successfully");
 
-    // 8. Pack signature as r || s || v (65 bytes)
+    // 9. Pack signature as r || s || v (65 bytes)
     // Alloy signature.as_bytes() returns [r (32 bytes) | s (32 bytes) | v (1 byte)]
     let sig_bytes = Bytes::from(signature.as_bytes().to_vec());
 
@@ -165,7 +178,7 @@ pub async fn update_beacon_with_ecdsa(
         signature.s()
     );
 
-    // 9. ABI-encode inputs as (uint256[] measurement, uint256 nonce)
+    // 10. ABI-encode inputs as (uint256[] measurement, uint256 nonce)
     // Use abi_encode_params to match Solidity's abi.encode(uint256[], uint256)
     let inputs = <(
         alloy::sol_types::sol_data::Array<alloy::sol_types::sol_data::Uint<256>>,
@@ -186,7 +199,7 @@ pub async fn update_beacon_with_ecdsa(
         nonce
     );
 
-    // 10. Simulate the update call first to get revert reason if it would fail
+    // 11. Simulate the update call first to get revert reason if it would fail
     let beacon_write = IBeacon::new(beacon_address, &provider);
     match beacon_write
         .update(sig_bytes.clone(), inputs_bytes.clone())
@@ -239,7 +252,7 @@ pub async fn update_beacon_with_ecdsa(
         }
     }
 
-    // 11. Send the actual transaction
+    // 12. Send the actual transaction
     tracing::info!(
         "Sending update transaction to beacon with wallet {}",
         tx_wallet_address
@@ -256,7 +269,7 @@ pub async fn update_beacon_with_ecdsa(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Transaction hash: {:?}", tx_hash);
 
-    // 12. Wait for confirmation with timeout
+    // 13. Wait for confirmation with timeout
     let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
         Ok(Ok(receipt)) => {
             tracing::info!("Transaction confirmed via get_receipt()");
@@ -284,7 +297,7 @@ pub async fn update_beacon_with_ecdsa(
         }
     };
 
-    // 13. Validate transaction status
+    // 14. Validate transaction status
     if !receipt.status() {
         let error_msg = format!("update() transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
@@ -293,7 +306,7 @@ pub async fn update_beacon_with_ecdsa(
         return Err(error_msg);
     }
 
-    // 14. Validate IndexUpdated event was emitted
+    // 15. Validate IndexUpdated event was emitted
     let index_updated_found = receipt.inner.logs().iter().any(|log| {
         // IndexUpdated event signature: keccak256("IndexUpdated(uint256)")
         log.address() == beacon_address

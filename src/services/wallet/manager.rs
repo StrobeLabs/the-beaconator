@@ -309,6 +309,36 @@ impl WalletManager {
         ))
     }
 
+    /// Serialize ECDSA updates for one beacon across all beaconator instances.
+    ///
+    /// The verifier nonce is per-beacon: two in-flight updates for the same
+    /// beacon can land out of nonce order and the loser reverts on-chain. Hold
+    /// the returned guard from nonce generation through receipt so updates for
+    /// a beacon are strictly ordered. Field order in the tuple mirrors
+    /// `WalletHandle`: the heartbeat is dropped before the guard releases.
+    pub async fn acquire_beacon_update_lock(
+        &self,
+        beacon: Address,
+    ) -> Result<(LockHeartbeat, WalletLockGuard), String> {
+        let pool = self.require_pool();
+        let config = self.require_config();
+
+        let lock = WalletLock::for_beacon_update(
+            pool.connection().clone(),
+            beacon,
+            pool.instance_id().to_string(),
+            config.lock_ttl,
+            pool.keys(),
+        );
+
+        let guard = lock
+            .acquire(config.lock_retry_count, config.lock_retry_delay)
+            .await
+            .map_err(|e| format!("Failed to acquire beacon update lock for {beacon}: {e}"))?;
+        let heartbeat = guard.spawn_heartbeat(config.lock_ttl);
+        Ok((heartbeat, guard))
+    }
+
     /// Acquire any available wallet from the pool
     ///
     /// First pass tries every wallet once without retrying (so one busy wallet
