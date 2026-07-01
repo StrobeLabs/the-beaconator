@@ -218,6 +218,10 @@ impl WalletPool {
         // Add wallet beacons set deletion
         pipe.del(self.keys.wallet_beacons(address));
 
+        // Drop the wallet's LRU score so a re-added address sorts as
+        // never-touched instead of resurfacing with a stale score.
+        pipe.zrem(self.keys.wallet_lru(), address.to_string());
+
         // Execute all deletions atomically
         let _: () = pipe
             .query_async(&mut conn)
@@ -257,6 +261,41 @@ impl WalletPool {
     pub async fn get_available_wallet(&self) -> Result<Option<WalletInfo>, String> {
         let available = self.list_available_wallets().await?;
         Ok(available.into_iter().next())
+    }
+
+    /// Read the wallet LRU order: addresses sorted ascending by last-acquired
+    /// score (oldest / never-acquired first). Used to spread selection across
+    /// the pool instead of hammering whichever wallet sorts first in Redis.
+    pub async fn lru_order(&self) -> Result<Vec<Address>, String> {
+        let mut conn = self.get_conn();
+
+        let members: Vec<String> = conn
+            .zrange(self.keys.wallet_lru(), 0, -1)
+            .await
+            .map_err(|e| format!("Failed to read wallet LRU order: {e}"))?;
+
+        Ok(members
+            .iter()
+            .filter_map(|addr_str| Address::from_str(addr_str).ok())
+            .collect())
+    }
+
+    /// Record that `address` was just acquired, moving it to the back of the
+    /// LRU order (least-recently-used selection prefers it last next time).
+    pub async fn touch_lru(&self, address: &Address) -> Result<(), String> {
+        let mut conn = self.get_conn();
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| format!("System time error: {e}"))?
+            .as_millis() as i64;
+
+        let _: () = conn
+            .zadd(self.keys.wallet_lru(), address.to_string(), now_ms)
+            .await
+            .map_err(|e| format!("Failed to touch wallet LRU entry: {e}"))?;
+
+        Ok(())
     }
 
     /// Add a beacon to a wallet's designated beacons list

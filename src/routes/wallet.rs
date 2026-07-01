@@ -162,136 +162,161 @@ pub async fn fund_guest_wallet(
         alloy::primitives::utils::format_ether(U256::from(eth_amount))
     );
 
-    // Acquire a pool wallet up front — before any balance checks — so the ETH/USDC
-    // balances we check are the ones that will actually fund the transfer. The
-    // measurement signer (PRIVATE_KEY) never sends funds; all sends go through the
-    // KMS-capable pool. WalletHandle already carries the distributed lock plus a
-    // background heartbeat that extends it, so no separate lock/heartbeat management
-    // is needed here — the wallet stays reserved until `wallet_handle` drops.
-    let wallet_handle = state
-        .wallets
-        .manager
-        .acquire_any_wallet()
-        .await
-        .map_err(|e| {
-            let detailed_error = format!("Failed to acquire pool wallet: {e}");
-            tracing::error!("{}", detailed_error);
-            sentry_error(&hub, "WalletError", detailed_error, vec![]);
-            (
-                Status::ServiceUnavailable,
-                Json(ApiResponse {
-                    success: false,
-                    data: None,
-                    message: "Funding wallet temporarily unavailable".to_string(),
-                }),
-            )
-        })?;
+    // Acquire a pool wallet and verify it has both funds — before any transfer — so
+    // the ETH/USDC balances we check are the ones that will actually fund the
+    // transfer. The measurement signer (PRIVATE_KEY) never sends funds; all sends go
+    // through the KMS-capable pool. WalletHandle already carries the distributed lock
+    // plus a background heartbeat that extends it, so no separate lock/heartbeat
+    // management is needed here — the wallet stays reserved until `wallet_handle`
+    // drops.
+    //
+    // Selection is a bounded loop over the pool (one attempt per wallet, at most):
+    // `acquire_wallet_for_usdc` orders candidates by cached USDC balance descending
+    // (spreading drain across the pool instead of always hitting the same wallet —
+    // see the 2026-06-30 testnet freeze), then this fresh on-chain check verifies
+    // that cache (which can be up to one sweep interval stale). A wallet that fails
+    // either check is excluded and the next candidate is tried; only once every
+    // wallet in the pool has been tried does this return the insufficient-balance
+    // error below.
+    let max_wallet_attempts = state.wallets.manager.signer_addresses().len().max(1);
+    let mut excluded_wallets: std::collections::HashSet<Address> = std::collections::HashSet::new();
+    let mut wallet_handle = None;
 
-    // Check pool wallet ETH balance using read provider
-    let eth_balance = match state
-        .provider
-        .read_provider
-        .get_balance(wallet_handle.address())
-        .await
-    {
-        Ok(balance) => balance,
-        Err(e) => {
-            let detailed_error = format!("Failed to get ETH balance: {e}");
-            tracing::error!("{}", detailed_error);
-            sentry_error(&hub, "RpcError", detailed_error, vec![]);
-            return Err((
-                Status::InternalServerError,
-                Json(ApiResponse {
-                    success: false,
-                    data: None,
-                    message: "Failed to retrieve ETH balance".to_string(),
-                }),
-            ));
-        }
-    };
+    for attempt in 1..=max_wallet_attempts {
+        let handle = state
+            .wallets
+            .manager
+            .acquire_wallet_for_usdc(U256::from(usdc_amount), &excluded_wallets)
+            .await
+            .map_err(|e| {
+                let detailed_error = format!("Failed to acquire pool wallet: {e}");
+                tracing::error!("{}", detailed_error);
+                sentry_error(&hub, "WalletError", detailed_error, vec![]);
+                (
+                    Status::ServiceUnavailable,
+                    Json(ApiResponse {
+                        success: false,
+                        data: None,
+                        message: "Funding wallet temporarily unavailable".to_string(),
+                    }),
+                )
+            })?;
+        let candidate = handle.address();
+        let last_attempt = attempt == max_wallet_attempts;
 
-    // Check if we have enough ETH
-    if eth_balance < U256::from(eth_amount) {
-        tracing::warn!(
-            "Insufficient ETH balance in pool wallet {}. Have: {} ETH, Need: {} ETH",
-            wallet_handle.address(),
-            alloy::primitives::utils::format_ether(eth_balance),
-            alloy::primitives::utils::format_ether(U256::from(eth_amount))
-        );
-        hub.capture_message(
-            &format!(
-                "Insufficient ETH balance in pool wallet. Have: {} ETH, Need: {} ETH",
+        // Check pool wallet ETH balance using read provider
+        let eth_balance = match state.provider.read_provider.get_balance(candidate).await {
+            Ok(balance) => balance,
+            Err(e) => {
+                let detailed_error = format!("Failed to get ETH balance: {e}");
+                tracing::error!("{}", detailed_error);
+                sentry_error(&hub, "RpcError", detailed_error, vec![]);
+                return Err((
+                    Status::InternalServerError,
+                    Json(ApiResponse {
+                        success: false,
+                        data: None,
+                        message: "Failed to retrieve ETH balance".to_string(),
+                    }),
+                ));
+            }
+        };
+
+        // Check if we have enough ETH
+        if eth_balance < U256::from(eth_amount) {
+            tracing::warn!(
+                "Insufficient ETH balance in pool wallet {}. Have: {} ETH, Need: {} ETH",
+                candidate,
                 alloy::primitives::utils::format_ether(eth_balance),
                 alloy::primitives::utils::format_ether(U256::from(eth_amount))
-            ),
-            sentry::Level::Warning,
-        );
-        return Err((
-            Status::InternalServerError,
-            Json(ApiResponse {
-                success: false,
-                data: None,
-                message: format!(
-                    "Insufficient ETH balance. Have: {} ETH, Need: {} ETH",
+            );
+            if !last_attempt {
+                excluded_wallets.insert(candidate);
+                drop(handle);
+                continue;
+            }
+            hub.capture_message(
+                &format!(
+                    "Insufficient ETH balance in pool wallet. Have: {} ETH, Need: {} ETH",
                     alloy::primitives::utils::format_ether(eth_balance),
                     alloy::primitives::utils::format_ether(U256::from(eth_amount))
                 ),
-            }),
-        ));
-    }
-
-    // Check USDC balance using read provider
-    let usdc_read_contract = IERC20::new(state.contracts.usdc, &*state.provider.read_provider);
-    let usdc_balance = match usdc_read_contract
-        .balanceOf(wallet_handle.address())
-        .call()
-        .await
-    {
-        Ok(result) => result,
-        Err(e) => {
-            let detailed_error = format!("Failed to get USDC balance: {e}");
-            tracing::error!("{}", detailed_error);
-            sentry_error(&hub, "RpcError", detailed_error, vec![]);
+                sentry::Level::Warning,
+            );
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: "Failed to retrieve USDC balance".to_string(),
+                    message: format!(
+                        "Insufficient ETH balance. Have: {} ETH, Need: {} ETH",
+                        alloy::primitives::utils::format_ether(eth_balance),
+                        alloy::primitives::utils::format_ether(U256::from(eth_amount))
+                    ),
                 }),
             ));
         }
-    };
 
-    // Check if we have enough USDC
-    if usdc_balance < U256::from(usdc_amount) {
-        tracing::warn!(
-            "Insufficient USDC balance in pool wallet {}. Have: {} USDC, Need: {} USDC",
-            wallet_handle.address(),
-            usdc_balance / U256::from(1_000_000),
-            usdc_amount / 1_000_000
-        );
-        hub.capture_message(
-            &format!(
-                "Insufficient USDC balance in pool wallet. Have: {} USDC, Need: {} USDC",
+        // Check USDC balance using read provider
+        let usdc_read_contract = IERC20::new(state.contracts.usdc, &*state.provider.read_provider);
+        let usdc_balance = match usdc_read_contract.balanceOf(candidate).call().await {
+            Ok(result) => result,
+            Err(e) => {
+                let detailed_error = format!("Failed to get USDC balance: {e}");
+                tracing::error!("{}", detailed_error);
+                sentry_error(&hub, "RpcError", detailed_error, vec![]);
+                return Err((
+                    Status::InternalServerError,
+                    Json(ApiResponse {
+                        success: false,
+                        data: None,
+                        message: "Failed to retrieve USDC balance".to_string(),
+                    }),
+                ));
+            }
+        };
+
+        // Check if we have enough USDC
+        if usdc_balance < U256::from(usdc_amount) {
+            tracing::warn!(
+                "Insufficient USDC balance in pool wallet {}. Have: {} USDC, Need: {} USDC",
+                candidate,
                 usdc_balance / U256::from(1_000_000),
                 usdc_amount / 1_000_000
-            ),
-            sentry::Level::Warning,
-        );
-        return Err((
-            Status::InternalServerError,
-            Json(ApiResponse {
-                success: false,
-                data: None,
-                message: format!(
-                    "Insufficient USDC balance. Have: {} USDC, Need: {} USDC",
-                    usdc_balance / U256::from(1_000_000), // Convert to human readable
+            );
+            if !last_attempt {
+                excluded_wallets.insert(candidate);
+                drop(handle);
+                continue;
+            }
+            hub.capture_message(
+                &format!(
+                    "Insufficient USDC balance in pool wallet. Have: {} USDC, Need: {} USDC",
+                    usdc_balance / U256::from(1_000_000),
                     usdc_amount / 1_000_000
                 ),
-            }),
-        ));
+                sentry::Level::Warning,
+            );
+            return Err((
+                Status::InternalServerError,
+                Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: format!(
+                        "Insufficient USDC balance. Have: {} USDC, Need: {} USDC",
+                        usdc_balance / U256::from(1_000_000), // Convert to human readable
+                        usdc_amount / 1_000_000
+                    ),
+                }),
+            ));
+        }
+
+        wallet_handle = Some(handle);
+        break;
     }
+
+    let wallet_handle =
+        wallet_handle.expect("balance-check retry loop must return or break with a wallet handle");
 
     // Build a provider from the pool wallet's signer (local key or KMS, depending on
     // deployment) to send the two on-chain transfers below.
@@ -561,81 +586,102 @@ pub async fn fund_bonus_wallet(
         usdc_amount / 1_000_000
     );
 
-    // Acquire a pool wallet up front — before the balance check — so the USDC balance
-    // we check is the one that will actually fund the transfer. The measurement signer
-    // (PRIVATE_KEY) never sends funds; all sends go through the KMS-capable pool.
-    // WalletHandle already carries the distributed lock plus a background heartbeat
-    // that extends it, so no separate lock/heartbeat management is needed here.
-    let wallet_handle = state
-        .wallets
-        .manager
-        .acquire_any_wallet()
-        .await
-        .map_err(|e| {
-            let detailed_error = format!("Failed to acquire pool wallet: {e}");
-            tracing::error!("{}", detailed_error);
-            sentry_error(&hub, "WalletError", detailed_error, vec![]);
-            (
-                Status::ServiceUnavailable,
-                Json(ApiResponse {
-                    success: false,
-                    data: None,
-                    message: "Funding wallet temporarily unavailable".to_string(),
-                }),
-            )
-        })?;
+    // Acquire a pool wallet and verify its USDC balance — before the transfer — so
+    // the balance we check is the one that will actually fund it. The measurement
+    // signer (PRIVATE_KEY) never sends funds; all sends go through the KMS-capable
+    // pool. WalletHandle already carries the distributed lock plus a background
+    // heartbeat that extends it, so no separate lock/heartbeat management is needed
+    // here.
+    //
+    // Same bounded-loop selection as `fund_guest_wallet`: `acquire_wallet_for_usdc`
+    // orders candidates by cached USDC descending to spread drain across the pool,
+    // this fresh on-chain check verifies the (possibly stale) cache, and a wallet
+    // that fails it is excluded in favor of the next candidate.
+    let max_wallet_attempts = state.wallets.manager.signer_addresses().len().max(1);
+    let mut excluded_wallets: std::collections::HashSet<Address> = std::collections::HashSet::new();
+    let mut wallet_handle = None;
 
-    // Check pool wallet USDC balance using read provider
-    let usdc_read_contract = IERC20::new(state.contracts.usdc, &*state.provider.read_provider);
-    let usdc_balance = match usdc_read_contract
-        .balanceOf(wallet_handle.address())
-        .call()
-        .await
-    {
-        Ok(result) => result,
-        Err(e) => {
-            let detailed_error = format!("Failed to get USDC balance: {e}");
-            tracing::error!("{}", detailed_error);
-            sentry_error(&hub, "RpcError", detailed_error, vec![]);
+    for attempt in 1..=max_wallet_attempts {
+        let handle = state
+            .wallets
+            .manager
+            .acquire_wallet_for_usdc(U256::from(usdc_amount), &excluded_wallets)
+            .await
+            .map_err(|e| {
+                let detailed_error = format!("Failed to acquire pool wallet: {e}");
+                tracing::error!("{}", detailed_error);
+                sentry_error(&hub, "WalletError", detailed_error, vec![]);
+                (
+                    Status::ServiceUnavailable,
+                    Json(ApiResponse {
+                        success: false,
+                        data: None,
+                        message: "Funding wallet temporarily unavailable".to_string(),
+                    }),
+                )
+            })?;
+        let candidate = handle.address();
+        let last_attempt = attempt == max_wallet_attempts;
+
+        // Check pool wallet USDC balance using read provider
+        let usdc_read_contract = IERC20::new(state.contracts.usdc, &*state.provider.read_provider);
+        let usdc_balance = match usdc_read_contract.balanceOf(candidate).call().await {
+            Ok(result) => result,
+            Err(e) => {
+                let detailed_error = format!("Failed to get USDC balance: {e}");
+                tracing::error!("{}", detailed_error);
+                sentry_error(&hub, "RpcError", detailed_error, vec![]);
+                return Err((
+                    Status::InternalServerError,
+                    Json(ApiResponse {
+                        success: false,
+                        data: None,
+                        message: "Failed to retrieve USDC balance".to_string(),
+                    }),
+                ));
+            }
+        };
+
+        if usdc_balance < U256::from(usdc_amount) {
+            tracing::warn!(
+                "Insufficient USDC balance in pool wallet {}. Have: {} USDC, Need: {} USDC",
+                candidate,
+                usdc_balance / U256::from(1_000_000),
+                usdc_amount / 1_000_000
+            );
+            if !last_attempt {
+                excluded_wallets.insert(candidate);
+                drop(handle);
+                continue;
+            }
+            hub.capture_message(
+                &format!(
+                    "Insufficient USDC balance in bonus pool wallet. Have: {} USDC, Need: {} USDC",
+                    usdc_balance / U256::from(1_000_000),
+                    usdc_amount / 1_000_000
+                ),
+                sentry::Level::Warning,
+            );
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: "Failed to retrieve USDC balance".to_string(),
+                    message: format!(
+                        "Insufficient USDC balance. Have: {} USDC, Need: {} USDC",
+                        usdc_balance / U256::from(1_000_000),
+                        usdc_amount / 1_000_000
+                    ),
                 }),
             ));
         }
-    };
 
-    if usdc_balance < U256::from(usdc_amount) {
-        tracing::warn!(
-            "Insufficient USDC balance in pool wallet {}. Have: {} USDC, Need: {} USDC",
-            wallet_handle.address(),
-            usdc_balance / U256::from(1_000_000),
-            usdc_amount / 1_000_000
-        );
-        hub.capture_message(
-            &format!(
-                "Insufficient USDC balance in bonus pool wallet. Have: {} USDC, Need: {} USDC",
-                usdc_balance / U256::from(1_000_000),
-                usdc_amount / 1_000_000
-            ),
-            sentry::Level::Warning,
-        );
-        return Err((
-            Status::InternalServerError,
-            Json(ApiResponse {
-                success: false,
-                data: None,
-                message: format!(
-                    "Insufficient USDC balance. Have: {} USDC, Need: {} USDC",
-                    usdc_balance / U256::from(1_000_000),
-                    usdc_amount / 1_000_000
-                ),
-            }),
-        ));
+        wallet_handle = Some(handle);
+        break;
     }
+
+    let wallet_handle =
+        wallet_handle.expect("balance-check retry loop must return or break with a wallet handle");
 
     // Build a provider from the pool wallet's signer (local key or KMS, depending on
     // deployment) to send the transfer below.

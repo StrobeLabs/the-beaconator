@@ -14,6 +14,9 @@ alloy = { version = "2.1", features = ["full", "node-bindings", "signer-aws"] }
 # signer-aws depends on so the `aws_sdk_kms::Client` type unifies with AwsSigner.
 aws-config = "1"
 aws-sdk-kms = "1"
+# Best-effort PutMetricData for pool wallet ETH/USDC balances (src/services/wallet/balances.rs).
+# Kept in the same 1.x line as aws-sdk-kms; publish failures never abort startup or requests.
+aws-sdk-cloudwatch = "1"
 # CLI arg parsing for the kms-wallet operator binary (src/bin/kms-wallet.rs).
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15.7"

@@ -4,7 +4,9 @@
 // Transaction serialization is now handled by Redis-based distributed locks
 // in the wallet module. See `WalletLock` for details.
 
-use the_beaconator::services::transaction::execution::is_nonce_error;
+use the_beaconator::services::transaction::execution::{
+    is_insufficient_funds_error, is_nonce_error,
+};
 
 #[test]
 fn test_is_nonce_error_detection() {
@@ -19,4 +21,25 @@ fn test_is_nonce_error_detection() {
     assert!(!is_nonce_error("insufficient funds"));
     assert!(!is_nonce_error("gas limit exceeded"));
     assert!(!is_nonce_error(""));
+}
+
+#[test]
+fn test_is_insufficient_funds_error_detection() {
+    // Test various insufficient-funds error patterns
+    assert!(is_insufficient_funds_error("insufficient funds"));
+    assert!(is_insufficient_funds_error("INSUFFICIENT FUNDS")); // Case insensitive
+    assert!(is_insufficient_funds_error(
+        "Error: insufficient funds for gas * price + value"
+    ));
+    assert!(is_insufficient_funds_error(
+        "insufficient balance for transfer"
+    ));
+    assert!(is_insufficient_funds_error(
+        "gas required exceeds allowance"
+    ));
+
+    // Non insufficient-funds errors should return false
+    assert!(!is_insufficient_funds_error("nonce too low"));
+    assert!(!is_insufficient_funds_error("gas limit exceeded"));
+    assert!(!is_insufficient_funds_error(""));
 }

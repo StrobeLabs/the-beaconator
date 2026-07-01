@@ -113,6 +113,13 @@ impl PrefixedRedisKeys {
         format!("{}wallet_lock:{address}", self.prefix)
     }
 
+    /// ZSET tracking least-recently-used wallet selection order: wallet_lru.
+    /// Score is the millisecond timestamp of the wallet's last successful
+    /// acquisition; members absent from the set (never acquired) sort first.
+    pub fn wallet_lru(&self) -> String {
+        format!("{}wallet_lru", self.prefix)
+    }
+
     /// Lock key serializing ECDSA updates for one beacon: beacon_update_lock:{beacon}.
     /// The verifier nonce is per-beacon, so concurrent updates for the same beacon
     /// race on it (the later-nonced tx can land first and revert the other); this
