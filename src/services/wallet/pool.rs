@@ -218,6 +218,10 @@ impl WalletPool {
         // Add wallet beacons set deletion
         pipe.del(self.keys.wallet_beacons(address));
 
+        // Drop the wallet's LRU score so a re-added address sorts as
+        // never-touched instead of resurfacing with a stale score.
+        pipe.zrem(self.keys.wallet_lru(), address.to_string());
+
         // Execute all deletions atomically
         let _: () = pipe
             .query_async(&mut conn)

@@ -282,8 +282,9 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_default_eth_floor_when_env_unset() {
-        // SAFETY: single-threaded test, no concurrent env access in this test binary segment.
+        // SAFETY: #[serial] guarantees no concurrent env access from other tests.
         unsafe {
             std::env::remove_var("WALLET_MIN_ETH_WEI");
         }
