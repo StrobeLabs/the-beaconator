@@ -17,6 +17,9 @@ use crate::services::wallet::{LockHeartbeat, WalletLockGuard};
 /// background watcher polls for the receipt, and how often it polls.
 const PENDING_TX_LOCK_GRACE: Duration = Duration::from_secs(240);
 const PENDING_TX_POLL_INTERVAL: Duration = Duration::from_secs(3);
+/// Per-poll RPC timeout so one hung request cannot stall the watcher loop
+/// (deadline is only checked between polls).
+const PENDING_TX_POLL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Keep the per-beacon update lock held while a SENT update tx is still
 /// unresolved, so a second update cannot race it on the verifier nonce. The
@@ -34,16 +37,26 @@ fn hold_beacon_lock_until_receipt(
         let _lock = lock;
         let deadline = tokio::time::Instant::now() + PENDING_TX_LOCK_GRACE;
         while tokio::time::Instant::now() < deadline {
-            match provider.get_transaction_receipt(tx_hash).await {
-                Ok(Some(_)) => {
+            match timeout(
+                PENDING_TX_POLL_TIMEOUT,
+                provider.get_transaction_receipt(tx_hash),
+            )
+            .await
+            {
+                Ok(Ok(Some(_))) => {
                     tracing::info!(
                         "Pending update tx {tx_hash} for beacon {beacon_address} resolved; releasing beacon update lock"
                     );
                     return;
                 }
-                Ok(None) => {}
-                Err(e) => {
+                Ok(Ok(None)) => {}
+                Ok(Err(e)) => {
                     tracing::warn!("Receipt poll for pending update tx {tx_hash} failed: {e}");
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Receipt poll for pending update tx {tx_hash} timed out after {PENDING_TX_POLL_TIMEOUT:?}"
+                    );
                 }
             }
             tokio::time::sleep(PENDING_TX_POLL_INTERVAL).await;
@@ -323,16 +336,21 @@ pub async fn update_beacon_with_ecdsa(
         Ok(Err(e)) => {
             // The tx WAS sent; the receipt fetch failed but it may still land.
             // Keep the beacon lock alive in the background so no second update
-            // races the pending one on the verifier nonce.
+            // races the pending one on the verifier nonce, and return the hash
+            // as sent-but-unconfirmed so the caller polls instead of re-sending.
             hold_beacon_lock_until_receipt(
                 beacon_update_lock,
                 state.provider.read_provider.clone(),
                 tx_hash,
                 beacon_address,
             );
-            let error_msg = format!("Failed to get transaction receipt: {e}");
-            tracing::error!("{}", error_msg);
-            return Err(error_msg);
+            tracing::error!(
+                "Failed to get receipt for sent update tx {tx_hash}: {e} - returning unconfirmed"
+            );
+            return Ok(EcdsaUpdateOutcome {
+                tx_hash,
+                confirmed: false,
+            });
         }
         Err(_) => {
             // The transaction WAS sent; it may still confirm. Report it as
