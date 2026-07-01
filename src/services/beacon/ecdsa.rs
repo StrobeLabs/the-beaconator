@@ -11,7 +11,8 @@ use tracing;
 use crate::ReadOnlyProvider;
 use crate::models::{AppState, UpdateBeaconWithEcdsaRequest};
 use crate::routes::{IBeacon, IEcdsaVerifier};
-use crate::services::wallet::{LockHeartbeat, WalletLockGuard};
+use crate::services::transaction::execution::is_insufficient_funds_error;
+use crate::services::wallet::{LockHeartbeat, WalletHandle, WalletLockGuard};
 
 /// How long a sent-but-unresolved update tx keeps its beacon lock alive while a
 /// background watcher polls for the receipt, and how often it polls.
@@ -169,24 +170,14 @@ pub async fn update_beacon_with_ecdsa(
         .acquire_beacon_update_lock(beacon_address)
         .await?;
 
-    // 5. Acquire any available wallet from pool for sending the transaction
-    let wallet_handle = state
-        .wallets
-        .manager
-        .acquire_any_wallet()
-        .await
-        .map_err(|e| format!("Failed to acquire wallet for transaction: {e}"))?;
-
-    let tx_wallet_address = wallet_handle.address();
-    tracing::info!(
-        "Using wallet {} from pool to send transaction (gas payer)",
-        tx_wallet_address
-    );
-
-    // Build provider with the acquired wallet for sending transactions
-    let provider = wallet_handle
-        .build_provider(&state.provider.rpc_url)
-        .map_err(|e| format!("Failed to build provider: {e}"))?;
+    // 5. Bounded retry budget for wallet acquisition: one attempt per pool
+    // wallet at most (floor 1). A wallet that turns out to be drained of gas
+    // (insufficient funds on preflight or send, see step 11/12) is excluded
+    // and a different one is tried instead of failing the whole update — this
+    // is what stops a single drained wallet from freezing every update, as
+    // happened on 2026-06-30 when selection had no such fallback.
+    let max_wallet_attempts = state.wallets.manager.signer_addresses().len().max(1);
+    let mut excluded_wallets: std::collections::HashSet<Address> = std::collections::HashSet::new();
 
     // 6. Generate nonce from high-resolution timestamp (nanoseconds) to avoid collisions
     let nonce = U256::from(
@@ -257,19 +248,43 @@ pub async fn update_beacon_with_ecdsa(
         nonce
     );
 
-    // 11. Simulate the update call first to get revert reason if it would fail
-    let beacon_write = IBeacon::new(beacon_address, &provider);
-    match beacon_write
-        .update(sig_bytes.clone(), inputs_bytes.clone())
-        .call()
-        .await
-    {
-        Ok(_) => {
-            tracing::info!("Preflight simulation of beacon.update() succeeded");
-        }
-        Err(e) => {
+    // 11 + 12. Acquire a wallet, simulate, and send — retrying with a
+    // different (excluded) wallet on an insufficient-funds error from either
+    // step. Any other error returns immediately, exactly as before this loop
+    // existed. The lock guarding one wallet is dropped before the next
+    // attempt acquires a different one; the per-beacon `beacon_update_lock`
+    // stays held across every attempt (it was acquired before this loop, in
+    // step 4, and spans the whole function).
+    let mut wallet_handle: Option<WalletHandle> = None;
+    let mut pending_tx = None;
+
+    for attempt in 1..=max_wallet_attempts {
+        let handle = state
+            .wallets
+            .manager
+            .acquire_any_wallet_excluding(&excluded_wallets)
+            .await
+            .map_err(|e| format!("Failed to acquire wallet for transaction: {e}"))?;
+        let attempt_address = handle.address();
+        tracing::info!(
+            "Using wallet {} from pool to send transaction (gas payer) [attempt {attempt}/{max_wallet_attempts}]",
+            attempt_address
+        );
+
+        // Build provider with the acquired wallet for sending transactions
+        let provider = handle
+            .build_provider(&state.provider.rpc_url)
+            .map_err(|e| format!("Failed to build provider: {e}"))?;
+
+        // 11. Simulate the update call first to get revert reason if it would fail
+        let beacon_write = IBeacon::new(beacon_address, &provider);
+        if let Err(e) = beacon_write
+            .update(sig_bytes.clone(), inputs_bytes.clone())
+            .call()
+            .await
+        {
             // Only run diagnostics for EVM reverts, not transport/network failures
-            if e.as_revert_data().is_some() {
+            let error_msg = if e.as_revert_data().is_some() {
                 let diag_timeout = Duration::from_secs(5);
 
                 let verify_detail = match timeout(
@@ -294,33 +309,69 @@ pub async fn update_beacon_with_ecdsa(
                         Err(_) => "usedProofs diagnostic timed out".to_string(),
                     };
 
-                let error_msg = format!(
+                format!(
                     "Preflight simulation of beacon.update() reverted: {e}. \
                      Verifier diagnostics: {verify_detail}. {used_detail}"
+                )
+            } else {
+                // Transport or other non-revert error: fail fast without diagnostics
+                format!("Preflight simulation of beacon.update() failed (transport/RPC): {e}")
+            };
+            tracing::error!("{}", error_msg);
+
+            if is_insufficient_funds_error(&error_msg) && attempt < max_wallet_attempts {
+                tracing::warn!(
+                    "Wallet {attempt_address} appears out of gas (preflight simulation failed with \
+                     insufficient funds); excluding it and retrying with a different pool wallet"
                 );
-                tracing::error!("{}", error_msg);
+                excluded_wallets.insert(attempt_address);
+                drop(handle);
+                continue;
+            }
+            return Err(error_msg);
+        }
+        tracing::info!("Preflight simulation of beacon.update() succeeded");
+
+        // 12. Send the actual transaction
+        tracing::info!(
+            "Sending update transaction to beacon with wallet {}",
+            attempt_address
+        );
+        handle.ensure_lock_held()?;
+        match beacon_write
+            .update(sig_bytes.clone(), inputs_bytes.clone())
+            .send()
+            .await
+        {
+            Ok(pt) => {
+                pending_tx = Some(pt);
+                wallet_handle = Some(handle);
+                break;
+            }
+            Err(e) => {
+                let error_msg = format!("Failed to send update transaction: {e}");
+                if is_insufficient_funds_error(&error_msg) && attempt < max_wallet_attempts {
+                    tracing::warn!(
+                        "Wallet {attempt_address} appears out of gas (send failed with \
+                         insufficient funds); excluding it and retrying with a different pool wallet"
+                    );
+                    excluded_wallets.insert(attempt_address);
+                    drop(handle);
+                    continue;
+                }
                 return Err(error_msg);
             }
-
-            // Transport or other non-revert error: fail fast without diagnostics
-            let error_msg =
-                format!("Preflight simulation of beacon.update() failed (transport/RPC): {e}");
-            tracing::error!("{}", error_msg);
-            return Err(error_msg);
         }
     }
 
-    // 12. Send the actual transaction
-    tracing::info!(
-        "Sending update transaction to beacon with wallet {}",
-        tx_wallet_address
-    );
-    wallet_handle.ensure_lock_held()?;
-    let pending_tx = beacon_write
-        .update(sig_bytes.clone(), inputs_bytes.clone())
-        .send()
-        .await
-        .map_err(|e| format!("Failed to send update transaction: {e}"))?;
+    // The loop above always either returns early or `break`s with both `Some`.
+    // `_wallet_handle` is intentionally never read again: its only remaining
+    // job is to keep the winning wallet's distributed lock held (via Drop)
+    // for the rest of this function, exactly like the un-looped version did.
+    let _wallet_handle = wallet_handle
+        .expect("acquire/simulate/send retry loop must return or break with a wallet handle");
+    let pending_tx = pending_tx
+        .expect("acquire/simulate/send retry loop must return or break with a pending tx");
 
     tracing::info!("Transaction sent, waiting for receipt...");
 

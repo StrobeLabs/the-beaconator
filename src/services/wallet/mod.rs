@@ -5,12 +5,14 @@
 //! - WalletLock: Distributed locking to prevent concurrent wallet use
 //! - WalletManager: Central coordinator for wallet operations
 
+pub mod balances;
 pub mod lock;
 pub mod manager;
 pub mod mock;
 pub mod pool;
 pub mod sync;
 
+pub use balances::{BalanceTracker, WalletBalances};
 pub use lock::{LockHeartbeat, WalletLock, WalletLockGuard};
 pub use manager::{PoolSigner, WalletHandle, WalletManager, WalletSigner};
 pub use mock::{MockWalletHandle, MockWalletManager};

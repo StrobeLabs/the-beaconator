@@ -21,7 +21,7 @@ use crate::models::{
 use crate::services::beacon::BeaconTypeRegistry;
 use crate::services::beacon::ComponentFactoryRegistry;
 use crate::services::beacon::RecipeRegistry;
-use crate::services::wallet::{PoolSigner, WalletManager, WalletSyncService};
+use crate::services::wallet::{BalanceTracker, PoolSigner, WalletManager, WalletSyncService};
 use rocket::{Request, catch, catchers};
 
 // Provider type with embedded wallet for signing transactions
@@ -170,6 +170,11 @@ fn audit_environment() {
         // JSON map of component factory addresses seeded into Redis at startup
         // (set by the AWS deployment; see perpcity-client/sst.config.ts)
         "COMPONENT_FACTORIES_JSON",
+        // Wallet pool balance sweep (src/services/wallet/balances.rs): ETH floor
+        // (wei) below which a pool wallet is flagged + skipped by proactive
+        // selection, and how often the sweep refreshes cached balances.
+        "WALLET_MIN_ETH_WEI",
+        "WALLET_BALANCE_SWEEP_SECS",
     ];
 
     let mut problems = 0usize;
@@ -574,13 +579,29 @@ pub async fn create_rocket() -> Rocket<Build> {
     // Set chain_id from the already-determined chain_id
     wallet_config.chain_id = Some(chain_id);
 
-    let wallet_manager = WalletManager::new(wallet_config, pool_signers)
+    let mut wallet_manager = WalletManager::new(wallet_config, pool_signers)
         .await
         .unwrap_or_else(|e| {
             panic!("WalletManager failed to initialize: {e}. Check Redis connectivity.")
         });
 
     tracing::info!("WalletManager initialized for contract operations");
+
+    // Balance tracker: periodically refreshes cached ETH/USDC balances for the
+    // pool so selection can proactively skip a wallet under the ETH floor and
+    // funding routes can order by cached USDC, plus emits per-wallet CloudWatch
+    // metrics. Attach it to the manager BEFORE it's shared behind the AppState
+    // Arc below — selection reads it through that Arc from then on.
+    let balance_tracker =
+        std::sync::Arc::new(BalanceTracker::new(read_provider.clone(), usdc_address));
+    wallet_manager.set_balance_tracker(std::sync::Arc::clone(&balance_tracker));
+    let balance_sweep_interval = BalanceTracker::sweep_interval_from_env();
+    balance_tracker.spawn_sweep(pool_addresses.clone(), balance_sweep_interval);
+    tracing::info!(
+        "Wallet balance sweep started (interval {:?}, {} wallet(s))",
+        balance_sweep_interval,
+        pool_addresses.len()
+    );
 
     // Sync pool wallet addresses to Redis pool on startup
     let sync_service = WalletSyncService::new(&pool_addresses, wallet_manager.pool());

@@ -27,4 +27,23 @@ pub fn is_nonce_error(error_msg: &str) -> bool {
         || error_lower.contains("replacement tx underpriced")
 }
 
+/// Detect insufficient-funds errors from error messages
+///
+/// This helper function checks if an error message indicates the sending wallet
+/// does not have enough native gas token to cover the transaction. A drained
+/// pool wallet triggers this on send or preflight simulation; the caller can
+/// use it to retry with a different wallet instead of failing the request.
+///
+/// # Arguments
+/// * `error_msg` - The error message to check
+///
+/// # Returns
+/// `true` if the error indicates insufficient funds, `false` otherwise
+pub fn is_insufficient_funds_error(error_msg: &str) -> bool {
+    let error_lower = error_msg.to_lowercase();
+    error_lower.contains("insufficient funds")
+        || error_lower.contains("insufficient balance for transfer")
+        || error_lower.contains("gas required exceeds allowance")
+}
+
 // Tests moved to tests/unit_tests/transaction_execution_tests.rs
