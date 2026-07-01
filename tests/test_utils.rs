@@ -45,7 +45,7 @@ async fn test_with_different_account() {
     let app_state = create_test_app_state_with_account(1).await;
 
     // This account has different address but same balance
-    assert_ne!(app_state.wallets.funding_address, Address::ZERO);
+    assert_ne!(app_state.wallets.signer_address, Address::ZERO);
 }
 ```
 
@@ -59,7 +59,7 @@ async fn test_blockchain_operations() {
     let app_state = create_test_app_state().await;
 
     // Check balance
-    let balance = TestUtils::get_balance(&app_state.provider.read_provider, app_state.wallets.funding_address).await?;
+    let balance = TestUtils::get_balance(&app_state.provider.read_provider, app_state.wallets.signer_address).await?;
     assert!(balance > U256::ZERO);
 
     // Get block number
@@ -564,7 +564,7 @@ pub async fn create_test_app_state() -> AppState {
         },
         wallets: WalletConfig {
             manager: Arc::new(WalletManager::test_stub()),
-            funding_address: deployment.deployer,
+            signer_address: deployment.deployer,
             signer: test_signer,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
@@ -633,7 +633,7 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
         },
         wallets: WalletConfig {
             manager: create_test_wallet_manager().await,
-            funding_address: deployment.deployer,
+            signer_address: deployment.deployer,
             signer: test_signer,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
@@ -727,7 +727,7 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
         },
         wallets: WalletConfig {
             manager: wallet_manager,
-            funding_address: deployment.deployer,
+            signer_address: deployment.deployer,
             signer: test_signer,
             usdc_transfer_limit: 1_000_000_000,
             eth_transfer_limit: 10_000_000_000_000_000,
@@ -793,7 +793,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
         },
         wallets: WalletConfig {
             manager: Arc::new(WalletManager::test_stub()),
-            funding_address: anvil.accounts[account_index],
+            signer_address: anvil.accounts[account_index],
             signer,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
@@ -908,7 +908,7 @@ pub async fn create_simple_test_app_state() -> AppState {
         },
         wallets: WalletConfig {
             manager: wallet_manager,
-            funding_address: Address::from_str("0x1111111111111111111111111111111111111111")
+            signer_address: Address::from_str("0x1111111111111111111111111111111111111111")
                 .unwrap(),
             signer,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
@@ -974,7 +974,7 @@ pub async fn create_test_app_state_with_provider(
         },
         wallets: WalletConfig {
             manager: wallet_manager,
-            funding_address: Address::from_str("0x1111111111111111111111111111111111111111")
+            signer_address: Address::from_str("0x1111111111111111111111111111111111111111")
                 .unwrap(),
             signer,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
@@ -1061,7 +1061,7 @@ mod tests {
     async fn test_app_state_creation() {
         #[allow(deprecated)]
         let app_state = create_test_app_state().await;
-        assert_ne!(app_state.wallets.funding_address, Address::ZERO);
+        assert_ne!(app_state.wallets.signer_address, Address::ZERO);
         assert_ne!(app_state.contracts.ecdsa_verifier_factory, Address::ZERO);
         assert_ne!(app_state.contracts.perp_factory, Address::ZERO);
     }
@@ -1091,7 +1091,7 @@ mod tests {
         // Test balance
         let balance = TestUtils::get_balance(
             &app_state.provider.read_provider,
-            app_state.wallets.funding_address,
+            app_state.wallets.signer_address,
         )
         .await;
         assert!(balance.is_ok());

@@ -269,7 +269,7 @@ async fn test_registration_error_handling() {
             "Zero beacon address",
         ),
         (
-            app_state.wallets.funding_address,
+            app_state.wallets.signer_address,
             Address::ZERO,
             "Zero registry address",
         ),

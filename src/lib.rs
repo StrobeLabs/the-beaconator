@@ -1,6 +1,5 @@
 use alloy::{
-    primitives::{Address, Bytes, utils::format_ether},
-    providers::Provider,
+    primitives::{Address, Bytes},
     signers::{Signer, aws::AwsSigner, local::PrivateKeySigner},
 };
 use rocket::{Build, Rocket};
@@ -456,12 +455,15 @@ pub async fn create_rocket() -> Rocket<Build> {
             .unwrap_or_else(|e| panic!("Failed to build read-only RPC provider: {e}")),
     );
 
-    // Parse the funding wallet private key (ONLY for fund_guest_wallet endpoint)
+    // Parse the measurement signer private key. This signer ONLY signs EIP-712
+    // digests for ECDSA beacon updates — it never holds or sends funds. All
+    // on-chain sends (gas + guest funding transfers) go through the KMS-capable
+    // pool wallets configured below.
     let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY environment variable not set");
 
-    // Get funding wallet address
-    let funding_wallet_address = services::rpc::RpcConfig::get_wallet_address(&private_key)
-        .expect("Failed to get funding wallet address");
+    // Get measurement signer address
+    let signer_address = services::rpc::RpcConfig::get_wallet_address(&private_key)
+        .expect("Failed to get measurement signer address");
 
     // Parse the private key into a signer for ECDSA operations
     let signer = private_key
@@ -469,21 +471,13 @@ pub async fn create_rocket() -> Rocket<Build> {
         .expect("Failed to parse private key into signer")
         .with_chain_id(Some(chain_id));
 
-    // Log funding wallet configuration
-    tracing::info!("Funding wallet configured (for fund_guest_wallet only):");
-    tracing::info!("  - Address: {:?}", funding_wallet_address);
+    // Log measurement signer configuration. No balance check here by design: this
+    // signer holds no funds — the pool wallets carry the float for gas and guest
+    // funding transfers.
+    tracing::info!("Measurement signer configured (EIP-712 signing only, holds no funds):");
+    tracing::info!("  - Address: {:?}", signer_address);
     tracing::info!("  - Chain ID: {:?}", chain_id);
     tracing::info!("  - ENV: {}", env_type);
-
-    // Check funding wallet balance for debugging
-    match read_provider.get_balance(funding_wallet_address).await {
-        Ok(balance) => {
-            tracing::info!("Funding wallet balance: {} ETH", format_ether(balance));
-        }
-        Err(e) => {
-            tracing::warn!("Failed to get funding wallet balance: {}", e);
-        }
-    }
 
     // Build the gas-payer pool signers, in precedence order:
     //   1. WALLET_KMS_KEY_IDS - explicit comma-separated KMS key ids / aliases / ARNs.
@@ -846,7 +840,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         },
         wallets: WalletConfig {
             manager: std::sync::Arc::new(wallet_manager),
-            funding_address: funding_wallet_address,
+            signer_address,
             signer,
             usdc_transfer_limit,
             eth_transfer_limit,

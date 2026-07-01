@@ -1,6 +1,5 @@
-use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, U256};
-use alloy::providers::{Provider, ProviderBuilder};
+use alloy::providers::Provider;
 use alloy::rpc::types::TransactionRequest;
 use rocket::serde::json::Json;
 use rocket::{State, http::Status, post};
@@ -163,11 +162,36 @@ pub async fn fund_guest_wallet(
         alloy::primitives::utils::format_ether(U256::from(eth_amount))
     );
 
-    // Check funding wallet ETH balance using read provider
+    // Acquire a pool wallet up front — before any balance checks — so the ETH/USDC
+    // balances we check are the ones that will actually fund the transfer. The
+    // measurement signer (PRIVATE_KEY) never sends funds; all sends go through the
+    // KMS-capable pool. WalletHandle already carries the distributed lock plus a
+    // background heartbeat that extends it, so no separate lock/heartbeat management
+    // is needed here — the wallet stays reserved until `wallet_handle` drops.
+    let wallet_handle = state
+        .wallets
+        .manager
+        .acquire_any_wallet()
+        .await
+        .map_err(|e| {
+            let detailed_error = format!("Failed to acquire pool wallet: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "WalletError", detailed_error, vec![]);
+            (
+                Status::ServiceUnavailable,
+                Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: "Funding wallet temporarily unavailable".to_string(),
+                }),
+            )
+        })?;
+
+    // Check pool wallet ETH balance using read provider
     let eth_balance = match state
         .provider
         .read_provider
-        .get_balance(state.wallets.funding_address)
+        .get_balance(wallet_handle.address())
         .await
     {
         Ok(balance) => balance,
@@ -189,14 +213,14 @@ pub async fn fund_guest_wallet(
     // Check if we have enough ETH
     if eth_balance < U256::from(eth_amount) {
         tracing::warn!(
-            "Insufficient ETH balance in funding wallet {}. Have: {} ETH, Need: {} ETH",
-            state.wallets.funding_address,
+            "Insufficient ETH balance in pool wallet {}. Have: {} ETH, Need: {} ETH",
+            wallet_handle.address(),
             alloy::primitives::utils::format_ether(eth_balance),
             alloy::primitives::utils::format_ether(U256::from(eth_amount))
         );
         hub.capture_message(
             &format!(
-                "Insufficient ETH balance in funding wallet. Have: {} ETH, Need: {} ETH",
+                "Insufficient ETH balance in pool wallet. Have: {} ETH, Need: {} ETH",
                 alloy::primitives::utils::format_ether(eth_balance),
                 alloy::primitives::utils::format_ether(U256::from(eth_amount))
             ),
@@ -219,7 +243,7 @@ pub async fn fund_guest_wallet(
     // Check USDC balance using read provider
     let usdc_read_contract = IERC20::new(state.contracts.usdc, &*state.provider.read_provider);
     let usdc_balance = match usdc_read_contract
-        .balanceOf(state.wallets.funding_address)
+        .balanceOf(wallet_handle.address())
         .call()
         .await
     {
@@ -242,14 +266,14 @@ pub async fn fund_guest_wallet(
     // Check if we have enough USDC
     if usdc_balance < U256::from(usdc_amount) {
         tracing::warn!(
-            "Insufficient USDC balance in funding wallet {}. Have: {} USDC, Need: {} USDC",
-            state.wallets.funding_address,
+            "Insufficient USDC balance in pool wallet {}. Have: {} USDC, Need: {} USDC",
+            wallet_handle.address(),
             usdc_balance / U256::from(1_000_000),
             usdc_amount / 1_000_000
         );
         hub.capture_message(
             &format!(
-                "Insufficient USDC balance in funding wallet. Have: {} USDC, Need: {} USDC",
+                "Insufficient USDC balance in pool wallet. Have: {} USDC, Need: {} USDC",
                 usdc_balance / U256::from(1_000_000),
                 usdc_amount / 1_000_000
             ),
@@ -269,50 +293,23 @@ pub async fn fund_guest_wallet(
         ));
     }
 
-    // Acquire distributed lock on funding wallet to prevent nonce conflicts
-    // across concurrent requests and multiple beaconator instances
-    let funding_lock = state
-        .wallets
-        .manager
-        .acquire_lock(&state.wallets.funding_address)
-        .await
+    // Build a provider from the pool wallet's signer (local key or KMS, depending on
+    // deployment) to send the two on-chain transfers below.
+    let funding_provider = wallet_handle
+        .build_provider(&state.provider.rpc_url)
         .map_err(|e| {
-            let detailed_error = format!("Failed to acquire funding wallet lock: {e}");
+            let detailed_error = format!("Failed to build funding provider: {e}");
             tracing::error!("{}", detailed_error);
-            sentry_error(&hub, "WalletError", detailed_error, vec![]);
+            sentry_error(&hub, "ConfigError", detailed_error, vec![]);
             (
-                Status::ServiceUnavailable,
+                Status::InternalServerError,
                 Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: "Funding wallet temporarily unavailable".to_string(),
+                    message: "Server RPC configuration is invalid".to_string(),
                 }),
             )
         })?;
-
-    // Keep the lock alive across the two transfer confirmations (up to 2 x 120s,
-    // far longer than the lock TTL). Declared after the lock so it drops first:
-    // the heartbeat is aborted BEFORE the lock is released.
-    let funding_heartbeat = funding_lock.spawn_heartbeat(state.wallets.manager.lock_ttl());
-
-    // Build a fresh provider per-request to avoid stale nonce caching
-    let funding_wallet = EthereumWallet::from(state.wallets.signer.clone());
-    let rpc_url = state.provider.rpc_url.parse().map_err(|e| {
-        let detailed_error = format!("Invalid RPC URL in AppState: {e}");
-        tracing::error!("{}", detailed_error);
-        sentry_error(&hub, "ConfigError", detailed_error, vec![]);
-        (
-            Status::InternalServerError,
-            Json(ApiResponse {
-                success: false,
-                data: None,
-                message: "Server RPC configuration is invalid".to_string(),
-            }),
-        )
-    })?;
-    let funding_provider = ProviderBuilder::new()
-        .wallet(funding_wallet)
-        .connect_http(rpc_url);
 
     // Send ETH using funding provider
     let tx_request = TransactionRequest::default()
@@ -382,8 +379,8 @@ pub async fn fund_guest_wallet(
 
     // The ETH transfer may have taken longer than the lock TTL; abort before the
     // second transaction if the heartbeat observed the lock as lost.
-    if let Err(e) = funding_heartbeat.ensure_held() {
-        let detailed_error = format!("Funding wallet lock lost before USDC transfer: {e}");
+    if let Err(e) = wallet_handle.ensure_lock_held() {
+        let detailed_error = format!("Pool wallet lock lost before USDC transfer: {e}");
         tracing::error!("{}", detailed_error);
         sentry_error(&hub, "WalletError", detailed_error, vec![]);
         return Err((
@@ -564,10 +561,34 @@ pub async fn fund_bonus_wallet(
         usdc_amount / 1_000_000
     );
 
-    // Check funding wallet USDC balance using read provider
+    // Acquire a pool wallet up front — before the balance check — so the USDC balance
+    // we check is the one that will actually fund the transfer. The measurement signer
+    // (PRIVATE_KEY) never sends funds; all sends go through the KMS-capable pool.
+    // WalletHandle already carries the distributed lock plus a background heartbeat
+    // that extends it, so no separate lock/heartbeat management is needed here.
+    let wallet_handle = state
+        .wallets
+        .manager
+        .acquire_any_wallet()
+        .await
+        .map_err(|e| {
+            let detailed_error = format!("Failed to acquire pool wallet: {e}");
+            tracing::error!("{}", detailed_error);
+            sentry_error(&hub, "WalletError", detailed_error, vec![]);
+            (
+                Status::ServiceUnavailable,
+                Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: "Funding wallet temporarily unavailable".to_string(),
+                }),
+            )
+        })?;
+
+    // Check pool wallet USDC balance using read provider
     let usdc_read_contract = IERC20::new(state.contracts.usdc, &*state.provider.read_provider);
     let usdc_balance = match usdc_read_contract
-        .balanceOf(state.wallets.funding_address)
+        .balanceOf(wallet_handle.address())
         .call()
         .await
     {
@@ -589,14 +610,14 @@ pub async fn fund_bonus_wallet(
 
     if usdc_balance < U256::from(usdc_amount) {
         tracing::warn!(
-            "Insufficient USDC balance in funding wallet {}. Have: {} USDC, Need: {} USDC",
-            state.wallets.funding_address,
+            "Insufficient USDC balance in pool wallet {}. Have: {} USDC, Need: {} USDC",
+            wallet_handle.address(),
             usdc_balance / U256::from(1_000_000),
             usdc_amount / 1_000_000
         );
         hub.capture_message(
             &format!(
-                "Insufficient USDC balance in bonus funding wallet. Have: {} USDC, Need: {} USDC",
+                "Insufficient USDC balance in bonus pool wallet. Have: {} USDC, Need: {} USDC",
                 usdc_balance / U256::from(1_000_000),
                 usdc_amount / 1_000_000
             ),
@@ -616,53 +637,27 @@ pub async fn fund_bonus_wallet(
         ));
     }
 
-    // Acquire distributed lock on funding wallet to prevent nonce conflicts
-    // across concurrent requests and multiple beaconator instances.
-    let funding_lock = state
-        .wallets
-        .manager
-        .acquire_lock(&state.wallets.funding_address)
-        .await
+    // Build a provider from the pool wallet's signer (local key or KMS, depending on
+    // deployment) to send the transfer below.
+    let funding_provider = wallet_handle
+        .build_provider(&state.provider.rpc_url)
         .map_err(|e| {
-            let detailed_error = format!("Failed to acquire funding wallet lock: {e}");
+            let detailed_error = format!("Failed to build funding provider: {e}");
             tracing::error!("{}", detailed_error);
-            sentry_error(&hub, "WalletError", detailed_error, vec![]);
+            sentry_error(&hub, "ConfigError", detailed_error, vec![]);
             (
-                Status::ServiceUnavailable,
+                Status::InternalServerError,
                 Json(ApiResponse {
                     success: false,
                     data: None,
-                    message: "Funding wallet temporarily unavailable".to_string(),
+                    message: "Server RPC configuration is invalid".to_string(),
                 }),
             )
         })?;
 
-    // Keep the lock alive across the transfer confirmation. Declared after the
-    // lock so it drops first: the heartbeat is aborted BEFORE the lock releases.
-    let funding_heartbeat = funding_lock.spawn_heartbeat(state.wallets.manager.lock_ttl());
-
-    // Build a fresh provider per-request to avoid stale nonce caching.
-    let funding_wallet = EthereumWallet::from(state.wallets.signer.clone());
-    let rpc_url = state.provider.rpc_url.parse().map_err(|e| {
-        let detailed_error = format!("Invalid RPC URL in AppState: {e}");
-        tracing::error!("{}", detailed_error);
-        sentry_error(&hub, "ConfigError", detailed_error, vec![]);
-        (
-            Status::InternalServerError,
-            Json(ApiResponse {
-                success: false,
-                data: None,
-                message: "Server RPC configuration is invalid".to_string(),
-            }),
-        )
-    })?;
-    let funding_provider = ProviderBuilder::new()
-        .wallet(funding_wallet)
-        .connect_http(rpc_url);
-
     // Confirm the lock is still held immediately before submitting.
-    if let Err(e) = funding_heartbeat.ensure_held() {
-        let detailed_error = format!("Funding wallet lock lost before USDC transfer: {e}");
+    if let Err(e) = wallet_handle.ensure_lock_held() {
+        let detailed_error = format!("Pool wallet lock lost before USDC transfer: {e}");
         tracing::error!("{}", detailed_error);
         sentry_error(&hub, "WalletError", detailed_error, vec![]);
         return Err((
