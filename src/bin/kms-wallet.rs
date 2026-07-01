@@ -52,6 +52,12 @@ enum Command {
         #[arg(long)]
         key: String,
     },
+    /// List signing keys by alias prefix, with their Ethereum addresses.
+    List {
+        /// Alias prefix to match.
+        #[arg(long, default_value = "alias/perpcity/")]
+        prefix: String,
+    },
 }
 
 /// The canonical alias for a (stage, role) KMS key: `alias/perpcity/<stage>/<role>`.
@@ -82,6 +88,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Command::Create { stage, role } => create(&client, &stage, &role).await?,
         Command::Address { key } => println!("{}", derive_address(&client, &key).await?),
+        Command::List { prefix } => list(&client, &prefix).await?,
+    }
+    Ok(())
+}
+
+/// List keys whose alias starts with `prefix`, printing address, alias, and
+/// target key id per line. This is the operator view of what services discover
+/// at startup via WALLET_KMS_ALIAS_PREFIX.
+async fn list(client: &Client, prefix: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut found = 0usize;
+    let mut pages = client.list_aliases().into_paginator().send();
+    while let Some(page) = pages.next().await {
+        for entry in page?.aliases() {
+            let Some(name) = entry.alias_name() else {
+                continue;
+            };
+            if !name.starts_with(prefix) {
+                continue;
+            }
+            let Some(key_id) = entry.target_key_id() else {
+                continue;
+            };
+            let address = derive_address(client, key_id).await?;
+            println!("{address}  {name}  {key_id}");
+            found += 1;
+        }
+    }
+    if found == 0 {
+        println!("no keys match prefix {prefix}");
     }
     Ok(())
 }
