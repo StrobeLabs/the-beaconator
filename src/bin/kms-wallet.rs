@@ -59,6 +59,21 @@ fn alias_name(stage: &str, role: &str) -> String {
     format!("alias/perpcity/{stage}/{role}")
 }
 
+/// Whether `alias` already exists in this account/region (paginates all aliases).
+async fn alias_exists(client: &Client, alias: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    let mut pages = client.list_aliases().into_paginator().send();
+    while let Some(page) = pages.next().await {
+        if page?
+            .aliases()
+            .iter()
+            .any(|entry| entry.alias_name() == Some(alias))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -91,6 +106,15 @@ async fn create(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let alias = alias_name(stage, role);
 
+    // Fail before creating a key if the alias is already taken, so we never leak an
+    // orphaned (unaliased) KMS key.
+    if alias_exists(client, &alias).await? {
+        return Err(format!(
+            "alias {alias} already exists; choose a different --stage/--role or remove the existing alias first"
+        )
+        .into());
+    }
+
     let out = client
         .create_key()
         .key_spec(KeySpec::EccSecgP256K1)
@@ -111,14 +135,26 @@ async fn create(
         .key_metadata()
         .ok_or("CreateKey returned no key metadata")?;
     let key_id = meta.key_id().to_string();
-    let key_arn = meta.arn().unwrap_or_default().to_string();
+    let key_arn = meta
+        .arn()
+        .ok_or("CreateKey returned no key ARN")?
+        .to_string();
 
-    client
+    // If aliasing fails after the key exists, surface the orphaned key id rather than
+    // leaking it silently - the operator can alias or schedule-delete it.
+    if let Err(err) = client
         .create_alias()
         .alias_name(&alias)
         .target_key_id(&key_id)
         .send()
-        .await?;
+        .await
+    {
+        return Err(format!(
+            "created key {key_id} ({key_arn}) but failed to alias it {alias}: {err}; \
+             the key is orphaned - alias or schedule-delete it manually"
+        )
+        .into());
+    }
 
     let address = derive_address(client, &key_id).await?;
 
