@@ -503,16 +503,26 @@ pub async fn create_rocket() -> Rocket<Build> {
         let kms_client = aws_sdk_kms::Client::new(&aws_cfg);
 
         let (ids, source): (Vec<String>, &str) = if let Some(kms_ids) = explicit_kms_ids {
-            let ids = kms_ids
+            let ids: Vec<String> = kms_ids
                 .split(',')
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(String::from)
                 .collect();
+            // Fail fast on a present-but-blank value ("", ","), which would
+            // otherwise boot the service with an empty wallet pool.
+            if ids.is_empty() {
+                panic!("WALLET_KMS_KEY_IDS is set but contains no usable KMS key ids");
+            }
             (ids, "WALLET_KMS_KEY_IDS")
         } else {
             let prefix = kms_alias_prefix.unwrap();
-            let ids = discover_wallet_aliases(&kms_client, &prefix).await;
+            let prefix = prefix.trim();
+            // A blank prefix would starts_with-match EVERY alias in the account.
+            if prefix.is_empty() {
+                panic!("WALLET_KMS_ALIAS_PREFIX is set but blank");
+            }
+            let ids = discover_wallet_aliases(&kms_client, prefix).await;
             if ids.is_empty() {
                 panic!("WALLET_KMS_ALIAS_PREFIX '{prefix}' matched no KMS aliases");
             }

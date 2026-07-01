@@ -154,7 +154,7 @@ pub struct WalletManager {
 }
 
 impl WalletManager {
-    /// Create a new WalletManager with local private key signers
+    /// Create a new WalletManager with pool signers (local key or KMS backed)
     ///
     /// # Arguments
     /// * `config` - Configuration for the wallet manager

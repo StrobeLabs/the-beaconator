@@ -110,7 +110,10 @@ async fn list(client: &Client, prefix: &str) -> Result<(), Box<dyn std::error::E
             let Some(key_id) = entry.target_key_id() else {
                 continue;
             };
-            let address = derive_address(client, key_id).await?;
+            // Derive via the ALIAS, mirroring how services resolve keys at
+            // startup - alias-scoped IAM (kms:RequestAlias) permits this even
+            // when direct key-id access would be denied.
+            let address = derive_address(client, name).await?;
             println!("{address}  {name}  {key_id}");
             found += 1;
         }
