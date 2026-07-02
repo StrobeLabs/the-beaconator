@@ -34,7 +34,6 @@ pub fn parse_index_updated_event(
     let error_msg = "IndexUpdated event not found in transaction receipt";
     tracing::error!("{}", error_msg);
     tracing::error!("Total logs in receipt: {}", receipt.logs().len());
-    sentry::capture_message(error_msg, sentry::Level::Error);
     Err(error_msg.to_string())
 }
 
@@ -65,7 +64,6 @@ pub fn parse_perp_created_event(
 
     let msg = "PerpCreated event not found in transaction receipt".to_string();
     tracing::error!("{}", msg);
-    sentry::capture_message(&msg, sentry::Level::Error);
     Err(msg)
 }
 
@@ -85,7 +83,6 @@ pub fn parse_maker_opened_event(
 
     let msg = "MakerOpened event not found in transaction receipt".to_string();
     tracing::error!("{}", msg);
-    sentry::capture_message(&msg, sentry::Level::Error);
     Err(msg)
 }
 

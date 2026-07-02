@@ -179,10 +179,6 @@ async fn create_identity_beacon_modular(
     super::verify_deployed(provider, beacon_addr, "identity beacon").await?;
 
     tracing::info!("Identity beacon created at {}", beacon_addr);
-    sentry::capture_message(
-        &format!("Modular Identity beacon created: {beacon_addr} (verifier: {verifier_addr})"),
-        sentry::Level::Info,
-    );
 
     Ok(ModularCreationResult {
         beacon_address: beacon_addr,
@@ -274,10 +270,6 @@ async fn create_standalone_beacon_modular(
     super::verify_deployed(provider, beacon_addr, "standalone beacon").await?;
 
     tracing::info!("Standalone beacon created at {}", beacon_addr);
-    sentry::capture_message(
-        &format!("Modular Standalone beacon created: {beacon_addr}"),
-        sentry::Level::Info,
-    );
 
     Ok(ModularCreationResult {
         beacon_address: beacon_addr,
@@ -360,10 +352,6 @@ async fn create_composite_beacon_modular(
     super::verify_deployed(provider, beacon_addr, "composite beacon").await?;
 
     tracing::info!("Composite beacon created at {}", beacon_addr);
-    sentry::capture_message(
-        &format!("Modular Composite beacon created: {beacon_addr}"),
-        sentry::Level::Info,
-    );
 
     Ok(ModularCreationResult {
         beacon_address: beacon_addr,
@@ -469,10 +457,6 @@ async fn create_group_beacon_modular(
     super::verify_deployed(provider, beacon_addr, "group manager").await?;
 
     tracing::info!("Group manager created at {}", beacon_addr);
-    sentry::capture_message(
-        &format!("Modular Group beacon created: {beacon_addr}"),
-        sentry::Level::Info,
-    );
 
     Ok(ModularCreationResult {
         beacon_address: beacon_addr,

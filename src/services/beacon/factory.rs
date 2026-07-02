@@ -117,10 +117,6 @@ pub async fn create_lbcgbm_beacon(
     super::verify_deployed(&provider, beacon_address, "LBCGBM beacon").await?;
 
     tracing::info!("LBCGBM beacon created at {}", beacon_address);
-    sentry::capture_message(
-        &format!("LBCGBM beacon created: {beacon_address}"),
-        sentry::Level::Info,
-    );
 
     Ok(beacon_address)
 }
@@ -227,10 +223,6 @@ pub async fn create_weighted_sum_composite_beacon(
     super::verify_deployed(&provider, beacon_address, "WeightedSumComposite beacon").await?;
 
     tracing::info!("WeightedSumComposite beacon created at {}", beacon_address);
-    sentry::capture_message(
-        &format!("WeightedSumComposite beacon created: {beacon_address}"),
-        sentry::Level::Info,
-    );
 
     Ok(beacon_address)
 }

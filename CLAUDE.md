@@ -26,7 +26,7 @@ The script `scripts/refresh-abis.sh` adds a temporary git worktree at each pinne
 - **Blockchain**: Alloy 1.5 (Ethereum library)
 - **Network**: Arbitrum (mainnet = Arbitrum One, testnet = Arbitrum Sepolia)
 - **Security**: Bearer token authentication
-- **Monitoring**: Sentry integration + structured logging
+- **Monitoring**: CloudWatch + structured logging
 
 ## Development Commands
 
@@ -170,7 +170,7 @@ MULTICALL3_ADDRESS=0xcA11bde05977b3631167028862bE2a173976CA11
 - Inline `sol!` macros define `IBeacon`, `IBeaconRegistry`, `IPerpFactory`, `IPerp`, factories, etc.
 - v0.1.0 architecture: `PerpFactory.createPerp()` returns a per-market `Perp` address; subsequent `openMaker` / `openTaker` calls go to that address.
 - Dereferences Arc provider with `&*state.provider` for read calls; uses wallet-bound provider from the pool for writes.
-- Comprehensive error handling with Sentry integration; revert reasons decoded via `services::perp::validation::ContractErrorDecoder`.
+- Comprehensive error handling with structured logging; revert reasons decoded via `services::perp::validation::ContractErrorDecoder`.
 
 ### Testing Strategy
 - Mock providers with wallets for consistent test setup
@@ -302,7 +302,7 @@ Five module addresses, all required, all deployed once and reused across markets
 
 ## Error Handling Standards
 - All API endpoints return standardized `ApiResponse<T>` format
-- Sentry integration for production error tracking
+- Structured logging (tracing) for production error tracking; CloudWatch is the alerting path
 - Batch operations continue on individual failures with detailed error reporting
 - Network errors gracefully handled in test environment
 

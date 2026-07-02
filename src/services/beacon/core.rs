@@ -58,11 +58,6 @@ pub async fn create_identity_beacon(
         deploy_identity_beacon(state, &wallet_handle, verifier_address, initial_index).await?;
     tracing::info!("IdentityBeacon deployed at {}", beacon_address);
 
-    sentry::capture_message(
-        &format!("IdentityBeacon created: {beacon_address} (verifier: {verifier_address})"),
-        sentry::Level::Info,
-    );
-
     Ok((beacon_address, verifier_address))
 }
 
@@ -246,12 +241,6 @@ pub async fn register_beacon_with_registry(
             nonce,
             safe_tx_hash
         );
-        sentry::capture_message(
-            &format!(
-                "Safe tx proposed for beacon {beacon_address} registration (nonce: {nonce}, hash: {safe_tx_hash})",
-            ),
-            sentry::Level::Info,
-        );
         return Ok(RegistrationOutcome::SafeProposed(safe_tx_hash));
     }
 
@@ -288,7 +277,6 @@ pub async fn register_beacon_with_registry(
                 tracing::warn!("Nonce error detected, transaction failed");
             }
 
-            sentry::capture_message(&error_msg, sentry::Level::Error);
             Err(error_msg)
         }
     }?;
@@ -334,7 +322,6 @@ pub async fn register_beacon_with_registry(
                     tracing::error!("  - Registration transaction was dropped/replaced");
                     tracing::error!("  - Network issues prevented confirmation");
                     tracing::error!("  - Registration is still pending");
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
                     return Err(error_msg);
                 }
                 Ok(Err(e)) => {
@@ -342,7 +329,6 @@ pub async fn register_beacon_with_registry(
                         format!("Failed to check registration transaction {tx_hash} on-chain: {e}");
                     tracing::error!("{}", error_msg);
                     tracing::error!("Original get_receipt() error: {}", e);
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
                     return Err(error_msg);
                 }
                 Err(_) => {
@@ -350,7 +336,6 @@ pub async fn register_beacon_with_registry(
                         format!("Timeout checking registration transaction {tx_hash} on-chain");
                     tracing::error!("{}", error_msg);
                     tracing::error!("Network may be slow or unresponsive");
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
                     return Err(error_msg);
                 }
             }
@@ -447,16 +432,11 @@ pub async fn register_beacon_with_registry(
     // Check transaction status - only success if true
     if receipt.status() {
         tracing::info!("Registration transaction succeeded (status: true)");
-        sentry::capture_message(
-            &format!("Beacon {beacon_address} registered with registry {registry_address}"),
-            sentry::Level::Info,
-        );
         Ok(RegistrationOutcome::OnChainConfirmed(tx_hash))
     } else {
         let error_msg = format!("Registration transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
         tracing::error!("Beacon: {}, Registry: {}", beacon_address, registry_address);
-        sentry::capture_message(&error_msg, sentry::Level::Error);
         Err(error_msg)
     }
 }
@@ -521,7 +501,6 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
                 tracing::warn!("Nonce error detected, transaction failed");
             }
 
-            sentry::capture_message(&error_msg, sentry::Level::Error);
             Err(error_msg)
         }
     }?;
@@ -593,7 +572,6 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
         let error_msg = format!("Update transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
         tracing::error!("Receipt: {:?}", receipt);
-        sentry::capture_message(&error_msg, sentry::Level::Error);
         return Err(error_msg);
     }
 
@@ -612,7 +590,6 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
                 "Transaction succeeded but IndexUpdated event not found: {e}. This indicates the update may not have been applied."
             );
             tracing::error!("{}", error_msg);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
             Err(error_msg)
         }
     }

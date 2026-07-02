@@ -417,10 +417,6 @@ pub async fn update_beacon_with_ecdsa(
             tracing::warn!(
                 "Timeout waiting for transaction {tx_hash} receipt — returning unconfirmed"
             );
-            sentry::capture_message(
-                &format!("ECDSA beacon update sent but unconfirmed at timeout (tx {tx_hash})"),
-                sentry::Level::Warning,
-            );
             return Ok(EcdsaUpdateOutcome {
                 tx_hash,
                 confirmed: false,
@@ -433,7 +429,6 @@ pub async fn update_beacon_with_ecdsa(
         let error_msg = format!("update() transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
         tracing::error!("Receipt: {:?}", receipt);
-        sentry::capture_message(&error_msg, sentry::Level::Error);
         return Err(error_msg);
     }
 

@@ -12,7 +12,7 @@ use tracing;
 /// How long to wait for each funding transfer (ETH, USDC) to confirm.
 const FUNDING_RECEIPT_TIMEOUT: Duration = Duration::from_secs(120);
 
-use super::{IERC20, sentry_error};
+use super::IERC20;
 use crate::guards::ApiToken;
 use crate::models::{ApiResponse, AppState, FundBonusWalletRequest, FundGuestWalletRequest};
 
@@ -36,22 +36,6 @@ pub async fn fund_guest_wallet(
     _token: ApiToken,
 ) -> Result<Json<ApiResponse<String>>, (Status, Json<ApiResponse<String>>)> {
     tracing::info!("Received request: POST /fund_guest_wallet");
-    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
-    hub.add_breadcrumb(sentry::Breadcrumb {
-        ty: "http".into(),
-        category: Some("request".into()),
-        message: Some(format!(
-            "POST /fund_guest_wallet wallet={}",
-            request.wallet_address
-        )),
-        ..Default::default()
-    });
-    hub.configure_scope(|scope| {
-        scope.set_tag("endpoint", "/fund_guest_wallet");
-        scope.set_extra("wallet_address", request.wallet_address.clone().into());
-        scope.set_extra("usdc_amount", request.usdc_amount.clone().into());
-        scope.set_extra("eth_amount", request.eth_amount.clone().into());
-    });
 
     // Hard-disable guest-wallet funding on production chains. The endpoint pulls real ETH +
     // USDC from a hot wallet — fine on Arbitrum Sepolia (chain 421614) or local Anvil, but a
@@ -64,12 +48,6 @@ pub async fn fund_guest_wallet(
             state.provider.chain_id
         );
         tracing::error!("{}", error_msg);
-        sentry_error(
-            &hub,
-            "ProductionGuardrail",
-            error_msg.clone(),
-            vec![("chain_id", state.provider.chain_id.to_string().into())],
-        );
         return Err((
             Status::Forbidden,
             Json(ApiResponse {
@@ -191,7 +169,6 @@ pub async fn fund_guest_wallet(
             .map_err(|e| {
                 let detailed_error = format!("Failed to acquire pool wallet: {e}");
                 tracing::error!("{}", detailed_error);
-                sentry_error(&hub, "WalletError", detailed_error, vec![]);
                 (
                     Status::ServiceUnavailable,
                     Json(ApiResponse {
@@ -210,7 +187,6 @@ pub async fn fund_guest_wallet(
             Err(e) => {
                 let detailed_error = format!("Failed to get ETH balance: {e}");
                 tracing::error!("{}", detailed_error);
-                sentry_error(&hub, "RpcError", detailed_error, vec![]);
                 return Err((
                     Status::InternalServerError,
                     Json(ApiResponse {
@@ -235,14 +211,6 @@ pub async fn fund_guest_wallet(
                 drop(handle);
                 continue;
             }
-            hub.capture_message(
-                &format!(
-                    "Insufficient ETH balance in pool wallet. Have: {} ETH, Need: {} ETH",
-                    alloy::primitives::utils::format_ether(eth_balance),
-                    alloy::primitives::utils::format_ether(U256::from(eth_amount))
-                ),
-                sentry::Level::Warning,
-            );
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
@@ -264,7 +232,6 @@ pub async fn fund_guest_wallet(
             Err(e) => {
                 let detailed_error = format!("Failed to get USDC balance: {e}");
                 tracing::error!("{}", detailed_error);
-                sentry_error(&hub, "RpcError", detailed_error, vec![]);
                 return Err((
                     Status::InternalServerError,
                     Json(ApiResponse {
@@ -289,14 +256,6 @@ pub async fn fund_guest_wallet(
                 drop(handle);
                 continue;
             }
-            hub.capture_message(
-                &format!(
-                    "Insufficient USDC balance in pool wallet. Have: {} USDC, Need: {} USDC",
-                    usdc_balance / U256::from(1_000_000),
-                    usdc_amount / 1_000_000
-                ),
-                sentry::Level::Warning,
-            );
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
@@ -325,7 +284,6 @@ pub async fn fund_guest_wallet(
         .map_err(|e| {
             let detailed_error = format!("Failed to build funding provider: {e}");
             tracing::error!("{}", detailed_error);
-            sentry_error(&hub, "ConfigError", detailed_error, vec![]);
             (
                 Status::InternalServerError,
                 Json(ApiResponse {
@@ -349,7 +307,6 @@ pub async fn fund_guest_wallet(
                 Ok(Err(e)) => {
                     let detailed_error = format!("Failed to get ETH transaction receipt: {e}");
                     tracing::error!("{}", detailed_error);
-                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
                     return Err((
                         Status::InternalServerError,
                         Json(ApiResponse {
@@ -369,7 +326,6 @@ pub async fn fund_guest_wallet(
                         FUNDING_RECEIPT_TIMEOUT.as_secs()
                     );
                     tracing::error!("{}", detailed_error);
-                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
                     return Err((
                         Status::InternalServerError,
                         Json(ApiResponse {
@@ -388,7 +344,6 @@ pub async fn fund_guest_wallet(
         Err(e) => {
             let detailed_error = format!("Failed to send ETH: {e}");
             tracing::error!("{}", detailed_error);
-            sentry_error(&hub, "TransactionError", detailed_error, vec![]);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
@@ -407,7 +362,6 @@ pub async fn fund_guest_wallet(
     if let Err(e) = wallet_handle.ensure_lock_held() {
         let detailed_error = format!("Pool wallet lock lost before USDC transfer: {e}");
         tracing::error!("{}", detailed_error);
-        sentry_error(&hub, "WalletError", detailed_error, vec![]);
         return Err((
             Status::InternalServerError,
             Json(ApiResponse {
@@ -434,7 +388,6 @@ pub async fn fund_guest_wallet(
                 Ok(Err(e)) => {
                     let detailed_error = format!("Failed to get USDC transaction receipt: {e}");
                     tracing::error!("{}", detailed_error);
-                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
                     return Err((
                         Status::InternalServerError,
                         Json(ApiResponse {
@@ -454,7 +407,6 @@ pub async fn fund_guest_wallet(
                         FUNDING_RECEIPT_TIMEOUT.as_secs()
                     );
                     tracing::error!("{}", detailed_error);
-                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
                     return Err((
                         Status::InternalServerError,
                         Json(ApiResponse {
@@ -474,7 +426,6 @@ pub async fn fund_guest_wallet(
         Err(e) => {
             let detailed_error = format!("Failed to send USDC: {e}");
             tracing::error!("{}", detailed_error);
-            sentry_error(&hub, "TransactionError", detailed_error, vec![]);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
@@ -520,21 +471,6 @@ pub async fn fund_bonus_wallet(
     _token: ApiToken,
 ) -> Result<Json<ApiResponse<String>>, (Status, Json<ApiResponse<String>>)> {
     tracing::info!("Received request: POST /fund_bonus_wallet");
-    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
-    hub.add_breadcrumb(sentry::Breadcrumb {
-        ty: "http".into(),
-        category: Some("request".into()),
-        message: Some(format!(
-            "POST /fund_bonus_wallet wallet={}",
-            request.wallet_address
-        )),
-        ..Default::default()
-    });
-    hub.configure_scope(|scope| {
-        scope.set_tag("endpoint", "/fund_bonus_wallet");
-        scope.set_extra("wallet_address", request.wallet_address.clone().into());
-        scope.set_extra("usdc_amount", request.usdc_amount.clone().into());
-    });
 
     let wallet_address = match Address::from_str(&request.wallet_address) {
         Ok(addr) => addr,
@@ -610,7 +546,6 @@ pub async fn fund_bonus_wallet(
             .map_err(|e| {
                 let detailed_error = format!("Failed to acquire pool wallet: {e}");
                 tracing::error!("{}", detailed_error);
-                sentry_error(&hub, "WalletError", detailed_error, vec![]);
                 (
                     Status::ServiceUnavailable,
                     Json(ApiResponse {
@@ -630,7 +565,6 @@ pub async fn fund_bonus_wallet(
             Err(e) => {
                 let detailed_error = format!("Failed to get USDC balance: {e}");
                 tracing::error!("{}", detailed_error);
-                sentry_error(&hub, "RpcError", detailed_error, vec![]);
                 return Err((
                     Status::InternalServerError,
                     Json(ApiResponse {
@@ -654,14 +588,6 @@ pub async fn fund_bonus_wallet(
                 drop(handle);
                 continue;
             }
-            hub.capture_message(
-                &format!(
-                    "Insufficient USDC balance in bonus pool wallet. Have: {} USDC, Need: {} USDC",
-                    usdc_balance / U256::from(1_000_000),
-                    usdc_amount / 1_000_000
-                ),
-                sentry::Level::Warning,
-            );
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {
@@ -690,7 +616,6 @@ pub async fn fund_bonus_wallet(
         .map_err(|e| {
             let detailed_error = format!("Failed to build funding provider: {e}");
             tracing::error!("{}", detailed_error);
-            sentry_error(&hub, "ConfigError", detailed_error, vec![]);
             (
                 Status::InternalServerError,
                 Json(ApiResponse {
@@ -705,7 +630,6 @@ pub async fn fund_bonus_wallet(
     if let Err(e) = wallet_handle.ensure_lock_held() {
         let detailed_error = format!("Pool wallet lock lost before USDC transfer: {e}");
         tracing::error!("{}", detailed_error);
-        sentry_error(&hub, "WalletError", detailed_error, vec![]);
         return Err((
             Status::InternalServerError,
             Json(ApiResponse {
@@ -734,7 +658,6 @@ pub async fn fund_bonus_wallet(
                     let detailed_error =
                         format!("USDC transfer reverted on-chain (tx {usdc_tx_hash:?})");
                     tracing::error!("{}", detailed_error);
-                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
                     return Err((
                         Status::InternalServerError,
                         Json(ApiResponse {
@@ -751,7 +674,6 @@ pub async fn fund_bonus_wallet(
                 Ok(Err(e)) => {
                     let detailed_error = format!("Failed to get USDC transaction receipt: {e}");
                     tracing::error!("{}", detailed_error);
-                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
                     return Err((
                         Status::InternalServerError,
                         Json(ApiResponse {
@@ -770,7 +692,6 @@ pub async fn fund_bonus_wallet(
                         FUNDING_RECEIPT_TIMEOUT.as_secs()
                     );
                     tracing::error!("{}", detailed_error);
-                    sentry_error(&hub, "TransactionError", detailed_error, vec![]);
                     return Err((
                         Status::InternalServerError,
                         Json(ApiResponse {
@@ -789,7 +710,6 @@ pub async fn fund_bonus_wallet(
         Err(e) => {
             let detailed_error = format!("Failed to send USDC: {e}");
             tracing::error!("{}", detailed_error);
-            sentry_error(&hub, "TransactionError", detailed_error, vec![]);
             return Err((
                 Status::InternalServerError,
                 Json(ApiResponse {

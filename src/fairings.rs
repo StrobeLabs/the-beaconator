@@ -1,5 +1,4 @@
 use rocket::fairing::{Fairing, Info, Kind};
-use rocket::http::Status;
 use rocket::{Data, Request, Response};
 
 /// Logs incoming requests and outgoing responses.
@@ -59,7 +58,7 @@ impl Fairing for RequestLogger {
 
 /// Catches and logs internal server errors that may indicate panics.
 ///
-/// Monitors for 500 status responses and reports them to Sentry for investigation.
+/// Response-side hook kept for symmetry; 500 logging lives in lib.rs's catchers.
 pub struct PanicCatcher;
 
 #[rocket::async_trait]
@@ -71,21 +70,9 @@ impl Fairing for PanicCatcher {
         }
     }
 
-    async fn on_response<'r>(&self, request: &'r Request<'_>, response: &mut Response<'r>) {
-        // If we get a 500 error, it might be a panic
-        if response.status() == Status::InternalServerError {
-            let method = request.method();
-            let uri = request.uri();
-
-            tracing::error!(
-                "Internal Server Error detected for {} {} - possible panic or unhandled error",
-                method,
-                uri
-            );
-
-            // No Sentry capture here: the `catch_panic` 500 catcher in lib.rs
-            // already reports the same request, and reporting from both meant
-            // every 500 was double-counted.
-        }
+    async fn on_response<'r>(&self, _request: &'r Request<'_>, _response: &mut Response<'r>) {
+        // No logging here: the dedicated 500 catchers in lib.rs already emit
+        // the request context, and logging from both double-counted every 500
+        // in log-based error metrics.
     }
 }

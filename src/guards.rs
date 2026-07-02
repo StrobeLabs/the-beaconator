@@ -5,7 +5,6 @@ use rocket_okapi::{
     okapi::openapi3::{Object, SecurityRequirement, SecurityScheme, SecuritySchemeData},
     request::{OpenApiFromRequest, RequestHeaderInput},
 };
-use sentry;
 use subtle::ConstantTimeEq;
 use tracing;
 
@@ -38,10 +37,6 @@ impl<'r> FromRequest<'r> for ApiToken {
                             Outcome::Success(ApiToken(token.to_string()))
                         } else {
                             tracing::warn!("Invalid API token provided for: {}", endpoint);
-                            sentry::capture_message(
-                                &format!("Invalid API token attempt for: {endpoint}"),
-                                sentry::Level::Warning,
-                            );
                             Outcome::Error((Status::Unauthorized, "Invalid API token".to_string()))
                         }
                     }
@@ -66,10 +61,6 @@ impl<'r> FromRequest<'r> for ApiToken {
             }
             _ => {
                 tracing::error!("Application state not available for: {}", endpoint);
-                sentry::capture_message(
-                    "Application state not available in ApiToken guard",
-                    sentry::Level::Error,
-                );
                 Outcome::Error((
                     Status::InternalServerError,
                     "Application state not available".to_string(),
@@ -135,10 +126,6 @@ impl<'r> FromRequest<'r> for AdminToken {
                             Outcome::Success(AdminToken(token.to_string()))
                         } else {
                             tracing::warn!("Invalid admin token provided for: {}", endpoint);
-                            sentry::capture_message(
-                                &format!("Invalid admin token attempt for: {endpoint}"),
-                                sentry::Level::Warning,
-                            );
                             Outcome::Error((
                                 Status::Unauthorized,
                                 "Invalid admin token".to_string(),
@@ -166,10 +153,6 @@ impl<'r> FromRequest<'r> for AdminToken {
             }
             _ => {
                 tracing::error!("Application state not available for: {}", endpoint);
-                sentry::capture_message(
-                    "Application state not available in AdminToken guard",
-                    sentry::Level::Error,
-                );
                 Outcome::Error((
                     Status::InternalServerError,
                     "Application state not available".to_string(),
