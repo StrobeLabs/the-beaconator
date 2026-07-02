@@ -20,10 +20,11 @@ aws-sdk-cloudwatch = "1"
 # CLI arg parsing for the kms-wallet operator binary (src/bin/kms-wallet.rs).
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15.7"
-sentry = { version = "0.32", features = ["anyhow", "tracing"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# json feature is used directly (services/safe.rs); previously enabled
+# transitively by a dependency that has since been removed.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 hex = "0.4"
 # OpenAPI documentation
 rocket_okapi = "0.9.0"

@@ -263,7 +263,6 @@ async fn batch_update_with_multicall3(
                             "Batch update transaction reverted (status: false). Transaction hash: {tx_hash}"
                         );
                         tracing::error!("{}", error_msg);
-                        sentry::capture_message(&error_msg, sentry::Level::Error);
 
                         // Return error for all beacons
                         let mut results = Vec::new();
@@ -331,7 +330,6 @@ async fn batch_update_with_multicall3(
                          (tx {batch_tx_hash:?}) — the batch may still confirm on-chain"
                     );
                     tracing::error!("{}", error_msg);
-                    sentry::capture_message(&error_msg, sentry::Level::Error);
 
                     let mut results = Vec::new();
                     for beacon_address in beacon_addresses {

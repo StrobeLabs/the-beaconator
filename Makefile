@@ -192,7 +192,6 @@ docker-test: ## Test Docker image build and run (simulates CI)
 	docker run --rm -d --name test-beaconator -p 8001:8000 \
 		-e RPC_URL=https://mainnet.base.org \
 		-e PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
-		-e SENTRY_DSN=https://test@test.ingest.sentry.io/test \
 		-e ENV=localnet \
 		-e BEACONATOR_ACCESS_TOKEN=test_token_123 \
 		-e BEACON_FACTORY_ADDRESS=0x1234567890123456789012345678901234567890 \

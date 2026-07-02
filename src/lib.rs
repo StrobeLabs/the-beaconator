@@ -151,7 +151,6 @@ fn audit_environment() {
     // WALLET_KMS_ALIAS_PREFIX / WALLET_PRIVATE_KEYS (checked separately below),
     // so none is individually required.
     const SECRET_VARS_OPTIONAL: &[&str] = &[
-        "SENTRY_DSN",
         "SAFE_TX_SERVICE_URL",
         "WALLET_PRIVATE_KEYS",
         "WALLET_KMS_KEY_IDS",
@@ -166,7 +165,6 @@ fn audit_environment() {
         "USDC_BONUS_LIMIT",
         "BEACONATOR_INSTANCE_ID",
         "RUST_LOG",
-        "SENTRY_TRACES_SAMPLE_RATE",
         // JSON map of component factory addresses seeded into Redis at startup
         // (set by the AWS deployment; see perpcity-client/sst.config.ts)
         "COMPONENT_FACTORIES_JSON",
@@ -941,22 +939,16 @@ pub async fn create_rocket() -> Rocket<Build> {
 
 /// Catches all unhandled errors and returns a formatted error response.
 ///
-/// Logs the error; only 5xx are reported to Sentry — 4xx noise from scanners
-/// and bad clients should not page anyone. (Plain 500s are handled by the
-/// dedicated `catch_panic` catcher below, which does its own reporting.)
+/// Emits a structured tracing event (status_code/method/uri fields) so the 5xx
+/// path can be filtered and aggregated in CloudWatch.
 #[catch(default)]
 fn catch_all_errors(status: rocket::http::Status, request: &Request) -> String {
-    let error_msg = format!(
-        "Error {}: {} {}",
-        status.code,
-        request.method(),
-        request.uri()
+    tracing::error!(
+        status_code = status.code,
+        method = %request.method(),
+        uri = %request.uri(),
+        "Unhandled error response"
     );
-
-    tracing::error!("Unhandled error: {}", error_msg);
-    if status.code >= 500 {
-        sentry::capture_message(&error_msg, sentry::Level::Error);
-    }
 
     format!(
         "Error {}: {}",
@@ -967,17 +959,16 @@ fn catch_all_errors(status: rocket::http::Status, request: &Request) -> String {
 
 /// Catches panic-related internal server errors.
 ///
-/// Logs the panic and sends it to Sentry with fatal level.
+/// Structured fields (status_code/method/uri) keep the 500 path aggregatable
+/// in CloudWatch; this catcher is the single logging point for plain 500s.
 #[catch(500)]
 fn catch_panic(request: &Request) -> String {
-    let error_msg = format!(
-        "Internal Server Error (possible panic): {} {}",
-        request.method(),
-        request.uri()
+    tracing::error!(
+        status_code = 500,
+        method = %request.method(),
+        uri = %request.uri(),
+        "Internal Server Error (possible panic)"
     );
-
-    tracing::error!("{}", error_msg);
-    sentry::capture_message(&error_msg, sentry::Level::Fatal);
 
     "Internal Server Error".to_string()
 }

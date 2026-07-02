@@ -6,7 +6,6 @@ use rocket_okapi::openapi;
 use std::str::FromStr;
 use tracing;
 
-use super::sentry_error;
 use crate::guards::ApiToken;
 use crate::models::{
     ApiResponse, AppState, DeployPerpForBeaconRequest, DeployPerpForBeaconResponse,
@@ -57,37 +56,11 @@ pub async fn deploy_perp_for_beacon_endpoint(
     tracing::info!("Received request: POST /deploy_perp_for_beacon");
     tracing::info!("Requested beacon address: {}", request.beacon_address);
 
-    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
-    hub.add_breadcrumb(sentry::Breadcrumb {
-        ty: "http".into(),
-        category: Some("request".into()),
-        message: Some(format!(
-            "POST /deploy_perp_for_beacon beacon={}",
-            request.beacon_address
-        )),
-        ..Default::default()
-    });
-    hub.configure_scope(|scope| {
-        scope.set_tag("endpoint", "/deploy_perp_for_beacon");
-        scope.set_extra("beacon_address", request.beacon_address.clone().into());
-        scope.set_extra(
-            "perp_factory_address",
-            state.contracts.perp_factory.to_string().into(),
-        );
-        scope.set_extra("wallet_source", "WalletManager pool".into());
-    });
-
     let beacon_address = match Address::from_str(&request.beacon_address) {
         Ok(addr) => addr,
         Err(e) => {
             let error_msg = format!("Invalid beacon address '{}': {}", request.beacon_address, e);
             tracing::error!("{}", error_msg);
-            sentry_error(
-                &hub,
-                "ValidationError",
-                error_msg,
-                vec![("beacon_address", request.beacon_address.clone().into())],
-            );
             return Err(Status::BadRequest);
         }
     };
@@ -97,12 +70,6 @@ pub async fn deploy_perp_for_beacon_endpoint(
         Err(e) => {
             let error_msg = format!("Invalid owner address '{}': {}", request.owner, e);
             tracing::error!("{}", error_msg);
-            sentry_error(
-                &hub,
-                "ValidationError",
-                error_msg,
-                vec![("owner", request.owner.clone().into())],
-            );
             return Err(Status::BadRequest);
         }
     };
@@ -116,12 +83,6 @@ pub async fn deploy_perp_for_beacon_endpoint(
             request.ema_window
         );
         tracing::error!("{}", error_msg);
-        sentry_error(
-            &hub,
-            "ValidationError",
-            error_msg,
-            vec![("ema_window", request.ema_window.to_string().into())],
-        );
         return Err(Status::BadRequest);
     }
 
@@ -139,12 +100,6 @@ pub async fn deploy_perp_for_beacon_endpoint(
             Err(e) => {
                 let error_msg = format!("Invalid salt '{s}': {e} (expected 32-byte hex)");
                 tracing::error!("{}", error_msg);
-                sentry_error(
-                    &hub,
-                    "ValidationError",
-                    error_msg,
-                    vec![("salt", s.to_string().into())],
-                );
                 return Err(Status::BadRequest);
             }
         },
@@ -170,13 +125,6 @@ pub async fn deploy_perp_for_beacon_endpoint(
             tracing::info!("PerpFactory address: {}", response.perp_factory_address);
             tracing::info!("Pool ID: {}", response.pool_id);
             tracing::info!("Transaction hash: {}", response.transaction_hash);
-            hub.capture_message(
-                &format!(
-                    "Perp deployed successfully for beacon {beacon_address}, perp address: {}",
-                    response.perp_address
-                ),
-                sentry::Level::Info,
-            );
             Ok(Json(ApiResponse {
                 success: true,
                 data: Some(response),
@@ -191,12 +139,6 @@ pub async fn deploy_perp_for_beacon_endpoint(
             tracing::error!("  - PerpFactory address: {}", state.contracts.perp_factory);
             tracing::error!("  - USDC address: {}", state.contracts.usdc);
 
-            sentry_error(
-                &hub,
-                "ContractError",
-                error_msg,
-                vec![("beacon_address", beacon_address.to_string().into())],
-            );
             Err(Status::InternalServerError)
         }
     }
@@ -214,33 +156,12 @@ pub async fn deposit_liquidity_for_perp_endpoint(
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<DepositLiquidityForPerpResponse>>, Status> {
     tracing::info!("Received request: POST /deposit_liquidity_for_perp");
-    let hub = sentry::Hub::new_from_top(sentry::Hub::main());
-    hub.add_breadcrumb(sentry::Breadcrumb {
-        ty: "http".into(),
-        category: Some("request".into()),
-        message: Some(format!(
-            "POST /deposit_liquidity_for_perp perp_address={}",
-            request.perp_address
-        )),
-        ..Default::default()
-    });
-    hub.configure_scope(|scope| {
-        scope.set_tag("endpoint", "/deposit_liquidity_for_perp");
-        scope.set_extra("perp_address", request.perp_address.clone().into());
-        scope.set_extra("margin_amount", request.margin_amount_usdc.clone().into());
-    });
 
     let perp_address = match Address::from_str(&request.perp_address) {
         Ok(addr) => addr,
         Err(e) => {
             let error_msg = format!("Invalid perp address '{}': {e}", request.perp_address);
             tracing::error!("{}", error_msg);
-            sentry_error(
-                &hub,
-                "ValidationError",
-                error_msg,
-                vec![("perp_address", request.perp_address.clone().into())],
-            );
             return Err(Status::BadRequest);
         }
     };
@@ -255,12 +176,6 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             tracing::error!("{}", error_msg);
             tracing::error!("Margin amount must be a valid number in USDC with 6 decimals");
             tracing::error!("  Examples: '1000000' = 1 USDC, '500000000' = 500 USDC");
-            sentry_error(
-                &hub,
-                "ValidationError",
-                error_msg,
-                vec![("margin_amount", request.margin_amount_usdc.clone().into())],
-            );
             return Err(Status::BadRequest);
         }
     };
@@ -290,12 +205,6 @@ pub async fn deposit_liquidity_for_perp_endpoint(
                     state.contracts.perp_factory
                 );
                 tracing::error!("{}", error_msg);
-                sentry_error(
-                    &hub,
-                    "ValidationError",
-                    error_msg,
-                    vec![("perp_address", perp_address.to_string().into())],
-                );
                 return Err(Status::BadRequest);
             }
         }
@@ -303,12 +212,6 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             let error_msg =
                 format!("Failed to verify perp_address {perp_address} with factory: {e}");
             tracing::error!("{}", error_msg);
-            sentry_error(
-                &hub,
-                "ContractError",
-                error_msg,
-                vec![("perp_address", perp_address.to_string().into())],
-            );
             return Err(Status::InternalServerError);
         }
     }
@@ -349,12 +252,6 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             tracing::error!("  - Margin amount: {} USDC", request.margin_amount_usdc);
             tracing::error!("  - PerpFactory address: {}", state.contracts.perp_factory);
 
-            sentry_error(
-                &hub,
-                "ContractError",
-                error_msg,
-                vec![("perp_address", request.perp_address.clone().into())],
-            );
             Err(Status::InternalServerError)
         }
     }

@@ -137,7 +137,6 @@ pub async fn deploy_perp_for_beacon(
             tracing::error!("  - PerpFactory: {}", state.contracts.perp_factory);
             tracing::error!("  - Beacon: {}", beacon_address);
             tracing::error!("  - Owner: {}", owner);
-            sentry::capture_message(&error_msg, sentry::Level::Error);
             error_msg
         })?;
 
@@ -161,25 +160,21 @@ pub async fn deploy_perp_for_beacon(
                 Ok(Ok(None)) => {
                     let msg =
                         format!("createPerp transaction {pending_tx_hash} not found on-chain");
-                    sentry::capture_message(&msg, sentry::Level::Error);
                     return Err(msg);
                 }
                 Ok(Err(e)) => {
                     let msg =
                         format!("Failed to check createPerp tx {pending_tx_hash} on-chain: {e}");
-                    sentry::capture_message(&msg, sentry::Level::Error);
                     return Err(msg);
                 }
                 Err(_) => {
                     let msg = format!("Timeout checking createPerp tx {pending_tx_hash} on-chain");
-                    sentry::capture_message(&msg, sentry::Level::Error);
                     return Err(msg);
                 }
             }
         }
         Err(_) => {
             let msg = "Timeout waiting for createPerp receipt".to_string();
-            sentry::capture_message(&msg, sentry::Level::Error);
             return Err(msg);
         }
     };
@@ -208,7 +203,6 @@ pub async fn deploy_perp_for_beacon(
         };
         let error_msg = format!("createPerp transaction reverted: {revert_detail} (tx {tx_hash})");
         tracing::error!("{}", error_msg);
-        sentry::capture_message(&error_msg, sentry::Level::Error);
         return Err(error_msg);
     }
 
@@ -343,7 +337,6 @@ pub async fn deposit_liquidity_for_perp(
             if is_nonce_error(&error_msg) {
                 tracing::warn!("Nonce error detected, transaction failed");
             }
-            sentry::capture_message(&error_msg, sentry::Level::Error);
             error_msg
         })?;
 
@@ -376,7 +369,6 @@ pub async fn deposit_liquidity_for_perp(
         let error_msg =
             format!("USDC approval transaction reverted: {revert_detail} (tx {approval_tx_hash})");
         tracing::error!("{}", error_msg);
-        sentry::capture_message(&error_msg, sentry::Level::Error);
         return Err(error_msg);
     }
 
@@ -395,7 +387,6 @@ pub async fn deposit_liquidity_for_perp(
             if is_nonce_error(&error_msg) {
                 tracing::warn!("Nonce error detected, transaction failed");
             }
-            sentry::capture_message(&error_msg, sentry::Level::Error);
             error_msg
         })?;
 
@@ -427,7 +418,6 @@ pub async fn deposit_liquidity_for_perp(
         let error_msg =
             format!("openMaker transaction reverted: {revert_detail} (tx {deposit_tx_hash})");
         tracing::error!("{}", error_msg);
-        sentry::capture_message(&error_msg, sentry::Level::Error);
         return Err(error_msg);
     }
 
