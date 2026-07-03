@@ -19,6 +19,7 @@ use alloy::signers::{Error as SignerError, Signature, Signer};
 
 use crate::AlloyProvider;
 use crate::models::wallet::{WalletInfo, WalletManagerConfig};
+use crate::services::wallet::sync::WalletSyncService;
 
 /// A gas-payer pool signer: either a local private key (dev/CI) or an AWS KMS
 /// key (production). The pool is keyed by Ethereum address regardless of backend.
@@ -391,9 +392,7 @@ impl WalletManager {
         &self,
         exclude: &HashSet<Address>,
     ) -> Result<WalletHandle, String> {
-        let pool = self.require_pool();
-
-        let available = pool.list_available_wallets().await?;
+        let available = self.list_available_resyncing().await?;
         if available.is_empty() {
             return Err("No available wallets in the pool".to_string());
         }
@@ -427,9 +426,7 @@ impl WalletManager {
         min_usdc: U256,
         exclude: &HashSet<Address>,
     ) -> Result<WalletHandle, String> {
-        let pool = self.require_pool();
-
-        let available = pool.list_available_wallets().await?;
+        let available = self.list_available_resyncing().await?;
         if available.is_empty() {
             return Err("No available wallets in the pool".to_string());
         }
@@ -444,6 +441,34 @@ impl WalletManager {
         Self::warn_skipped(&skipped, "below the requested USDC amount (cached)");
 
         self.acquire_from_candidates(&filtered).await
+    }
+
+    /// List the pool's available wallets, re-registering this instance's
+    /// signers first if the registry comes back empty.
+    ///
+    /// The wallet registry lives only in Redis and is normally written once,
+    /// at startup (the `WalletSyncService` call in `lib.rs`). A Redis node
+    /// recovery or failover wipes the dataset — locks and LRU state rebuild
+    /// themselves on use, but the pool set never did, so every acquisition
+    /// failed with "No available wallets in the pool" until a manual service
+    /// restart (2026-07-02 testnet outage: all beacons frozen for 18h after
+    /// an ElastiCache node recovery). An empty registry while this instance
+    /// holds signers can only mean the registry was wiped, so resync it and
+    /// list again rather than failing.
+    async fn list_available_resyncing(&self) -> Result<Vec<WalletInfo>, String> {
+        let pool = self.require_pool();
+        let available = pool.list_available_wallets().await?;
+        if !available.is_empty() || self.signers.is_empty() {
+            return Ok(available);
+        }
+        let addresses = self.signer_addresses();
+        tracing::warn!(
+            wallets = addresses.len(),
+            "Wallet pool registry is empty but this instance holds signers - \
+             re-registering them (registry likely wiped by a Redis restart)"
+        );
+        WalletSyncService::new(&addresses, pool).sync().await?;
+        pool.list_available_wallets().await
     }
 
     /// Addresses of the pool's available wallets, minus `exclude`.
@@ -659,7 +684,6 @@ impl WalletManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::wallet::sync::WalletSyncService;
 
     // Note: These tests require a running Redis instance
     // Run with: cargo test --lib wallet -- --ignored
@@ -736,6 +760,48 @@ mod tests {
             .expect("should acquire a wallet");
 
         assert_eq!(handle.address(), addr_b);
+
+        drop(handle);
+        manager.pool().cleanup().await.expect("Failed to cleanup");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Redis"]
+    async fn test_acquire_resyncs_after_registry_wipe() {
+        let test_prefix = format!("test-{}:", uuid::Uuid::new_v4());
+        let signer_a = PrivateKeySigner::random();
+        let signer_b = PrivateKeySigner::random();
+        let addr_a = signer_a.address();
+        let addr_b = signer_b.address();
+
+        let manager = WalletManager::test_with_mock_signers_and_prefix(
+            "redis://127.0.0.1:6379",
+            vec![signer_a, signer_b],
+            &test_prefix,
+        )
+        .await
+        .expect("Failed to create manager");
+
+        WalletSyncService::new(&[addr_a, addr_b], manager.pool())
+            .sync()
+            .await
+            .expect("Failed to sync wallets");
+
+        // Simulate a Redis node recovery losing the dataset (the 2026-07-02
+        // testnet outage): every prefixed key vanishes, including the pool
+        // registry the startup sync wrote.
+        manager.pool().cleanup().await.expect("Failed to wipe keys");
+
+        // Acquisition must re-register this instance's signers and succeed
+        // instead of failing with "No available wallets in the pool".
+        let handle = manager
+            .acquire_any_wallet()
+            .await
+            .expect("should resync the registry and acquire a wallet");
+        assert!([addr_a, addr_b].contains(&handle.address()));
+
+        let registered = manager.pool().list_wallets().await.expect("list wallets");
+        assert_eq!(registered.len(), 2);
 
         drop(handle);
         manager.pool().cleanup().await.expect("Failed to cleanup");
