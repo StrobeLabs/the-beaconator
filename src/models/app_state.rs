@@ -212,6 +212,12 @@ pub struct WalletConfig {
     /// Per-request USDC cap for the mainnet bonus route (`/fund_bonus_wallet`).
     /// Tighter than `usdc_transfer_limit` because it bounds real-money payouts.
     pub usdc_bonus_limit: u128,
+    /// ETH (wei) a pool wallet must retain AFTER a guest-funding transfer.
+    /// Protects beacon-update gas from faucet drain: `fund_guest_wallet`
+    /// skips wallets the transfer would drop below this. Keep it ABOVE the
+    /// BeaconatorWalletGasLow alarm threshold (0.01 ETH) so the faucet
+    /// throttles before the on-call gets paged.
+    pub faucet_reserve_eth_wei: u128,
 }
 
 #[derive(Clone)]

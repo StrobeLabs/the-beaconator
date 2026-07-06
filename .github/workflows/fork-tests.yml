@@ -1,0 +1,78 @@
+name: Fork Tests
+
+# Fork-tier tests: the beacon lifecycle against the REAL deployed testnet
+# contracts (Anvil fork of Arbitrum Sepolia). Runs only on PRs that touch the
+# chain-facing surface, so a `.contracts-versions` bump cannot merge without
+# the fork tests passing against the new pin (the drift tripwire).
+#
+# Requires the FORK_RPC_URL repository secret (an Arbitrum Sepolia RPC
+# endpoint, e.g. Alchemy). The job fails loudly when it is missing - that is
+# intentional: a silent skip would defeat the tripwire.
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/routes/**'
+      - 'src/services/beacon/**'
+      - 'src/services/perp/**'
+      - '.contracts-versions'
+      - 'tests/fork_config/**'
+      - 'tests/integration_tests/fork_tests.rs'
+      - '.github/workflows/fork-tests.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fork-tests:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require FORK_RPC_URL secret
+        env:
+          FORK_RPC_URL: ${{ secrets.FORK_RPC_URL }}
+        run: |
+          if [ -z "$FORK_RPC_URL" ]; then
+            echo "::error::FORK_RPC_URL repository secret is not configured (Arbitrum Sepolia RPC endpoint)"
+            exit 1
+          fi
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Cache Rust dependencies and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci-fork"
+          save-if: true
+
+      - name: Cache Foundry
+        uses: actions/cache@v4
+        with:
+          path: ~/.foundry
+          key: foundry-${{ runner.os }}-stable
+          restore-keys: |
+            foundry-${{ runner.os }}-
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Run fork tests (Anvil fork of Arbitrum Sepolia)
+        env:
+          REDIS_URL: redis://127.0.0.1:6379
+          FORK_RPC_URL: ${{ secrets.FORK_RPC_URL }}
+        run: cargo test fork_tests -- --ignored --nocapture

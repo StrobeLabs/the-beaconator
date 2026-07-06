@@ -82,6 +82,14 @@ mod root_sol_interfaces {
         function allowance(address owner, address spender) external view returns (uint256);
     }
 
+    // The deployed testnet USDC (Arbitrum Sepolia) exposes a permissionless
+    // mint (verified on-chain 2026-07-06; the deployed code differs from the
+    // owner-gated repo mock). Used by the testnet-only pool top-up route.
+    #[sol(rpc)]
+    interface ITestnetUSDC {
+        function mint(address to, uint256 amount) external;
+    }
+
     #[sol(rpc)]
     interface IMulticall3 {
         struct Call {
@@ -220,7 +228,7 @@ mod root_sol_interfaces {
 }
 pub use root_sol_interfaces::{
     IBeacon, IBeaconRegistry, ICompositeBeacon, IERC20, IEcdsaVerifier, IEcdsaVerifierFactory,
-    IIdentityFactory, IMulticall3, IPerp, IPerpFactory, IWeightedSumCompositeFactory,
+    IIdentityFactory, IMulticall3, IPerp, IPerpFactory, ITestnetUSDC, IWeightedSumCompositeFactory,
 };
 
 // Separate module for LBCGBMFactory to allow clippy::too_many_arguments on generated code

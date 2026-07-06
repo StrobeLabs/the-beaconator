@@ -440,6 +440,14 @@ pub async fn create_rocket() -> Rocket<Build> {
         .parse::<u128>()
         .expect("Failed to parse USDC_BONUS_LIMIT");
 
+    // Post-transfer ETH reserve for guest funding. Default 0.02 ETH — above
+    // the 0.01 ETH BeaconatorWalletGasLow paging threshold, so the faucet
+    // refuses before beacon gas is at risk.
+    let faucet_reserve_eth_wei = env::var("FAUCET_RESERVE_ETH_WEI")
+        .unwrap_or_else(|_| "20000000000000000".to_string()) // Default 0.02 ETH
+        .parse::<u128>()
+        .expect("Failed to parse FAUCET_RESERVE_ETH_WEI");
+
     // Get environment configuration and chain ID
     let env_type = &rpc_config.env_type;
     let chain_id = match env_type.to_lowercase().as_str() {
@@ -870,6 +878,7 @@ pub async fn create_rocket() -> Rocket<Build> {
             usdc_transfer_limit,
             eth_transfer_limit,
             usdc_bonus_limit,
+            faucet_reserve_eth_wei,
         },
         contracts: ContractAddresses {
             perpcity_registry: perpcity_registry_address,
@@ -917,6 +926,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::perp::deposit_liquidity_for_perp_endpoint,
         routes::wallet::fund_guest_wallet,
         routes::wallet::fund_bonus_wallet,
+        routes::wallet::top_up_pool,
         routes::beacon_type::list_beacon_types,
         routes::beacon_type::get_beacon_type,
         routes::beacon_type::register_beacon_type,
