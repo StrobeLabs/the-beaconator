@@ -10,6 +10,7 @@ use crate::ReadOnlyProvider;
 use crate::services::beacon::BeaconTypeRegistry;
 use crate::services::beacon::ComponentFactoryRegistry;
 use crate::services::beacon::RecipeRegistry;
+use crate::services::touch::TouchDispatcher;
 use crate::services::wallet::WalletManager;
 
 /// API endpoint information for documentation
@@ -187,6 +188,9 @@ pub struct AppState {
     pub contracts: ContractAddresses,
     pub auth: AuthConfig,
     pub registries: Registries,
+    /// Dispatches beacon addresses to the background touch worker after a
+    /// confirmed ECDSA update (no-op when the feature is disabled).
+    pub touch: TouchDispatcher,
 }
 
 #[derive(Clone)]

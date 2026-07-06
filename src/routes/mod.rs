@@ -192,6 +192,10 @@ mod root_sol_interfaces {
         function openMaker(OpenMakerParams calldata params) external returns (uint256 posId);
         function openTaker(OpenTakerParams calldata params) external returns (uint256 posId);
 
+        // Permissionless funding/EMA accrual (selector 0xa55526db). Called after a
+        // beacon update to refresh funding for every perp backed by that beacon.
+        function touch() external;
+
         event MakerOpened(uint256 posId);
         event TakerOpened(uint256 posId, SwapResult sr);
 

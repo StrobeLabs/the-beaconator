@@ -155,6 +155,9 @@ fn audit_environment() {
         "WALLET_PRIVATE_KEYS",
         "WALLET_KMS_KEY_IDS",
         "WALLET_KMS_ALIAS_PREFIX",
+        // perpcity-bot-api key for the touch-on-update beacon->perps lookup
+        // (src/services/touch). Only needed when TOUCH_ON_UPDATE_ENABLED.
+        "BOT_API_KEY",
     ];
     // Other env vars the-beaconator reads. We don't log their values either; we only
     // check presence (for required) and whitespace cleanliness.
@@ -173,6 +176,15 @@ fn audit_environment() {
         // selection, and how often the sweep refreshes cached balances.
         "WALLET_MIN_ETH_WEI",
         "WALLET_BALANCE_SWEEP_SECS",
+        // Touch-on-update side-loop (src/services/touch). All optional; the
+        // feature is off unless TOUCH_ON_UPDATE_ENABLED is truthy, and BOT_API_URL
+        // + BOT_API_KEY + MULTICALL3_ADDRESS are then required (checked at spawn).
+        "TOUCH_ON_UPDATE_ENABLED",
+        "BOT_API_URL",
+        "TOUCH_FLUSH_INTERVAL_MS",
+        "TOUCH_MAX_BATCH",
+        "TOUCH_MAPPING_TTL_SECONDS",
+        "TOUCH_MAPPING_EMPTY_TTL_SECONDS",
     ];
 
     let mut problems = 0usize;
@@ -865,6 +877,19 @@ pub async fn create_rocket() -> Rocket<Build> {
         })
     });
 
+    // Share the wallet manager (behind an Arc) between AppState and the touch
+    // worker. Wrapped here, after set_balance_tracker/sync, which need &mut/owned.
+    let wallet_manager = std::sync::Arc::new(wallet_manager);
+
+    // Best-effort funding refresh: touch() every perp backed by a beacon after a
+    // confirmed ECDSA update. Feature-flagged (TOUCH_ON_UPDATE_ENABLED, default
+    // off); a no-op dispatcher when disabled or misconfigured.
+    let touch = services::touch::spawn_from_env(
+        std::sync::Arc::clone(&wallet_manager),
+        rpc_url.clone(),
+        multicall3_address,
+    );
+
     let app_state = AppState {
         provider: ProviderConfig {
             read_provider,
@@ -872,7 +897,7 @@ pub async fn create_rocket() -> Rocket<Build> {
             chain_id,
         },
         wallets: WalletConfig {
-            manager: std::sync::Arc::new(wallet_manager),
+            manager: wallet_manager,
             signer_address,
             signer,
             usdc_transfer_limit,
@@ -905,6 +930,7 @@ pub async fn create_rocket() -> Rocket<Build> {
             component_factories: std::sync::Arc::new(component_factory_registry),
             recipes: std::sync::Arc::new(recipe_registry),
         },
+        touch,
     };
 
     // Configure OpenAPI settings

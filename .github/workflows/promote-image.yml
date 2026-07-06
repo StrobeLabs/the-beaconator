@@ -1,0 +1,118 @@
+# Promote a beaconator image from testnet (dev account) into production.
+#
+# release-image.yml only publishes to the dev account's ECR + the
+# /perpcity/testnet/beaconator-image SSM parameter; production is a separate
+# account and its image pointer is NEVER advanced automatically (the contract in
+# sst.config.ts). This workflow automates the *mechanics* of that promotion -
+# copy the already-built image across accounts (digest preserved) and advance
+# /perpcity/production/beaconator-image - while keeping the human gate: the
+# `production` GitHub Environment's required reviewers must approve each run.
+# That removes the "someone forgot to copy the image" failure mode without
+# removing the approval.
+#
+# After this runs, a production SST deploy is still required so the beaconator
+# task definition is regenerated against the new SSM value (the image is baked
+# into the task def at deploy time - a force-new-deployment re-pulls the same
+# digest and is NOT enough).
+#
+# Auth: GitHub OIDC against TWO roles, both of which must trust this repo's
+# `production` environment subject (a job with `environment:` changes the OIDC
+# sub to `repo:<org>/<repo>:environment:<name>`):
+#   dev  267923960054: perpcity-gha-producer-push       (pull source from dev ECR)
+#   prod 657231015195: perpcity-gha-prod-promote (NEW)  (push prod ECR + write prod SSM)
+# Both are managed by perpcity-client/sst/scripts/gha-oidc-bootstrap.sh.
+name: Promote image to production
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Git SHA to promote (its image must exist in the dev ECR). Blank = whatever /perpcity/testnet/beaconator-image currently points at."
+        required: false
+        default: ""
+
+concurrency:
+  group: promote-image-production
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REPO: the-beaconator
+  DEV_ACCOUNT: "267923960054"
+  PROD_ACCOUNT: "657231015195"
+  TESTNET_SSM_PARAM: /perpcity/testnet/beaconator-image
+  PROD_SSM_PARAM: /perpcity/production/beaconator-image
+  CRANE_VERSION: v0.20.3
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    # The human gate. Configure required reviewers on this environment in repo
+    # settings; without that, this is just an automatic prod write.
+    environment: production
+    steps:
+      - name: Install crane
+        run: |
+          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xz -C /usr/local/bin crane
+          crane version
+
+      # 1. Resolve + authenticate the SOURCE (dev account) via the producer role.
+      #    perpcity-gha-producer-push already has pull rights on the-beaconator.
+      - name: Assume dev role
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: arn:aws:iam::267923960054:role/perpcity-gha-producer-push
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve source image
+        id: src
+        run: |
+          DEV_REG="${DEV_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          if [ -n "${{ inputs.sha }}" ]; then
+            SRC="${DEV_REG}/${ECR_REPO}:${{ inputs.sha }}"
+          else
+            SRC="$(aws ssm get-parameter --name "$TESTNET_SSM_PARAM" --query Parameter.Value --output text)"
+          fi
+          echo "Source: $SRC"
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | crane auth login "$DEV_REG" -u AWS --password-stdin
+          # Resolve to an immutable digest now, while the dev creds are active.
+          DIGEST="$(crane digest "$SRC")"
+          echo "src=$SRC"        >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST"  >> "$GITHUB_OUTPUT"
+
+      # 2. Authenticate the TARGET (prod account) via the new promote role, copy
+      #    the image (digest is content-addressed, so it is preserved), and
+      #    advance the prod SSM pointer. crane keeps the dev token from step 1,
+      #    so it can pull dev + push prod in one copy (ECR tokens last ~12h).
+      - name: Assume prod role
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: arn:aws:iam::657231015195:role/perpcity-gha-prod-promote
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Copy image and advance prod pointer
+        run: |
+          PROD_REG="${PROD_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          DIGEST="${{ steps.src.outputs.digest }}"
+          SHORT="${DIGEST#sha256:}"; SHORT="${SHORT:0:7}"
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | crane auth login "$PROD_REG" -u AWS --password-stdin
+          # Immutable repo: tag with the digest short form (matches the existing
+          # promoted-<sha> convention).
+          crane copy "${{ steps.src.outputs.src }}" "${PROD_REG}/${ECR_REPO}:promoted-${SHORT}"
+          PROD_URI="${PROD_REG}/${ECR_REPO}@${DIGEST}"
+          aws ssm put-parameter --name "$PROD_SSM_PARAM" --type String --overwrite --value "$PROD_URI"
+          {
+            echo "### Beaconator promoted to production"
+            echo ""
+            echo "- Image: \`$PROD_URI\`"
+            echo "- \`$PROD_SSM_PARAM\` updated."
+            echo ""
+            echo "**Next:** run a production SST deploy so the beaconator task definition picks up the new image."
+          } >> "$GITHUB_STEP_SUMMARY"

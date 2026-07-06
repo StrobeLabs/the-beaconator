@@ -11,6 +11,7 @@ pub mod nonce_conflict_tests;
 // pub mod perp_deployment_integration_tests; // Temporarily disabled during PerpManager refactor
 pub mod perp_integration_tests;
 pub mod register_beacon_integration_tests;
+pub mod touch_integration_tests;
 // pub mod transaction_execution_integration_tests; // Removed - nonce management obsolete with WalletManager
 pub mod modular_registry_tests;
 pub mod wallet_test;
