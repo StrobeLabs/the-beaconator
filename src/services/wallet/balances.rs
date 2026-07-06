@@ -15,15 +15,23 @@
 //! guarantee (funding routes) still do a fresh on-chain check after
 //! acquisition. This tracker is a proactive optimization, not a source of
 //! truth.
+//!
+//! When a Multicall3 address is configured (`MULTICALL3_ADDRESS`, same config
+//! the beacon batch path uses), the sweep aggregates all per-wallet reads
+//! (`getEthBalance` + `USDC.balanceOf`) into one `aggregate3` eth_call per
+//! interval instead of 2 RPC calls per wallet. A failed multicall (e.g. no
+//! contract at the address on a bare test chain) falls back to per-wallet
+//! reads, so the sweep never regresses below the pre-multicall behavior.
 
 use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
+use alloy::sol_types::{SolCall, SolValue};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use crate::ReadOnlyProvider;
-use crate::routes::IERC20;
+use crate::routes::{IERC20, IMulticall3};
 
 /// Default ETH floor (wei) below which a pool wallet is flagged and skipped
 /// by proactive selection: 0.0005 ETH.
@@ -43,17 +51,24 @@ pub struct WalletBalances {
 pub struct BalanceTracker {
     provider: Arc<ReadOnlyProvider>,
     usdc: Address,
+    multicall3: Option<Address>,
     eth_floor: U256,
     balances: RwLock<HashMap<Address, WalletBalances>>,
 }
 
 impl BalanceTracker {
     /// Create a tracker with the ETH floor read from `WALLET_MIN_ETH_WEI`
-    /// (falls back to 0.0005 ETH if unset or unparseable).
-    pub fn new(provider: Arc<ReadOnlyProvider>, usdc: Address) -> Self {
+    /// (falls back to 0.0005 ETH if unset or unparseable). `multicall3` is
+    /// the configured Multicall3 address; `None` keeps per-wallet reads.
+    pub fn new(
+        provider: Arc<ReadOnlyProvider>,
+        usdc: Address,
+        multicall3: Option<Address>,
+    ) -> Self {
         Self {
             provider,
             usdc,
+            multicall3,
             eth_floor: Self::eth_floor_from_env(),
             balances: RwLock::new(HashMap::new()),
         }
@@ -85,7 +100,105 @@ impl BalanceTracker {
     /// Refresh ETH + USDC balances for the given wallets. Best-effort per
     /// wallet: a failed fetch for one address is logged and skipped, it does
     /// not abort the rest of the sweep.
+    ///
+    /// Uses one Multicall3 `aggregate3` eth_call for the whole pool when a
+    /// Multicall3 address is configured, with automatic fallback to the
+    /// per-wallet read path if the aggregated call fails as a whole.
     pub async fn refresh(&self, wallets: &[Address]) {
+        if wallets.is_empty() {
+            return;
+        }
+
+        if let Some(multicall3) = self.multicall3 {
+            match self.refresh_via_multicall(multicall3, wallets).await {
+                Ok(()) => return,
+                Err(e) => {
+                    tracing::warn!(
+                        "Balance sweep multicall via {multicall3} failed ({e}); \
+                         falling back to per-wallet reads"
+                    );
+                }
+            }
+        }
+
+        self.refresh_sequential(wallets).await;
+    }
+
+    /// Fetch all wallet balances in a single Multicall3 `aggregate3` call:
+    /// per wallet, `getEthBalance(wallet)` (a Multicall3 built-in) plus
+    /// `USDC.balanceOf(wallet)`, both with `allowFailure: true` so one bad
+    /// wallet read doesn't poison the sweep.
+    async fn refresh_via_multicall(
+        &self,
+        multicall3: Address,
+        wallets: &[Address],
+    ) -> Result<(), String> {
+        let mut calls = Vec::with_capacity(wallets.len() * 2);
+        for &address in wallets {
+            calls.push(IMulticall3::Call3 {
+                target: multicall3,
+                allowFailure: true,
+                callData: IMulticall3::getEthBalanceCall { addr: address }
+                    .abi_encode()
+                    .into(),
+            });
+            calls.push(IMulticall3::Call3 {
+                target: self.usdc,
+                allowFailure: true,
+                callData: IERC20::balanceOfCall { account: address }
+                    .abi_encode()
+                    .into(),
+            });
+        }
+
+        let contract = IMulticall3::new(multicall3, &*self.provider);
+        let results = contract
+            .aggregate3(calls)
+            .call()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if results.len() != wallets.len() * 2 {
+            return Err(format!(
+                "expected {} multicall results, got {}",
+                wallets.len() * 2,
+                results.len()
+            ));
+        }
+
+        for (&address, pair) in wallets.iter().zip(results.chunks_exact(2)) {
+            let eth = pair[0]
+                .success
+                .then(|| U256::abi_decode(&pair[0].returnData).ok())
+                .flatten();
+            let usdc = pair[1]
+                .success
+                .then(|| U256::abi_decode(&pair[1].returnData).ok())
+                .flatten();
+
+            match (eth, usdc) {
+                (Some(eth), Some(usdc)) => self.store(
+                    address,
+                    WalletBalances {
+                        eth,
+                        usdc,
+                        fetched_at: Instant::now(),
+                    },
+                ),
+                _ => {
+                    tracing::warn!(
+                        "Failed to refresh balances for wallet {address} in multicall sweep"
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Per-wallet read path: 2 RPC calls per wallet. Used when no Multicall3
+    /// address is configured or the aggregated call failed.
+    async fn refresh_sequential(&self, wallets: &[Address]) {
         let usdc_contract = IERC20::new(self.usdc, &*self.provider);
 
         for &address in wallets {
@@ -105,19 +218,24 @@ impl BalanceTracker {
                 }
             };
 
-            let entry = WalletBalances {
-                eth,
-                usdc,
-                fetched_at: Instant::now(),
-            };
+            self.store(
+                address,
+                WalletBalances {
+                    eth,
+                    usdc,
+                    fetched_at: Instant::now(),
+                },
+            );
+        }
+    }
 
-            match self.balances.write() {
-                Ok(mut map) => {
-                    map.insert(address, entry);
-                }
-                Err(e) => {
-                    tracing::error!("Wallet balance cache lock poisoned: {e}");
-                }
+    fn store(&self, address: Address, entry: WalletBalances) {
+        match self.balances.write() {
+            Ok(mut map) => {
+                map.insert(address, entry);
+            }
+            Err(e) => {
+                tracing::error!("Wallet balance cache lock poisoned: {e}");
             }
         }
     }
@@ -276,7 +394,7 @@ mod tests {
                 .connect_http("http://127.0.0.1:1".parse().unwrap()),
         );
         let usdc = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-        let tracker = BalanceTracker::new(provider, usdc);
+        let tracker = BalanceTracker::new(provider, usdc, None);
 
         assert!(tracker.get(&test_address(0x01)).is_none());
     }
@@ -293,7 +411,7 @@ mod tests {
                 .connect_http("http://127.0.0.1:1".parse().unwrap()),
         );
         let usdc = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-        let tracker = BalanceTracker::new(provider, usdc);
+        let tracker = BalanceTracker::new(provider, usdc, None);
 
         assert_eq!(tracker.eth_floor(), U256::from(DEFAULT_MIN_ETH_WEI));
     }

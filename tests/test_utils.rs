@@ -377,7 +377,7 @@ pub fn load_contract_bytecode(contract_name: &str) -> Vec<u8> {
 }
 
 /// Deploy a contract to Anvil using bytecode
-async fn deploy_contract(
+pub async fn deploy_contract(
     provider: &the_beaconator::AlloyProvider,
     bytecode: Vec<u8>,
 ) -> Result<Address, Box<dyn std::error::Error>> {

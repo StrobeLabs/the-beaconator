@@ -1,5 +1,6 @@
 // Integration tests module
 
+pub mod balance_sweep_tests;
 pub mod beacon_core_integration_tests;
 pub mod beacon_verifiable_integration_tests;
 pub mod factory_integration_tests;

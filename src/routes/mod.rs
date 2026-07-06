@@ -103,6 +103,7 @@ mod root_sol_interfaces {
         function aggregate(Call[] calldata calls) external payable returns (uint256 blockNumber, bytes[] memory returnData);
         function aggregate3(Call3[] calldata calls) external payable returns (Result[] memory returnData);
         function tryAggregate(bool requireSuccess, Call[] calldata calls) external payable returns (Result[] memory returnData);
+        function getEthBalance(address addr) external view returns (uint256 balance);
     }
 
     // PerpFactory: deploys a per-market `Perp` contract for each beacon. v0.1.0 architecture
