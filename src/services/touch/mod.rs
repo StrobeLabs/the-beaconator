@@ -126,10 +126,12 @@ pub fn spawn_from_env(
         return TouchDispatcher::disabled();
     };
 
-    let flush_interval = Duration::from_millis(env_parse(
-        "TOUCH_FLUSH_INTERVAL_MS",
-        DEFAULT_FLUSH_INTERVAL_MS,
-    ));
+    // Floor to 1ms: tokio::time::interval panics on a zero period, which would
+    // kill the worker (while leaving the dispatcher enabled until the channel
+    // backs up). A 0 here can only come from an operator setting the env to 0.
+    let flush_interval = Duration::from_millis(
+        env_parse("TOUCH_FLUSH_INTERVAL_MS", DEFAULT_FLUSH_INTERVAL_MS).max(1),
+    );
     let max_batch = env_parse("TOUCH_MAX_BATCH", DEFAULT_MAX_BATCH).max(1);
     let mapping_ttl = Duration::from_secs(env_parse(
         "TOUCH_MAPPING_TTL_SECONDS",
