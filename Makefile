@@ -1,6 +1,6 @@
 # Makefile for the-beaconator
 
-.PHONY: help build build-release test test-unit test-integration test-parallel test-verbose test-coverage test-verify lint fmt fmt-check check clean clean-all docker-build docker-build-cached docker-run docker-run-local docker-test dev docs install pre-commit release-prep quality test-fast test-wallet test-wallet-stop test-redis test-full refresh-abis
+.PHONY: help build build-release test test-unit test-integration test-parallel test-verbose test-coverage test-verify lint fmt fmt-check check test-fork clean clean-all docker-build docker-build-cached docker-run docker-run-local docker-test dev docs install pre-commit release-prep quality test-fast test-wallet test-wallet-stop test-redis test-full refresh-abis
 
 # Default target
 help: ## Show this help message
@@ -58,6 +58,26 @@ test-fast: ## Run tests quickly (unit tests + fast integration tests, under 10s)
 	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test unit_tests -- --nocapture
 	@PATH="$$HOME/.foundry/bin:$$PATH" cargo test integration_tests::models_test -- --nocapture
 	@echo "Fast tests completed ✅"
+
+test-fork: ## Run fork-tier tests against real deployed testnet contracts (requires FORK_RPC_URL + Redis)
+	@if [ -z "$$FORK_RPC_URL" ]; then \
+		echo "FORK_RPC_URL must be set to an Arbitrum Sepolia RPC endpoint"; \
+		exit 1; \
+	fi
+	@if docker ps -a --format '{{.Names}}' | grep -q '^beaconator-redis$$'; then \
+		if ! docker ps --format '{{.Names}}' | grep -q '^beaconator-redis$$'; then \
+			echo "Starting existing Redis container..."; \
+			docker start beaconator-redis; \
+			sleep 2; \
+		fi; \
+	else \
+		echo "Creating Redis container..."; \
+		docker run -d --name beaconator-redis -p 6379:6379 redis:alpine; \
+		sleep 2; \
+	fi
+	@echo "Running fork-tier tests (Anvil fork of Arbitrum Sepolia)..."
+	@REDIS_URL=redis://127.0.0.1:6379 PATH="$$HOME/.foundry/bin:$$PATH" cargo test fork_tests -- --ignored --nocapture
+	@echo "Fork tests completed ✅"
 
 test-wallet: ## Run wallet tests with Redis (requires Redis on localhost:6379)
 	@echo "Running wallet tests (requires Redis)..."
