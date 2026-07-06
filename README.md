@@ -106,7 +106,36 @@ BEACONATOR_ACCESS_TOKEN=your_api_token_here
 
 # Environment type (mainnet, testnet, or localnet)
 ENV=testnet
+
+# ETH (wei) a pool wallet must retain AFTER a guest-funding transfer.
+# Keep ABOVE the 0.01 ETH BeaconatorWalletGasLow paging threshold so the
+# faucet throttles before beacon gas is at risk. Default 0.02 ETH.
+FAUCET_RESERVE_ETH_WEI=20000000000000000
 ```
+
+## Wallet pool top-up (testnet)
+
+The pool's USDC replenishes itself: the deployed testnet USDC
+(0xBEF280BefeE2Cb28c20D1E4Cc1da999B4DA0f1fD on Arbitrum Sepolia) has a
+permissionless mint (verified on-chain 2026-07-06; the deployed code differs
+from the owner-gated repo mock), and the admin route mints every pool wallet
+up to a per-wallet target:
+
+```bash
+curl -X POST "$BEACONATOR/top_up_pool" \
+  -H "Authorization: Bearer $BEACONATOR_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"usdc_target": "10000000000"}'   # 10,000 USDC per wallet (default)
+```
+
+The route is hard-disabled off Arbitrum Sepolia / local Anvil (same
+fail-closed chain guard as fund_guest_wallet).
+
+ETH cannot be minted. Gas top-ups stay manual: bridge or faucet Sepolia ETH
+to the pool wallet addresses (listed by the balance sweep logs and the
+WalletEthBalance CloudWatch metric). Guest funding refuses to take a wallet
+below FAUCET_RESERVE_ETH_WEI, so beacon updates keep working while the pool
+waits for gas.
 
 ## API Documentation
 

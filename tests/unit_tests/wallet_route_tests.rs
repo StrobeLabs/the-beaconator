@@ -378,3 +378,159 @@ fn test_amount_parsing_edge_cases() {
     let overflow = format!("{}0", u128::MAX);
     assert!(overflow.parse::<u128>().is_err());
 }
+
+// --- top_up_pool + faucet ETH reserve floor ---
+
+mod top_up_and_reserve {
+    use super::*;
+    use alloy::primitives::U256;
+    use alloy::providers::Provider;
+    use the_beaconator::guards::AdminToken;
+    use the_beaconator::models::TopUpPoolRequest;
+    use the_beaconator::routes::wallet::top_up_pool;
+
+    fn admin() -> AdminToken {
+        AdminToken("test_admin_token".to_string())
+    }
+
+    #[tokio::test]
+    async fn test_top_up_pool_refused_on_production_chain() {
+        let test_state = create_state_with_chain_id(42161).await;
+        let state = State::from(&test_state);
+
+        let request = Json(TopUpPoolRequest { usdc_target: None });
+        let result = top_up_pool(state, request, admin()).await;
+
+        assert!(result.is_err());
+        let (status, response) = result.unwrap_err();
+        assert_eq!(status, Status::Forbidden);
+        assert!(response.message.contains("disabled on chain id 42161"));
+    }
+
+    #[tokio::test]
+    async fn test_top_up_pool_rejects_invalid_target() {
+        let test_state = create_test_state().await;
+        let state = State::from(&test_state);
+
+        for bad in ["not-a-number", "0", "-5"] {
+            let request = Json(TopUpPoolRequest {
+                usdc_target: Some(bad.to_string()),
+            });
+            let result = top_up_pool(State::from(&test_state), request, admin()).await;
+            assert!(result.is_err(), "target {bad:?} must be rejected");
+            let (status, _) = result.unwrap_err();
+            assert_eq!(status, Status::BadRequest);
+        }
+        let _ = state;
+    }
+
+    #[tokio::test]
+    async fn test_top_up_pool_empty_pool_unavailable() {
+        // test_stub manager has no signers -> pool is empty -> 503.
+        let test_state = create_test_state().await;
+        let state = State::from(&test_state);
+
+        let request = Json(TopUpPoolRequest { usdc_target: None });
+        let result = top_up_pool(state, request, admin()).await;
+
+        assert!(result.is_err());
+        let (status, response) = result.unwrap_err();
+        assert_eq!(status, Status::ServiceUnavailable);
+        assert!(response.message.contains("pool is empty"));
+    }
+
+    /// Set an account's ETH balance on Anvil.
+    async fn set_eth_balance(
+        provider: &the_beaconator::ReadOnlyProvider,
+        address: Address,
+        wei: U256,
+    ) {
+        let _: () = provider
+            .raw_request("anvil_setBalance".into(), (address, wei))
+            .await
+            .expect("anvil_setBalance");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Redis + Anvil"]
+    async fn test_fund_guest_wallet_refused_below_eth_reserve() {
+        let (app_state, _anvil) =
+            crate::test_utils::create_isolated_test_app_state_with_redis().await;
+
+        // Drop every pool wallet to 0.015 ETH: enough for the 0.001 ETH
+        // transfer alone, NOT enough once the 0.02 ETH reserve floor applies.
+        for wallet in app_state.wallets.manager.signer_addresses() {
+            set_eth_balance(
+                &app_state.provider.read_provider,
+                wallet,
+                U256::from(15_000_000_000_000_000u128),
+            )
+            .await;
+        }
+
+        let state = State::from(&app_state);
+        let request = Json(FundGuestWalletRequest {
+            wallet_address: "0x742d35Cc6634C0532925a3b844Bc9e7595f8b94b".to_string(),
+            usdc_amount: "1000000".to_string(),
+            eth_amount: "1000000000000000".to_string(),
+        });
+
+        let result = fund_guest_wallet(state, request, ApiToken("test_token".to_string())).await;
+
+        assert!(result.is_err(), "funding must be refused below the reserve");
+        let (status, response) = result.unwrap_err();
+        assert_eq!(status, Status::ServiceUnavailable);
+        assert!(
+            response.message.contains("reserve"),
+            "unexpected message: {}",
+            response.message
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Redis + Anvil"]
+    async fn test_top_up_pool_mints_wallets_to_target() {
+        use crate::test_utils::{deploy_contract, load_contract_bytecode};
+        use alloy::network::EthereumWallet;
+        use alloy::providers::ProviderBuilder;
+        use the_beaconator::routes::IERC20;
+
+        let (mut app_state, anvil) =
+            crate::test_utils::create_isolated_test_app_state_with_redis().await;
+
+        // Deploy the permissionless-mint MockUSDC (same semantics as the
+        // deployed testnet USDC) and point the app at it.
+        let wallet = EthereumWallet::from(anvil.deployer_signer());
+        let deploy_provider = std::sync::Arc::new(
+            ProviderBuilder::new()
+                .wallet(wallet)
+                .connect_http(anvil.rpc_url().parse().expect("anvil url")),
+        );
+        let usdc = deploy_contract(&deploy_provider, load_contract_bytecode("MockUSDC"))
+            .await
+            .expect("deploy MockUSDC");
+        app_state.contracts.usdc = usdc;
+
+        let pool = app_state.wallets.manager.signer_addresses();
+        assert!(!pool.is_empty());
+
+        let state = State::from(&app_state);
+        let request = Json(TopUpPoolRequest {
+            usdc_target: Some("5000000".to_string()), // 5 USDC
+        });
+
+        let result = top_up_pool(state, request, admin()).await;
+        let response = result.expect("top up should succeed").into_inner();
+        assert!(response.success, "message: {}", response.message);
+
+        let usdc_contract = IERC20::new(usdc, &*app_state.provider.read_provider);
+        for wallet in pool {
+            let balance = usdc_contract
+                .balanceOf(wallet)
+                .call()
+                .await
+                .expect("balanceOf");
+            assert_eq!(balance, U256::from(5_000_000u64), "wallet {wallet}");
+        }
+    }
+}
