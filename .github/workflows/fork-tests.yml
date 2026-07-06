@@ -75,4 +75,12 @@ jobs:
         env:
           REDIS_URL: redis://127.0.0.1:6379
           FORK_RPC_URL: ${{ secrets.FORK_RPC_URL }}
+          # The secret currently points at the PUBLIC Sepolia RPC, which is
+          # not an archive node: forking a pinned historical block fails with
+          # "missing trie node", so CI forks the latest state instead. The
+          # drift tripwire is unaffected (it tests against the currently
+          # deployed contracts). Swap the secret to an archive-capable
+          # endpoint (e.g. Alchemy) and drop this override to get
+          # deterministic pinned-block forks.
+          FORK_BLOCK: latest
         run: cargo test fork_tests -- --ignored --nocapture
