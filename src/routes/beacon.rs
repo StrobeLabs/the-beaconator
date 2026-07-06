@@ -386,6 +386,13 @@ pub async fn update_beacon_with_ecdsa_adapter(
                      it may still confirm on-chain. Transaction hash: {tx_hash:?}"
                 )
             };
+            // Best-effort funding refresh: enqueue this beacon so the touch
+            // worker touches the perps it backs. Non-blocking and never affects
+            // this response. Only on a confirmed update, so the new index is
+            // guaranteed on-chain before we touch.
+            if outcome.confirmed {
+                state.touch.dispatch(outcome.beacon_address);
+            }
             Ok(Json(EcdsaUpdateResponse {
                 success: true,
                 data: Some(format!("Transaction hash: {tx_hash:?}")),

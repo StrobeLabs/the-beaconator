@@ -602,6 +602,7 @@ pub async fn create_test_app_state() -> AppState {
             component_factories: Arc::new(ComponentFactoryRegistry::test_stub()),
             recipes: Arc::new(RecipeRegistry::test_stub()),
         },
+        touch: the_beaconator::services::touch::TouchDispatcher::disabled(),
     }
 }
 
@@ -671,6 +672,7 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
             component_factories: Arc::new(ComponentFactoryRegistry::test_stub()),
             recipes: Arc::new(RecipeRegistry::test_stub()),
         },
+        touch: the_beaconator::services::touch::TouchDispatcher::disabled(),
     };
 
     (app_state, anvil)
@@ -765,6 +767,7 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
             component_factories: Arc::new(ComponentFactoryRegistry::test_stub()),
             recipes: Arc::new(RecipeRegistry::test_stub()),
         },
+        touch: the_beaconator::services::touch::TouchDispatcher::disabled(),
     };
 
     (app_state, anvil)
@@ -831,6 +834,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
             component_factories: Arc::new(ComponentFactoryRegistry::test_stub()),
             recipes: Arc::new(RecipeRegistry::test_stub()),
         },
+        touch: the_beaconator::services::touch::TouchDispatcher::disabled(),
     }
 }
 
@@ -948,6 +952,7 @@ pub async fn create_simple_test_app_state() -> AppState {
             component_factories: Arc::new(ComponentFactoryRegistry::test_stub()),
             recipes: Arc::new(RecipeRegistry::test_stub()),
         },
+        touch: the_beaconator::services::touch::TouchDispatcher::disabled(),
     }
 }
 
@@ -1014,6 +1019,7 @@ pub async fn create_test_app_state_with_provider(
             component_factories: Arc::new(ComponentFactoryRegistry::test_stub()),
             recipes: Arc::new(RecipeRegistry::test_stub()),
         },
+        touch: the_beaconator::services::touch::TouchDispatcher::disabled(),
     }
 }
 
