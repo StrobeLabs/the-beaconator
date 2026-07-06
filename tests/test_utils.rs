@@ -377,7 +377,7 @@ pub fn load_contract_bytecode(contract_name: &str) -> Vec<u8> {
 }
 
 /// Deploy a contract to Anvil using bytecode
-async fn deploy_contract(
+pub async fn deploy_contract(
     provider: &the_beaconator::AlloyProvider,
     bytecode: Vec<u8>,
 ) -> Result<Address, Box<dyn std::error::Error>> {
@@ -569,6 +569,7 @@ pub async fn create_test_app_state() -> AppState {
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
+            faucet_reserve_eth_wei: 20_000_000_000_000_000, // 0.02 ETH
         },
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
@@ -639,6 +640,7 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
+            faucet_reserve_eth_wei: 20_000_000_000_000_000, // 0.02 ETH
         },
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
@@ -734,6 +736,7 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
             usdc_transfer_limit: 1_000_000_000,
             eth_transfer_limit: 10_000_000_000_000_000,
             usdc_bonus_limit: 50_000_000,
+            faucet_reserve_eth_wei: 20_000_000_000_000_000, // 0.02 ETH
         },
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
@@ -801,6 +804,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
+            faucet_reserve_eth_wei: 20_000_000_000_000_000, // 0.02 ETH
         },
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
@@ -918,6 +922,7 @@ pub async fn create_simple_test_app_state() -> AppState {
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
+            faucet_reserve_eth_wei: 20_000_000_000_000_000, // 0.02 ETH
         },
         contracts: ContractAddresses {
             perpcity_registry: Address::from_str("0x2345678901234567890123456789012345678901")
@@ -985,6 +990,7 @@ pub async fn create_test_app_state_with_provider(
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
+            faucet_reserve_eth_wei: 20_000_000_000_000_000, // 0.02 ETH
         },
         contracts: ContractAddresses {
             perpcity_registry: Address::from_str("0x2345678901234567890123456789012345678901")
@@ -1112,4 +1118,274 @@ mod tests {
         assert!(!result.transaction_hash.is_empty());
         assert!(result.gas_used > 0);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Anvil fork tier (real deployed contracts)
+// ---------------------------------------------------------------------------
+
+/// Deployed per-stage addresses for the fork tier, read from
+/// `tests/fork_config/addresses.<stage>.json`. The file must track the
+/// release pinned in `.contracts-versions`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ForkAddresses {
+    pub chain_id: u64,
+    /// Default block to pin the fork to (env FORK_BLOCK overrides). Bump it
+    /// together with `.contracts-versions` so CI forks a block where the
+    /// pinned release is deployed.
+    pub fork_block: Option<u64>,
+    pub perpcity_registry: Address,
+    pub ecdsa_verifier_factory: Address,
+    pub perp_factory: Address,
+    pub fees_module: Address,
+    pub funding_module: Address,
+    pub margin_ratios_module: Address,
+    pub price_impact_module: Address,
+    pub pricing_module: Address,
+    pub usdc: Address,
+    pub multicall3: Address,
+    pub component_factories:
+        std::collections::HashMap<the_beaconator::models::ComponentFactoryType, Address>,
+}
+
+/// Load the checked-in fork address file for a stage ("testnet").
+pub fn load_fork_addresses(stage: &str) -> ForkAddresses {
+    let path = format!("tests/fork_config/addresses.{stage}.json");
+    let content = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("Failed to read fork address file {path}: {e}"));
+    serde_json::from_str(&content)
+        .unwrap_or_else(|e| panic!("Failed to parse fork address file {path}: {e}"))
+}
+
+impl AnvilManager {
+    /// Spawn an Anvil instance forking the chain at `FORK_RPC_URL`,
+    /// optionally pinned to block `FORK_BLOCK` (pin it in CI: deterministic
+    /// and provider-cache-friendly; needs an archive-capable endpoint such
+    /// as Alchemy -- public full nodes prune old state and fail with
+    /// "missing trie node". Set `FORK_BLOCK=latest` to un-pin for local runs
+    /// against a public RPC). The forked chain id is preserved (Arbitrum
+    /// Sepolia = 421614) so the fail-closed production guards see the real
+    /// testnet chain.
+    pub async fn new_fork(default_block: Option<u64>) -> Self {
+        let fork_url =
+            std::env::var("FORK_RPC_URL").expect("FORK_RPC_URL must be set for fork tests");
+        let mut anvil = Anvil::new().fork(&fork_url);
+        let pinned_block = match std::env::var("FORK_BLOCK").ok().as_deref() {
+            Some("latest") => None,
+            Some(block) => Some(
+                block
+                    .parse::<u64>()
+                    .expect("FORK_BLOCK must be a block number or \"latest\""),
+            ),
+            None => default_block,
+        };
+        if let Some(block) = pinned_block {
+            anvil = anvil.fork_block_number(block);
+        }
+        let instance = anvil.spawn();
+
+        let rpc_url = instance.endpoint();
+        let chain_id = instance.chain_id();
+        let accounts = instance.addresses().to_vec();
+        tracing::info!("Started fork Anvil: chain_id={chain_id}, rpc={rpc_url}");
+
+        Self {
+            config: AnvilConfig {
+                _instance: instance,
+                rpc_url,
+                chain_id,
+                accounts,
+            },
+        }
+    }
+}
+
+/// Everything a fork test needs: an AppState wired to the REAL deployed
+/// contracts on the fork, the fork addresses, and the single pool wallet all
+/// sends come from (one wallet so ownership handovers are deterministic).
+pub struct ForkFixture {
+    pub app_state: AppState,
+    pub addresses: ForkAddresses,
+    pub pool_wallet: Address,
+    pub anvil: AnvilManager,
+}
+
+/// Build an isolated fork fixture: fork Anvil via FORK_RPC_URL, a Redis-backed
+/// WalletManager with ONE Anvil dev signer (chain-id-corrected), and a
+/// Redis-backed ComponentFactoryRegistry seeded from the checked-in address
+/// file. Requires REDIS_URL (the wallet pool and factory registry are
+/// Redis-backed in production; stubs cannot acquire wallets).
+pub async fn create_fork_fixture() -> ForkFixture {
+    let redis_url = std::env::var("REDIS_URL").expect("REDIS_URL must be set for fork tests");
+    let addresses = load_fork_addresses("testnet");
+    let anvil = AnvilManager::new_fork(addresses.fork_block).await;
+    assert_eq!(
+        anvil.chain_id(),
+        addresses.chain_id,
+        "fork chain id must match the address file (is FORK_RPC_URL an Arbitrum Sepolia endpoint?)"
+    );
+
+    let test_prefix = format!("fork-test-{}:", uuid::Uuid::new_v4());
+
+    // One signer so every send (creation, registration, perp deploy) comes
+    // from the same wallet that receives the registry ownership handover.
+    let signer = anvil.get_signer(0).with_chain_id(Some(anvil.chain_id()));
+    let pool_wallet = signer.address();
+    let manager = WalletManager::test_with_mock_signers_and_prefix(
+        &redis_url,
+        vec![signer.clone()],
+        &test_prefix,
+    )
+    .await
+    .expect("WalletManager for fork tests");
+    manager
+        .pool()
+        .add_wallet(WalletInfo {
+            address: pool_wallet,
+            key_id: "fork-test-key-0".to_string(),
+            status: WalletStatus::Available,
+            designated_beacons: vec![],
+        })
+        .await
+        .expect("add fork pool wallet");
+
+    // Component factory registry seeded from the checked-in real addresses.
+    let component_factories =
+        the_beaconator::services::beacon::ComponentFactoryRegistry::with_prefix(
+            &redis_url,
+            &test_prefix,
+        )
+        .await
+        .expect("ComponentFactoryRegistry for fork tests");
+    let configs: Vec<the_beaconator::models::ComponentFactoryConfig> = addresses
+        .component_factories
+        .iter()
+        .map(
+            |(factory_type, address)| the_beaconator::models::ComponentFactoryConfig {
+                factory_type: factory_type.clone(),
+                address: *address,
+                enabled: true,
+            },
+        )
+        .collect();
+    component_factories
+        .seed_defaults(&configs)
+        .await
+        .expect("seed fork component factories");
+
+    let read_provider = build_test_read_only_provider(anvil.rpc_url());
+
+    let app_state = AppState {
+        provider: ProviderConfig {
+            read_provider,
+            rpc_url: anvil.rpc_url().to_string(),
+            chain_id: anvil.chain_id(),
+        },
+        wallets: WalletConfig {
+            manager: Arc::new(manager),
+            signer_address: pool_wallet,
+            signer,
+            usdc_transfer_limit: 1_000_000_000,
+            eth_transfer_limit: 10_000_000_000_000_000,
+            usdc_bonus_limit: 50_000_000,
+            faucet_reserve_eth_wei: 20_000_000_000_000_000,
+        },
+        contracts: ContractAddresses {
+            perpcity_registry: addresses.perpcity_registry,
+            perp_factory: addresses.perp_factory,
+            usdc: addresses.usdc,
+            ecdsa_verifier_factory: addresses.ecdsa_verifier_factory,
+            multicall3: Some(addresses.multicall3),
+            identity_beacon_bytecode: Bytes::new(),
+            safe: None,
+            fees_module: addresses.fees_module,
+            funding_module: addresses.funding_module,
+            margin_ratios_module: addresses.margin_ratios_module,
+            price_impact_module: addresses.price_impact_module,
+            pricing_module: addresses.pricing_module,
+            protocol_fee_manager: None,
+            module_registry: None,
+        },
+        auth: AuthConfig {
+            access_token: "test_token".to_string(),
+            admin_token: "test_admin_token".to_string(),
+        },
+        registries: Registries {
+            beacon_types: Arc::new(BeaconTypeRegistry::test_stub()),
+            component_factories: Arc::new(component_factories),
+            recipes: Arc::new(RecipeRegistry::test_stub()),
+        },
+        touch: the_beaconator::services::touch::TouchDispatcher::disabled(),
+    };
+
+    ForkFixture {
+        app_state,
+        addresses,
+        pool_wallet,
+        anvil,
+    }
+}
+
+/// Transfer Solady `Ownable` ownership of `contract_addr` to `new_owner` by
+/// impersonating the current owner (Anvil cheatcodes). Used to adopt the
+/// deployed BeaconRegistry on a fork so the test pool wallet can register
+/// beacons the way the production beaconator wallet does on testnet.
+pub async fn adopt_ownership(
+    provider: &ReadOnlyProvider,
+    contract_addr: Address,
+    new_owner: Address,
+) {
+    use alloy::providers::Provider;
+
+    // owner() selector 0x8da5cb5b
+    let owner_ret: alloy::primitives::Bytes = provider
+        .raw_request(
+            "eth_call".into(),
+            (serde_json::json!({"to": contract_addr, "data": "0x8da5cb5b"}),),
+        )
+        .await
+        .expect("read owner()");
+    let owner = Address::from_slice(&owner_ret[12..32]);
+    tracing::info!("Adopting ownership of {contract_addr}: {owner} -> {new_owner}");
+
+    let _: () = provider
+        .raw_request(
+            "anvil_setBalance".into(),
+            (owner, U256::from(1_000_000_000_000_000_000u128)),
+        )
+        .await
+        .expect("fund current owner");
+    let _: () = provider
+        .raw_request("anvil_impersonateAccount".into(), (owner,))
+        .await
+        .expect("impersonate owner");
+
+    // transferOwnership(address) selector 0xf2fde38b
+    let calldata = format!(
+        "0xf2fde38b000000000000000000000000{}",
+        hex::encode(new_owner)
+    );
+    let tx_hash: alloy::primitives::B256 = provider
+        .raw_request(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({"from": owner, "to": contract_addr, "data": calldata}),),
+        )
+        .await
+        .expect("send transferOwnership");
+    // Wait for the tx to be mined (1s block time).
+    for _ in 0..30 {
+        let receipt: Option<serde_json::Value> = provider
+            .raw_request("eth_getTransactionReceipt".into(), (tx_hash,))
+            .await
+            .unwrap_or(None);
+        if receipt.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    let _: () = provider
+        .raw_request("anvil_stopImpersonatingAccount".into(), (owner,))
+        .await
+        .expect("stop impersonating owner");
 }

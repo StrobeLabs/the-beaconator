@@ -12,9 +12,14 @@ use tracing;
 /// How long to wait for each funding transfer (ETH, USDC) to confirm.
 const FUNDING_RECEIPT_TIMEOUT: Duration = Duration::from_secs(120);
 
-use super::IERC20;
-use crate::guards::ApiToken;
-use crate::models::{ApiResponse, AppState, FundBonusWalletRequest, FundGuestWalletRequest};
+use super::{IERC20, ITestnetUSDC};
+use crate::guards::{AdminToken, ApiToken};
+use crate::models::{
+    ApiResponse, AppState, FundBonusWalletRequest, FundGuestWalletRequest, TopUpPoolRequest,
+};
+
+/// Default per-wallet USDC balance target for `/top_up_pool`: 10,000 USDC.
+const DEFAULT_TOP_UP_USDC_TARGET: u128 = 10_000_000_000;
 
 /// Production chain ids the beaconator can target. Any chain id NOT in the testnet/local
 /// allow-list (Arbitrum Sepolia = 421614, Anvil default = 31337) is treated as production
@@ -198,13 +203,22 @@ pub async fn fund_guest_wallet(
             }
         };
 
-        // Check if we have enough ETH
-        if eth_balance < U256::from(eth_amount) {
+        // Check if we have enough ETH: the transfer amount PLUS the reserve
+        // floor the wallet must retain for beacon-update gas. Without the
+        // reserve, faucet traffic can drain the pool below the
+        // BeaconatorWalletGasLow paging threshold and freeze beacon updates.
+        let eth_required =
+            U256::from(eth_amount) + U256::from(state.wallets.faucet_reserve_eth_wei);
+        if eth_balance < eth_required {
             tracing::warn!(
-                "Insufficient ETH balance in pool wallet {}. Have: {} ETH, Need: {} ETH",
+                "Pool wallet {} cannot fund guest without breaching the ETH reserve. \
+                 Have: {} ETH, Need: {} ETH (transfer + {} ETH reserve)",
                 candidate,
                 alloy::primitives::utils::format_ether(eth_balance),
-                alloy::primitives::utils::format_ether(U256::from(eth_amount))
+                alloy::primitives::utils::format_ether(eth_required),
+                alloy::primitives::utils::format_ether(U256::from(
+                    state.wallets.faucet_reserve_eth_wei
+                ))
             );
             if !last_attempt {
                 excluded_wallets.insert(candidate);
@@ -212,14 +226,16 @@ pub async fn fund_guest_wallet(
                 continue;
             }
             return Err((
-                Status::InternalServerError,
+                Status::ServiceUnavailable,
                 Json(ApiResponse {
                     success: false,
                     data: None,
                     message: format!(
-                        "Insufficient ETH balance. Have: {} ETH, Need: {} ETH",
-                        alloy::primitives::utils::format_ether(eth_balance),
-                        alloy::primitives::utils::format_ether(U256::from(eth_amount))
+                        "Guest funding refused: every pool wallet is at its ETH reserve floor \
+                         ({} ETH, kept for beacon gas). Top up the pool and retry.",
+                        alloy::primitives::utils::format_ether(U256::from(
+                            state.wallets.faucet_reserve_eth_wei
+                        ))
                     ),
                 }),
             ));
@@ -736,6 +752,201 @@ pub async fn fund_bonus_wallet(
             "Successfully funded wallet {wallet_address} with {} USDC",
             usdc_amount / 1_000_000
         ),
+    }))
+}
+
+/// Tops up pool wallets with testnet USDC by minting (admin, testnet-only).
+///
+/// The deployed testnet USDC has a permissionless `mint`, so the pool can
+/// replenish its own USDC: every pool wallet below the per-wallet target is
+/// minted up to it. ETH cannot be minted — gas top-ups remain a manual
+/// operation (see the runbook in README.md).
+#[openapi(tag = "Wallet")]
+#[post("/top_up_pool", format = "json", data = "<request>")]
+pub async fn top_up_pool(
+    state: &State<AppState>,
+    request: Json<TopUpPoolRequest>,
+    _token: AdminToken,
+) -> Result<Json<ApiResponse<Vec<String>>>, (Status, Json<ApiResponse<Vec<String>>>)> {
+    tracing::info!("Received request: POST /top_up_pool");
+
+    // Same fail-closed production guard as fund_guest_wallet: minting play
+    // money only exists on Arbitrum Sepolia / local Anvil.
+    if is_production_chain(state.provider.chain_id) {
+        let error_msg = format!(
+            "top_up_pool is disabled on chain id {} (production network); \
+             this endpoint only runs on Arbitrum Sepolia / local Anvil",
+            state.provider.chain_id
+        );
+        tracing::error!("{}", error_msg);
+        return Err((
+            Status::Forbidden,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: error_msg,
+            }),
+        ));
+    }
+
+    let usdc_target = match &request.usdc_target {
+        None => DEFAULT_TOP_UP_USDC_TARGET,
+        Some(raw) => match raw.parse::<u128>() {
+            Ok(v) if v > 0 => v,
+            Ok(_) | Err(_) => {
+                return Err((
+                    Status::BadRequest,
+                    Json(ApiResponse {
+                        success: false,
+                        data: None,
+                        message: format!("Invalid usdc_target: {raw:?}"),
+                    }),
+                ));
+            }
+        },
+    };
+
+    let pool_addresses = state.wallets.manager.signer_addresses();
+    if pool_addresses.is_empty() {
+        return Err((
+            Status::ServiceUnavailable,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "Wallet pool is empty".to_string(),
+            }),
+        ));
+    }
+
+    // Determine deficits from fresh on-chain balances.
+    let usdc_read_contract = IERC20::new(state.contracts.usdc, &*state.provider.read_provider);
+    let mut deficits: Vec<(Address, U256)> = Vec::new();
+    for &wallet in &pool_addresses {
+        let balance = match usdc_read_contract.balanceOf(wallet).call().await {
+            Ok(balance) => balance,
+            Err(e) => {
+                tracing::warn!("top_up_pool: failed to read USDC balance for {wallet}: {e}");
+                continue;
+            }
+        };
+        if balance < U256::from(usdc_target) {
+            deficits.push((wallet, U256::from(usdc_target) - balance));
+        }
+    }
+
+    if deficits.is_empty() {
+        return Ok(Json(ApiResponse {
+            success: true,
+            data: Some(vec![]),
+            message: format!(
+                "All {} pool wallets already at or above the {} USDC target",
+                pool_addresses.len(),
+                usdc_target / 1_000_000
+            ),
+        }));
+    }
+
+    // Any pool wallet can send the mints (the mint is permissionless); it
+    // only needs gas. Acquire one through the manager so the sends don't
+    // race a concurrent funding request on the same nonce.
+    let minter_handle = state
+        .wallets
+        .manager
+        .acquire_wallet_for_usdc(U256::ZERO, &std::collections::HashSet::new())
+        .await
+        .map_err(|e| {
+            let detailed_error = format!("Failed to acquire minter wallet: {e}");
+            tracing::error!("{}", detailed_error);
+            (
+                Status::ServiceUnavailable,
+                Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: "Minter wallet temporarily unavailable".to_string(),
+                }),
+            )
+        })?;
+
+    let minter_provider = minter_handle
+        .build_provider(&state.provider.rpc_url)
+        .map_err(|e| {
+            let detailed_error = format!("Failed to build minter provider: {e}");
+            tracing::error!("{}", detailed_error);
+            (
+                Status::InternalServerError,
+                Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: "Server RPC configuration is invalid".to_string(),
+                }),
+            )
+        })?;
+
+    let usdc_mint_contract = ITestnetUSDC::new(state.contracts.usdc, &minter_provider);
+    let mut results: Vec<String> = Vec::new();
+    let mut failures = 0usize;
+
+    for (wallet, deficit) in &deficits {
+        if let Err(e) = minter_handle.ensure_lock_held() {
+            tracing::error!("top_up_pool: minter wallet lock lost mid-run: {e}");
+            results.push(format!("{wallet}: skipped (minter lock lost)"));
+            failures += 1;
+            continue;
+        }
+
+        match usdc_mint_contract.mint(*wallet, *deficit).send().await {
+            Ok(pending) => {
+                let tx_hash = *pending.tx_hash();
+                match timeout(FUNDING_RECEIPT_TIMEOUT, pending.get_receipt()).await {
+                    Ok(Ok(receipt)) if receipt.status() => {
+                        tracing::info!(
+                            "top_up_pool: minted {} USDC to {} (tx {:?})",
+                            deficit / U256::from(1_000_000),
+                            wallet,
+                            receipt.transaction_hash
+                        );
+                        results.push(format!(
+                            "{wallet}: minted {} USDC (tx {:?})",
+                            deficit / U256::from(1_000_000),
+                            receipt.transaction_hash
+                        ));
+                    }
+                    Ok(Ok(_)) => {
+                        tracing::error!("top_up_pool: mint reverted for {wallet} (tx {tx_hash:?})");
+                        results.push(format!("{wallet}: mint reverted (tx {tx_hash:?})"));
+                        failures += 1;
+                    }
+                    Ok(Err(e)) => {
+                        tracing::error!("top_up_pool: mint receipt failed for {wallet}: {e}");
+                        results.push(format!("{wallet}: mint unconfirmed (tx {tx_hash:?})"));
+                        failures += 1;
+                    }
+                    Err(_) => {
+                        tracing::error!("top_up_pool: mint receipt timeout for {wallet}");
+                        results.push(format!("{wallet}: mint unconfirmed (tx {tx_hash:?})"));
+                        failures += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("top_up_pool: mint send failed for {wallet}: {e}");
+                results.push(format!("{wallet}: mint send failed"));
+                failures += 1;
+            }
+        }
+    }
+
+    let message = format!(
+        "Topped up {}/{} wallets to the {} USDC target",
+        deficits.len() - failures,
+        deficits.len(),
+        usdc_target / 1_000_000
+    );
+
+    Ok(Json(ApiResponse {
+        success: failures == 0,
+        data: Some(results),
+        message,
     }))
 }
 

@@ -390,7 +390,10 @@ pub async fn create_rocket() -> Rocket<Build> {
     if let Some(multicall_addr) = multicall3_address {
         tracing::info!("Multicall3 address configured: {:?}", multicall_addr);
     } else {
-        tracing::warn!("MULTICALL3_ADDRESS not set - batch operations will be disabled");
+        tracing::warn!(
+            "MULTICALL3_ADDRESS not set - batch operations disabled and the wallet \
+             balance sweep will use per-wallet reads"
+        );
     }
 
     // Load ECDSA verifier factory address
@@ -448,6 +451,14 @@ pub async fn create_rocket() -> Rocket<Build> {
         .unwrap_or_else(|_| "50000000".to_string()) // Default 50 USDC
         .parse::<u128>()
         .expect("Failed to parse USDC_BONUS_LIMIT");
+
+    // Post-transfer ETH reserve for guest funding. Default 0.02 ETH — above
+    // the 0.01 ETH BeaconatorWalletGasLow paging threshold, so the faucet
+    // refuses before beacon gas is at risk.
+    let faucet_reserve_eth_wei = env::var("FAUCET_RESERVE_ETH_WEI")
+        .unwrap_or_else(|_| "20000000000000000".to_string()) // Default 0.02 ETH
+        .parse::<u128>()
+        .expect("Failed to parse FAUCET_RESERVE_ETH_WEI");
 
     // Get environment configuration and chain ID
     let env_type = &rpc_config.env_type;
@@ -602,8 +613,11 @@ pub async fn create_rocket() -> Rocket<Build> {
     // funding routes can order by cached USDC, plus emits per-wallet CloudWatch
     // metrics. Attach it to the manager BEFORE it's shared behind the AppState
     // Arc below — selection reads it through that Arc from then on.
-    let balance_tracker =
-        std::sync::Arc::new(BalanceTracker::new(read_provider.clone(), usdc_address));
+    let balance_tracker = std::sync::Arc::new(BalanceTracker::new(
+        read_provider.clone(),
+        usdc_address,
+        multicall3_address,
+    ));
     wallet_manager.set_balance_tracker(std::sync::Arc::clone(&balance_tracker));
     let balance_sweep_interval = BalanceTracker::sweep_interval_from_env();
     balance_tracker.spawn_sweep(pool_addresses.clone(), balance_sweep_interval);
@@ -889,6 +903,7 @@ pub async fn create_rocket() -> Rocket<Build> {
             usdc_transfer_limit,
             eth_transfer_limit,
             usdc_bonus_limit,
+            faucet_reserve_eth_wei,
         },
         contracts: ContractAddresses {
             perpcity_registry: perpcity_registry_address,
@@ -937,6 +952,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::perp::deposit_liquidity_for_perp_endpoint,
         routes::wallet::fund_guest_wallet,
         routes::wallet::fund_bonus_wallet,
+        routes::wallet::top_up_pool,
         routes::beacon_type::list_beacon_types,
         routes::beacon_type::get_beacon_type,
         routes::beacon_type::register_beacon_type,

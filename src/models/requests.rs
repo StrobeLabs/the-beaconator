@@ -247,6 +247,18 @@ pub struct FundBonusWalletRequest {
     pub usdc_amount: String,
 }
 
+/// Top up pool wallets with testnet USDC (admin, testnet-only).
+///
+/// The deployed testnet USDC has a permissionless `mint`, so the pool can
+/// replenish itself; this backs the `/top_up_pool` route.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct TopUpPoolRequest {
+    /// Per-wallet USDC balance target in 6 decimals (e.g., "10000000000" for
+    /// 10,000 USDC). Wallets already at or above the target are skipped.
+    /// Defaults to 10,000 USDC when omitted.
+    pub usdc_target: Option<String>,
+}
+
 /// Update a beacon using ECDSA signature from the beaconator wallet
 ///
 /// This endpoint signs the measurement with the beaconator wallet and submits

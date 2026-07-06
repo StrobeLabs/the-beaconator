@@ -115,6 +115,22 @@ jobs:
         with:
           shared-key: "ci-test"
           save-if: true
+      - name: Cache Foundry
+        uses: actions/cache@v4
+        with:
+          path: ~/.foundry
+          key: foundry-${{ runner.os }}-stable
+          restore-keys: |
+            foundry-${{ runner.os }}-
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1
+
+      # The reserve-floor / pool-top-up route tests spawn an isolated Anvil
+      # and deploy the compiled MockUSDC artifact.
+      - name: Compile mock contracts
+        working-directory: tests/contracts
+        run: forge build
+
       - name: Run wallet tests (Redis-dependent)
         env:
           REDIS_URL: redis://127.0.0.1:6379
