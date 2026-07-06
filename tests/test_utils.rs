@@ -1160,17 +1160,25 @@ pub fn load_fork_addresses(stage: &str) -> ForkAddresses {
 impl AnvilManager {
     /// Spawn an Anvil instance forking the chain at `FORK_RPC_URL`,
     /// optionally pinned to block `FORK_BLOCK` (pin it in CI: deterministic
-    /// and provider-cache-friendly). The forked chain id is preserved
-    /// (Arbitrum Sepolia = 421614) so the fail-closed production guards see
-    /// the real testnet chain.
+    /// and provider-cache-friendly; needs an archive-capable endpoint such
+    /// as Alchemy -- public full nodes prune old state and fail with
+    /// "missing trie node". Set `FORK_BLOCK=latest` to un-pin for local runs
+    /// against a public RPC). The forked chain id is preserved (Arbitrum
+    /// Sepolia = 421614) so the fail-closed production guards see the real
+    /// testnet chain.
     pub async fn new_fork(default_block: Option<u64>) -> Self {
         let fork_url =
             std::env::var("FORK_RPC_URL").expect("FORK_RPC_URL must be set for fork tests");
         let mut anvil = Anvil::new().fork(&fork_url);
-        let pinned_block = std::env::var("FORK_BLOCK")
-            .ok()
-            .map(|b| b.parse::<u64>().expect("FORK_BLOCK must be a block number"))
-            .or(default_block);
+        let pinned_block = match std::env::var("FORK_BLOCK").ok().as_deref() {
+            Some("latest") => None,
+            Some(block) => Some(
+                block
+                    .parse::<u64>()
+                    .expect("FORK_BLOCK must be a block number or \"latest\""),
+            ),
+            None => default_block,
+        };
         if let Some(block) = pinned_block {
             anvil = anvil.fork_block_number(block);
         }
