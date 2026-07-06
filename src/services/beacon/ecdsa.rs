@@ -77,6 +77,9 @@ fn hold_beacon_lock_until_receipt(
 pub struct EcdsaUpdateOutcome {
     pub tx_hash: B256,
     pub confirmed: bool,
+    /// The beacon that was updated. The route uses it to dispatch a follow-up
+    /// touch of the perps backed by this beacon (only when `confirmed`).
+    pub beacon_address: Address,
 }
 
 /// Updates a beacon using ECDSA signature from the PRIVATE_KEY wallet.
@@ -401,6 +404,7 @@ pub async fn update_beacon_with_ecdsa(
             return Ok(EcdsaUpdateOutcome {
                 tx_hash,
                 confirmed: false,
+                beacon_address,
             });
         }
         Err(_) => {
@@ -420,6 +424,7 @@ pub async fn update_beacon_with_ecdsa(
             return Ok(EcdsaUpdateOutcome {
                 tx_hash,
                 confirmed: false,
+                beacon_address,
             });
         }
     };
@@ -449,6 +454,7 @@ pub async fn update_beacon_with_ecdsa(
         Ok(EcdsaUpdateOutcome {
             tx_hash,
             confirmed: true,
+            beacon_address,
         })
     } else {
         // Transaction succeeded but event not found - still consider it a success
@@ -461,6 +467,7 @@ pub async fn update_beacon_with_ecdsa(
         Ok(EcdsaUpdateOutcome {
             tx_hash,
             confirmed: true,
+            beacon_address,
         })
     }
 }

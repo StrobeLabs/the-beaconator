@@ -88,6 +88,9 @@ jobs:
         run: |
           ./scripts/anvil-cleanup.sh
           cargo test integration_tests -- --nocapture
+          # Anvil-only (no Redis) touch-via-multicall test; ignored by default so
+          # it does not run in the plain unit path.
+          cargo test touch_integration_tests -- --ignored --nocapture
           ./scripts/anvil-cleanup.sh
 
   # Wallet/Redis tests - parallel, needs Redis service
