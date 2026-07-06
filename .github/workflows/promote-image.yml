@@ -71,10 +71,14 @@ jobs:
 
       - name: Resolve source image
         id: src
+        # inputs.sha is free-text workflow_dispatch input: route it through
+        # env so it reaches bash as data, never expanded into the script.
+        env:
+          SHA_INPUT: ${{ inputs.sha }}
         run: |
           DEV_REG="${DEV_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          if [ -n "${{ inputs.sha }}" ]; then
-            SRC="${DEV_REG}/${ECR_REPO}:${{ inputs.sha }}"
+          if [ -n "$SHA_INPUT" ]; then
+            SRC="${DEV_REG}/${ECR_REPO}:${SHA_INPUT}"
           else
             SRC="$(aws ssm get-parameter --name "$TESTNET_SSM_PARAM" --query Parameter.Value --output text)"
           fi
@@ -97,15 +101,20 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Copy image and advance prod pointer
+        # SRC embeds the raw inputs.sha when provided; keep it (and the
+        # digest) out of the script body for the same injection reason.
+        env:
+          SRC_IMAGE: ${{ steps.src.outputs.src }}
+          SRC_DIGEST: ${{ steps.src.outputs.digest }}
         run: |
           PROD_REG="${PROD_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          DIGEST="${{ steps.src.outputs.digest }}"
+          DIGEST="$SRC_DIGEST"
           SHORT="${DIGEST#sha256:}"; SHORT="${SHORT:0:7}"
           aws ecr get-login-password --region "$AWS_REGION" \
             | crane auth login "$PROD_REG" -u AWS --password-stdin
           # Immutable repo: tag with the digest short form (matches the existing
           # promoted-<sha> convention).
-          crane copy "${{ steps.src.outputs.src }}" "${PROD_REG}/${ECR_REPO}:promoted-${SHORT}"
+          crane copy "$SRC_IMAGE" "${PROD_REG}/${ECR_REPO}:promoted-${SHORT}"
           PROD_URI="${PROD_REG}/${ECR_REPO}@${DIGEST}"
           aws ssm put-parameter --name "$PROD_SSM_PARAM" --type String --overwrite --value "$PROD_URI"
           {
