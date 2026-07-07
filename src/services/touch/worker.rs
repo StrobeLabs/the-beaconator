@@ -45,6 +45,11 @@ const GAS_PER_PERP: u64 = 300_000;
 /// same transaction gas limit.
 const GAS_BASE: u64 = 200_000;
 
+/// Ceiling on perps per batch, so the explicit gas limit stays comfortably
+/// under Arbitrum's 32M block gas limit (80 * 300k + 200k = 24.2M) no matter
+/// how high an operator sets `TOUCH_MAX_BATCH`.
+pub const MAX_BATCH_CEILING: usize = 80;
+
 pub struct TouchWorker {
     rx: mpsc::Receiver<Address>,
     resolver: PerpResolver,
@@ -73,7 +78,7 @@ impl TouchWorker {
             rpc_url,
             multicall3,
             flush_interval,
-            max_batch: max_batch.max(1),
+            max_batch: max_batch.clamp(1, MAX_BATCH_CEILING),
         }
     }
 
@@ -246,8 +251,11 @@ pub fn touch_calldata() -> Bytes {
 
 /// Explicit gas limit for a touch batch of `n_perps` sub-calls. See
 /// [`GAS_PER_PERP`] for why the node's estimate must not be used here.
+/// Saturating: callers are already clamped to [`MAX_BATCH_CEILING`], so a
+/// value large enough to saturate cannot occur, but a silly input must not
+/// panic in debug builds.
 pub fn touch_batch_gas_limit(n_perps: usize) -> u64 {
-    GAS_BASE + GAS_PER_PERP * (n_perps as u64)
+    GAS_BASE.saturating_add(GAS_PER_PERP.saturating_mul(n_perps as u64))
 }
 
 /// One `allowFailure` multicall entry per perp, each calling `touch()`.

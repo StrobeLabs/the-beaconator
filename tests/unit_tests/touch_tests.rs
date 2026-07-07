@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use alloy::primitives::Address;
 use the_beaconator::services::touch::{
-    dedup_preserving_order, entry_is_fresh, markets_url, parse_perp_addresses_from_json,
-    touch_batch_gas_limit, touch_calldata, touch_calls,
+    MAX_BATCH_CEILING, dedup_preserving_order, entry_is_fresh, markets_url,
+    parse_perp_addresses_from_json, touch_batch_gas_limit, touch_calldata, touch_calls,
 };
 
 #[test]
@@ -158,14 +158,16 @@ fn touch_calls_empty_input_yields_no_calls() {
 fn touch_batch_gas_limit_scales_per_perp() {
     // A single touch() runs ~130k gas on prod perps; the estimator cannot be
     // trusted with allowFailure=true (it starves the sub-calls), so the limit
-    // must comfortably cover every sub-call plus batch overhead.
-    let one = touch_batch_gas_limit(1);
-    assert!(one >= 200_000, "one perp needs sub-call gas + overhead");
-    let per_perp = touch_batch_gas_limit(2) - one;
-    assert!(
-        per_perp >= 150_000,
-        "each extra perp needs its own allowance"
-    );
-    // Full default batch (50) must stay under Arbitrum's 32M block gas limit.
-    assert!(touch_batch_gas_limit(50) < 32_000_000);
+    // must comfortably cover every sub-call plus batch overhead. Exact values
+    // pin the constants: 200k base + 300k per perp.
+    assert_eq!(touch_batch_gas_limit(1), 500_000);
+    assert_eq!(touch_batch_gas_limit(2) - touch_batch_gas_limit(1), 300_000);
+    // The largest batch the worker can send (max_batch is clamped to the
+    // ceiling) must stay under Arbitrum's 32M block gas limit.
+    assert!(touch_batch_gas_limit(MAX_BATCH_CEILING) < 32_000_000);
+}
+
+#[test]
+fn touch_batch_gas_limit_saturates_instead_of_panicking() {
+    assert_eq!(touch_batch_gas_limit(usize::MAX), u64::MAX);
 }

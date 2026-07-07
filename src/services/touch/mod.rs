@@ -20,7 +20,9 @@ pub use resolver::{
     PerpResolver, dedup_preserving_order, entry_is_fresh, markets_url,
     parse_perp_addresses_from_json,
 };
-pub use worker::{TouchWorker, touch_batch_gas_limit, touch_calldata, touch_calls};
+pub use worker::{
+    MAX_BATCH_CEILING, TouchWorker, touch_batch_gas_limit, touch_calldata, touch_calls,
+};
 
 use std::env;
 use std::sync::Arc;
@@ -132,7 +134,9 @@ pub fn spawn_from_env(
     let flush_interval = Duration::from_millis(
         env_parse("TOUCH_FLUSH_INTERVAL_MS", DEFAULT_FLUSH_INTERVAL_MS).max(1),
     );
-    let max_batch = env_parse("TOUCH_MAX_BATCH", DEFAULT_MAX_BATCH).max(1);
+    // Ceiling keeps the batch's explicit gas limit under the block gas limit
+    // even if an operator sets TOUCH_MAX_BATCH very high.
+    let max_batch = env_parse("TOUCH_MAX_BATCH", DEFAULT_MAX_BATCH).clamp(1, MAX_BATCH_CEILING);
     let mapping_ttl = Duration::from_secs(env_parse(
         "TOUCH_MAPPING_TTL_SECONDS",
         DEFAULT_MAPPING_TTL_SECS,
