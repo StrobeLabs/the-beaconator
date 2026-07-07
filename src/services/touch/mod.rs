@@ -20,7 +20,7 @@ pub use resolver::{
     PerpResolver, dedup_preserving_order, entry_is_fresh, markets_url,
     parse_perp_addresses_from_json,
 };
-pub use worker::{TouchWorker, touch_calldata, touch_calls};
+pub use worker::{TouchWorker, touch_batch_gas_limit, touch_calldata, touch_calls};
 
 use std::env;
 use std::sync::Arc;
