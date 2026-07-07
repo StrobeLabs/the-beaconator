@@ -31,6 +31,25 @@ use super::resolver::PerpResolver;
 /// how long the (single) worker blocks per flush.
 const RECEIPT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Gas allowance per touch() sub-call. eth_estimateGas cannot size this batch:
+/// with `allowFailure = true` the outer transaction succeeds even when every
+/// sub-call runs out of gas, so the estimator converges on a limit that covers
+/// only the multicall bookkeeping and starves the sub-calls (on prod, 100% of
+/// touches OOG'd inside the perp while the batch tx "succeeded" with no logs).
+/// A touch() costs ~130k gas today; 300k leaves room for state growth. Unused
+/// gas is refunded, so overshooting costs nothing.
+const GAS_PER_PERP: u64 = 300_000;
+
+/// Fixed allowance on top of the per-perp gas: multicall dispatch overhead
+/// plus Arbitrum's calldata (L1 poster) component, both charged against the
+/// same transaction gas limit.
+const GAS_BASE: u64 = 200_000;
+
+/// Ceiling on perps per batch, so the explicit gas limit stays comfortably
+/// under Arbitrum's 32M block gas limit (80 * 300k + 200k = 24.2M) no matter
+/// how high an operator sets `TOUCH_MAX_BATCH`.
+pub const MAX_BATCH_CEILING: usize = 80;
+
 pub struct TouchWorker {
     rx: mpsc::Receiver<Address>,
     resolver: PerpResolver,
@@ -59,7 +78,7 @@ impl TouchWorker {
             rpc_url,
             multicall3,
             flush_interval,
-            max_batch: max_batch.max(1),
+            max_batch: max_batch.clamp(1, MAX_BATCH_CEILING),
         }
     }
 
@@ -152,7 +171,8 @@ impl TouchWorker {
             }
 
             let calls = touch_calls(chunk);
-            match multicall.aggregate3(calls).send().await {
+            let gas_limit = touch_batch_gas_limit(chunk.len());
+            match multicall.aggregate3(calls).gas(gas_limit).send().await {
                 Ok(pending_tx) => {
                     let tx_hash = *pending_tx.tx_hash();
                     tracing::info!(
@@ -227,6 +247,15 @@ impl TouchWorker {
 /// Calldata for `Perp.touch()` (selector 0xa55526db, no arguments).
 pub fn touch_calldata() -> Bytes {
     Bytes::from(SolCall::abi_encode(&IPerp::touchCall {}))
+}
+
+/// Explicit gas limit for a touch batch of `n_perps` sub-calls. See
+/// [`GAS_PER_PERP`] for why the node's estimate must not be used here.
+/// Saturating: callers are already clamped to [`MAX_BATCH_CEILING`], so a
+/// value large enough to saturate cannot occur, but a silly input must not
+/// panic in debug builds.
+pub fn touch_batch_gas_limit(n_perps: usize) -> u64 {
+    GAS_BASE.saturating_add(GAS_PER_PERP.saturating_mul(n_perps as u64))
 }
 
 /// One `allowFailure` multicall entry per perp, each calling `touch()`.
