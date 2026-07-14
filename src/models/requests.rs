@@ -127,6 +127,15 @@ pub struct RegisterBeaconRequest {
     pub registry_address: String,
 }
 
+/// Unregister (remove) an existing beacon from the registry
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct UnregisterBeaconRequest {
+    /// Ethereum address of the beacon contract to remove
+    pub beacon_address: String,
+    /// Optional beacon registry address; defaults to the server-configured registry
+    pub registry_address: Option<String>,
+}
+
 /// Register a new beacon type in the registry
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RegisterBeaconTypeRequest {
