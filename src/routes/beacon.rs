@@ -18,14 +18,14 @@ use crate::models::{
     CreateBeaconByTypeRequest, CreateBeaconResponse, CreateBeaconWithEcdsaRequest,
     CreateBeaconWithEcdsaResponse, CreateLBCGBMBeaconRequest,
     CreateWeightedSumCompositeBeaconRequest, EcdsaUpdateResponse, RegisterBeaconRequest,
-    UpdateBeaconRequest, UpdateBeaconWithEcdsaRequest,
+    UnregisterBeaconRequest, UpdateBeaconRequest, UpdateBeaconWithEcdsaRequest,
 };
 use crate::services::beacon::modular::create_modular_beacon as service_create_modular_beacon;
 use crate::services::beacon::{
-    RegistrationOutcome, batch_update_beacon as service_batch_update_beacon,
+    RegistrationOutcome, UnregistrationOutcome, batch_update_beacon as service_batch_update_beacon,
     create_and_register_beacon_by_type, create_and_register_factory_beacon, create_identity_beacon,
     create_weighted_sum_composite_beacon, register_beacon_with_registry,
-    update_beacon as service_update_beacon,
+    unregister_beacon_with_registry, update_beacon as service_update_beacon,
     update_beacon_with_ecdsa as service_update_beacon_with_ecdsa,
 };
 
@@ -270,6 +270,96 @@ pub async fn register_beacon(
         }
         Err(e) => {
             let error_msg = format!("Failed to register beacon {beacon_address}: {e}");
+            tracing::error!("{}", error_msg);
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
+/// Removes an existing beacon from a registry contract.
+///
+/// Deregisters a previously registered beacon. When the registry owner is a Safe multisig
+/// (both live networks), a Safe transaction is proposed and only takes effect once signers
+/// execute it. `registry_address` is optional and defaults to the server-configured registry.
+#[openapi(tag = "Beacon")]
+#[post("/unregister_beacon", data = "<request>")]
+pub async fn unregister_beacon(
+    request: Json<UnregisterBeaconRequest>,
+    _token: ApiToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<String>>, Status> {
+    tracing::info!("Received request: POST /unregister_beacon");
+
+    // Validate beacon address format (must start with 0x)
+    if !request.beacon_address.starts_with("0x") {
+        tracing::error!(
+            "Invalid beacon address '{}': must start with 0x prefix",
+            request.beacon_address
+        );
+        return Err(Status::BadRequest);
+    }
+
+    // Parse the beacon address
+    let beacon_address = match Address::from_str(&request.beacon_address) {
+        Ok(addr) => addr,
+        Err(e) => {
+            tracing::error!("Invalid beacon address '{}': {}", request.beacon_address, e);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    // Resolve the registry address: use the request value if provided, else the configured default.
+    let registry_address = match &request.registry_address {
+        Some(addr_str) => {
+            if !addr_str.starts_with("0x") {
+                tracing::error!(
+                    "Invalid registry address '{}': must start with 0x prefix",
+                    addr_str
+                );
+                return Err(Status::BadRequest);
+            }
+            match Address::from_str(addr_str) {
+                Ok(addr) => addr,
+                Err(e) => {
+                    tracing::error!("Invalid registry address '{}': {}", addr_str, e);
+                    return Err(Status::BadRequest);
+                }
+            }
+        }
+        None => state.contracts.perpcity_registry,
+    };
+
+    // Unregister the beacon from the specified registry
+    match unregister_beacon_with_registry(state.inner(), beacon_address, registry_address).await {
+        Ok(outcome) => {
+            let (message, data) = match &outcome {
+                UnregistrationOutcome::AlreadyUnregistered => (
+                    "Beacon was not registered",
+                    "Already unregistered".to_string(),
+                ),
+                UnregistrationOutcome::SafeProposed(hash) => (
+                    "Safe transaction proposed for beacon unregistration",
+                    format!("Safe tx hash: {hash}"),
+                ),
+                UnregistrationOutcome::OnChainConfirmed(hash) => (
+                    "Beacon unregistered successfully",
+                    format!("Transaction hash: {hash}"),
+                ),
+            };
+            tracing::info!(
+                "{}: {} from registry {}",
+                message,
+                beacon_address,
+                registry_address
+            );
+            Ok(Json(ApiResponse {
+                success: true,
+                data: Some(data),
+                message: message.to_string(),
+            }))
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to unregister beacon {beacon_address}: {e}");
             tracing::error!("{}", error_msg);
             Err(Status::InternalServerError)
         }

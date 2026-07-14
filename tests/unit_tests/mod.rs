@@ -11,6 +11,7 @@ pub mod services_beacon_core_tests;
 pub mod services_beacon_verifiable_tests;
 pub mod services_perp_validation_tests;
 pub mod services_transaction_events_simple_tests;
+pub mod unregister_beacon_route_tests;
 // pub mod services_transaction_execution_comprehensive_tests; // Removed - nonce management obsolete with WalletManager
 pub mod factory_beacon_tests;
 pub mod modular_beacon_tests;

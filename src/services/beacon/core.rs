@@ -26,6 +26,17 @@ pub enum RegistrationOutcome {
     OnChainConfirmed(B256),
 }
 
+/// Outcome of a beacon unregistration attempt.
+#[derive(Debug)]
+pub enum UnregistrationOutcome {
+    /// Beacon was not registered, no action taken.
+    AlreadyUnregistered,
+    /// A Safe multisig transaction was proposed (not yet executed).
+    SafeProposed(B256),
+    /// Transaction was submitted and confirmed on-chain.
+    OnChainConfirmed(B256),
+}
+
 /// Create an IdentityBeacon with an ECDSA verifier.
 ///
 /// This function handles:
@@ -100,7 +111,31 @@ pub async fn is_transaction_confirmed(
     }
 }
 
-/// Check if a beacon is already registered with a registry
+/// Strictly check whether a beacon is registered, propagating RPC / contract-call failures.
+///
+/// Unlike [`is_beacon_registered`], a failed lookup returns `Err` rather than assuming the beacon
+/// is unregistered. Callers that must not treat a provider outage as "absent" (e.g. the unregister
+/// flow, where a swallowed error would silently skip the removal and report success) use this.
+pub async fn check_beacon_registered(
+    state: &AppState,
+    beacon_address: Address,
+    registry_address: Address,
+) -> Result<bool, String> {
+    // Create contract instance and call isBeaconRegistered(address) using read provider
+    let contract = IBeaconRegistry::new(registry_address, &*state.provider.read_provider);
+
+    contract
+        .isBeaconRegistered(beacon_address)
+        .call()
+        .await
+        .map_err(|e| format!("Failed to check beacon registration status: {e}"))
+}
+
+/// Check if a beacon is already registered with a registry (lenient).
+///
+/// A failed lookup is treated as "not registered" so the caller can proceed — the subsequent
+/// transaction will fail if there is a real problem. Use [`check_beacon_registered`] when a
+/// lookup failure must NOT be silently treated as absent.
 pub async fn is_beacon_registered(
     state: &AppState,
     beacon_address: Address,
@@ -111,10 +146,7 @@ pub async fn is_beacon_registered(
         beacon_address
     );
 
-    // Create contract instance and call isBeaconRegistered(address) using read provider
-    let contract = IBeaconRegistry::new(registry_address, &*state.provider.read_provider);
-
-    match contract.isBeaconRegistered(beacon_address).call().await {
+    match check_beacon_registered(state, beacon_address, registry_address).await {
         Ok(is_registered) => {
             if is_registered {
                 tracing::info!("Beacon {} is already registered", beacon_address);
@@ -124,10 +156,7 @@ pub async fn is_beacon_registered(
             Ok(is_registered)
         }
         Err(e) => {
-            tracing::warn!(
-                "Failed to check beacon registration status: {}. Assuming not registered.",
-                e
-            );
+            tracing::warn!("{e}. Assuming not registered.");
             // If we can't check, assume it's not registered to allow the operation to proceed
             Ok(false)
         }
@@ -435,6 +464,209 @@ pub async fn register_beacon_with_registry(
         Ok(RegistrationOutcome::OnChainConfirmed(tx_hash))
     } else {
         let error_msg = format!("Registration transaction {tx_hash} reverted (status: false)");
+        tracing::error!("{}", error_msg);
+        tracing::error!("Beacon: {}, Registry: {}", beacon_address, registry_address);
+        Err(error_msg)
+    }
+}
+
+/// Look up a transaction receipt on-chain after `get_receipt()` fails or times out.
+///
+/// A submitted-but-still-pending transaction returns `Ok(None)` from a single lookup, so this
+/// polls with progressive timeouts (mirroring the registration flow) before declaring the
+/// transaction missing — otherwise a slow-to-confirm tx would produce a spurious error and a
+/// client retry could duplicate it. `op` is a human-readable label used in error messages.
+async fn confirm_tx_on_chain(
+    state: &AppState,
+    tx_hash: B256,
+    op: &str,
+) -> Result<alloy::rpc::types::TransactionReceipt, String> {
+    const TIMEOUTS_SECS: [u64; 3] = [15, 30, 60];
+    for (attempt, secs) in TIMEOUTS_SECS.iter().enumerate() {
+        let last_attempt = attempt + 1 == TIMEOUTS_SECS.len();
+        match timeout(
+            Duration::from_secs(*secs),
+            is_transaction_confirmed(state, tx_hash),
+        )
+        .await
+        {
+            Ok(Ok(Some(receipt))) => return Ok(receipt),
+            // A propagated RPC error is terminal — do not keep polling.
+            Ok(Err(e)) => {
+                return Err(format!(
+                    "Failed to check {op} transaction {tx_hash} on-chain: {e}"
+                ));
+            }
+            // Not found yet, or this lookup timed out: retry unless the budget is exhausted.
+            Ok(Ok(None)) | Err(_) => {
+                if last_attempt {
+                    return Err(format!(
+                        "{op} transaction {tx_hash} not found on-chain after {} attempts",
+                        TIMEOUTS_SECS.len()
+                    ));
+                }
+                tracing::warn!(
+                    "{op} transaction {tx_hash} not yet confirmed (attempt {}/{}), retrying...",
+                    attempt + 1,
+                    TIMEOUTS_SECS.len()
+                );
+                tokio::time::sleep(Duration::from_secs(3)).await;
+            }
+        }
+    }
+    // Unreachable: the final iteration always returns, but keep the type-checker happy.
+    Err(format!("{op} transaction {tx_hash} confirmation exhausted"))
+}
+
+/// Unregister (remove) a beacon from a registry.
+///
+/// Mirrors [`register_beacon_with_registry`] with an inverted pre-check: a beacon that is
+/// not registered is a no-op. If a Safe is configured the removal is proposed as a multisig
+/// transaction (the on-chain registry owner is a Safe on both live networks, so the removal
+/// only takes effect once signers execute the proposal); otherwise it is executed directly
+/// with a pool wallet (local / non-Safe environments only).
+pub async fn unregister_beacon_with_registry(
+    state: &AppState,
+    beacon_address: Address,
+    registry_address: Address,
+) -> Result<UnregistrationOutcome, String> {
+    tracing::info!(
+        "Unregistering beacon {} from registry {}",
+        beacon_address,
+        registry_address
+    );
+
+    // Nothing to do if the beacon is not registered. Use the strict check so a lookup failure
+    // (provider outage / bad registry response) surfaces as an error instead of being silently
+    // reported as "already unregistered".
+    let is_registered = check_beacon_registered(state, beacon_address, registry_address).await?;
+    if !is_registered {
+        tracing::info!(
+            "Beacon {} is not registered with registry {}, nothing to unregister",
+            beacon_address,
+            registry_address
+        );
+        return Ok(UnregistrationOutcome::AlreadyUnregistered);
+    }
+
+    // If a Safe is configured, propose via Safe instead of direct execution.
+    if let Some(safe) = &state.contracts.safe
+        && let Some(safe_url) = &safe.tx_service_url
+    {
+        tracing::info!(
+            "Safe configured at {}, proposing multisig unregister transaction",
+            safe.address
+        );
+
+        // Build unregisterBeacon(address) calldata
+        let call = IBeaconRegistry::unregisterBeaconCall {
+            beacon: beacon_address,
+        };
+        let calldata = alloy::sol_types::SolCall::abi_encode(&call);
+
+        // Preflight: simulate the unregisterBeacon call from the Safe to catch reverts early
+        let tx_request = alloy::rpc::types::TransactionRequest::default()
+            .from(safe.address)
+            .to(registry_address)
+            .input(alloy::primitives::Bytes::from(calldata.clone()).into());
+        match state.provider.read_provider.estimate_gas(tx_request).await {
+            Ok(_) => {
+                tracing::info!("Preflight estimate_gas succeeded for unregisterBeacon");
+            }
+            Err(e) => {
+                let error_msg = format!(
+                    "Preflight check failed: unregisterBeacon would revert on registry {registry_address}: {e}",
+                );
+                tracing::error!("{}", error_msg);
+                return Err(error_msg);
+            }
+        }
+
+        let safe_service = SafeTransactionService::new(safe_url);
+        let nonce = safe_service.get_nonce(safe.address).await?;
+
+        let safe_tx_hash = safe_service
+            .propose_transaction(
+                safe.address,
+                state.provider.chain_id,
+                registry_address,
+                &calldata,
+                nonce,
+                &state.wallets.signer,
+            )
+            .await?;
+
+        tracing::info!(
+            "Safe unregister transaction proposed (nonce: {}, hash: {})",
+            nonce,
+            safe_tx_hash
+        );
+        return Ok(UnregistrationOutcome::SafeProposed(safe_tx_hash));
+    }
+
+    // Acquire a wallet from the pool for direct execution (local / non-Safe environments).
+    let wallet_handle = state
+        .wallets
+        .manager
+        .acquire_any_wallet()
+        .await
+        .map_err(|e| format!("Failed to acquire wallet: {e}"))?;
+
+    let wallet_address = wallet_handle.address();
+    tracing::info!(
+        "Acquired wallet {} for beacon unregistration",
+        wallet_address
+    );
+
+    // Build provider with the acquired wallet
+    let provider = wallet_handle
+        .build_provider(&state.provider.rpc_url)
+        .map_err(|e| format!("Failed to build provider: {e}"))?;
+
+    // Create contract instance using the wallet's provider
+    let contract = IBeaconRegistry::new(registry_address, &provider);
+
+    // Send the unregistration transaction
+    tracing::info!("Unregistering beacon with wallet {}", wallet_address);
+    wallet_handle.ensure_lock_held()?;
+    let pending_tx = match contract.unregisterBeacon(beacon_address).send().await {
+        Ok(pending) => Ok(pending),
+        Err(e) => {
+            let error_msg = format!("Failed to send unregisterBeacon transaction: {e}");
+            tracing::error!("{}", error_msg);
+            if is_nonce_error(&error_msg) {
+                tracing::warn!("Nonce error detected, transaction failed");
+            }
+            Err(error_msg)
+        }
+    }?;
+
+    let tx_hash = *pending_tx.tx_hash();
+    tracing::info!("Unregistration transaction sent, hash: {:?}", tx_hash);
+
+    // Wait for the receipt, falling back to a direct on-chain lookup.
+    let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
+        Ok(Ok(receipt)) => receipt,
+        Ok(Err(e)) => {
+            tracing::warn!("get_receipt() failed for unregistration: {e}; checking on-chain");
+            confirm_tx_on_chain(state, tx_hash, "Unregistration").await?
+        }
+        Err(_) => {
+            tracing::warn!("get_receipt() timed out for unregistration; checking on-chain");
+            confirm_tx_on_chain(state, tx_hash, "Unregistration").await?
+        }
+    };
+
+    let tx_hash = receipt.transaction_hash;
+    if receipt.status() {
+        tracing::info!(
+            "Unregistration transaction {:?} confirmed in block {:?}",
+            tx_hash,
+            receipt.block_number
+        );
+        Ok(UnregistrationOutcome::OnChainConfirmed(tx_hash))
+    } else {
+        let error_msg = format!("Unregistration transaction {tx_hash} reverted (status: false)");
         tracing::error!("{}", error_msg);
         tracing::error!("Beacon: {}, Registry: {}", beacon_address, registry_address);
         Err(error_msg)
