@@ -111,7 +111,31 @@ pub async fn is_transaction_confirmed(
     }
 }
 
-/// Check if a beacon is already registered with a registry
+/// Strictly check whether a beacon is registered, propagating RPC / contract-call failures.
+///
+/// Unlike [`is_beacon_registered`], a failed lookup returns `Err` rather than assuming the beacon
+/// is unregistered. Callers that must not treat a provider outage as "absent" (e.g. the unregister
+/// flow, where a swallowed error would silently skip the removal and report success) use this.
+pub async fn check_beacon_registered(
+    state: &AppState,
+    beacon_address: Address,
+    registry_address: Address,
+) -> Result<bool, String> {
+    // Create contract instance and call isBeaconRegistered(address) using read provider
+    let contract = IBeaconRegistry::new(registry_address, &*state.provider.read_provider);
+
+    contract
+        .isBeaconRegistered(beacon_address)
+        .call()
+        .await
+        .map_err(|e| format!("Failed to check beacon registration status: {e}"))
+}
+
+/// Check if a beacon is already registered with a registry (lenient).
+///
+/// A failed lookup is treated as "not registered" so the caller can proceed — the subsequent
+/// transaction will fail if there is a real problem. Use [`check_beacon_registered`] when a
+/// lookup failure must NOT be silently treated as absent.
 pub async fn is_beacon_registered(
     state: &AppState,
     beacon_address: Address,
@@ -122,10 +146,7 @@ pub async fn is_beacon_registered(
         beacon_address
     );
 
-    // Create contract instance and call isBeaconRegistered(address) using read provider
-    let contract = IBeaconRegistry::new(registry_address, &*state.provider.read_provider);
-
-    match contract.isBeaconRegistered(beacon_address).call().await {
+    match check_beacon_registered(state, beacon_address, registry_address).await {
         Ok(is_registered) => {
             if is_registered {
                 tracing::info!("Beacon {} is already registered", beacon_address);
@@ -135,10 +156,7 @@ pub async fn is_beacon_registered(
             Ok(is_registered)
         }
         Err(e) => {
-            tracing::warn!(
-                "Failed to check beacon registration status: {}. Assuming not registered.",
-                e
-            );
+            tracing::warn!("{e}. Assuming not registered.");
             // If we can't check, assume it's not registered to allow the operation to proceed
             Ok(false)
         }
@@ -454,29 +472,50 @@ pub async fn register_beacon_with_registry(
 
 /// Look up a transaction receipt on-chain after `get_receipt()` fails or times out.
 ///
-/// `op` is a human-readable label (e.g. "Unregistration") used in error messages.
+/// A submitted-but-still-pending transaction returns `Ok(None)` from a single lookup, so this
+/// polls with progressive timeouts (mirroring the registration flow) before declaring the
+/// transaction missing — otherwise a slow-to-confirm tx would produce a spurious error and a
+/// client retry could duplicate it. `op` is a human-readable label used in error messages.
 async fn confirm_tx_on_chain(
     state: &AppState,
     tx_hash: B256,
     op: &str,
 ) -> Result<alloy::rpc::types::TransactionReceipt, String> {
-    match timeout(
-        Duration::from_secs(30),
-        is_transaction_confirmed(state, tx_hash),
-    )
-    .await
-    {
-        Ok(Ok(Some(receipt))) => Ok(receipt),
-        Ok(Ok(None)) => Err(format!(
-            "{op} transaction {tx_hash} not found on-chain after timeout"
-        )),
-        Ok(Err(e)) => Err(format!(
-            "Failed to check {op} transaction {tx_hash} on-chain: {e}"
-        )),
-        Err(_) => Err(format!(
-            "Timeout checking {op} transaction {tx_hash} on-chain"
-        )),
+    const TIMEOUTS_SECS: [u64; 3] = [15, 30, 60];
+    for (attempt, secs) in TIMEOUTS_SECS.iter().enumerate() {
+        let last_attempt = attempt + 1 == TIMEOUTS_SECS.len();
+        match timeout(
+            Duration::from_secs(*secs),
+            is_transaction_confirmed(state, tx_hash),
+        )
+        .await
+        {
+            Ok(Ok(Some(receipt))) => return Ok(receipt),
+            // A propagated RPC error is terminal — do not keep polling.
+            Ok(Err(e)) => {
+                return Err(format!(
+                    "Failed to check {op} transaction {tx_hash} on-chain: {e}"
+                ));
+            }
+            // Not found yet, or this lookup timed out: retry unless the budget is exhausted.
+            Ok(Ok(None)) | Err(_) => {
+                if last_attempt {
+                    return Err(format!(
+                        "{op} transaction {tx_hash} not found on-chain after {} attempts",
+                        TIMEOUTS_SECS.len()
+                    ));
+                }
+                tracing::warn!(
+                    "{op} transaction {tx_hash} not yet confirmed (attempt {}/{}), retrying...",
+                    attempt + 1,
+                    TIMEOUTS_SECS.len()
+                );
+                tokio::time::sleep(Duration::from_secs(3)).await;
+            }
+        }
     }
+    // Unreachable: the final iteration always returns, but keep the type-checker happy.
+    Err(format!("{op} transaction {tx_hash} confirmation exhausted"))
 }
 
 /// Unregister (remove) a beacon from a registry.
@@ -497,8 +536,10 @@ pub async fn unregister_beacon_with_registry(
         registry_address
     );
 
-    // Nothing to do if the beacon is not registered.
-    let is_registered = is_beacon_registered(state, beacon_address, registry_address).await?;
+    // Nothing to do if the beacon is not registered. Use the strict check so a lookup failure
+    // (provider outage / bad registry response) surfaces as an error instead of being silently
+    // reported as "already unregistered".
+    let is_registered = check_beacon_registered(state, beacon_address, registry_address).await?;
     if !is_registered {
         tracing::info!(
             "Beacon {} is not registered with registry {}, nothing to unregister",

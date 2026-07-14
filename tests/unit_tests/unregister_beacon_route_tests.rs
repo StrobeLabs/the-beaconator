@@ -102,11 +102,12 @@ async fn test_unregister_beacon_too_long_address() {
     assert_eq!(result.unwrap_err(), Status::BadRequest);
 }
 
-// When the registration status cannot be read (provider unavailable), `is_beacon_registered`
-// treats the beacon as not registered, so unregister is a no-op success (AlreadyUnregistered)
-// rather than an error. This differs from register, which then errors at the code-check step.
+// The unregister flow uses a STRICT registration check, so a provider failure surfaces as an
+// error (HTTP 500) instead of being silently reported as "already unregistered". This mirrors
+// the register route's network-failure behavior and prevents a transient RPC blip from making
+// us skip a real removal while reporting success.
 #[tokio::test]
-async fn test_unregister_beacon_unknown_status_is_noop_ok() {
+async fn test_unregister_beacon_provider_failure_is_error() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
     let app_state = crate::test_utils::create_test_app_state_with_provider(mock_provider).await;
     let state = State::from(&app_state);
@@ -118,14 +119,12 @@ async fn test_unregister_beacon_unknown_status_is_noop_ok() {
     });
 
     let result = unregister_beacon(request, token, state).await;
-    assert!(
-        result.is_ok(),
-        "unknown registration status should no-op to success: {result:?}"
-    );
+    assert_eq!(result.unwrap_err(), Status::InternalServerError);
 }
 
-// registry_address = None must fall back to the server-configured registry and still succeed
-// (no-op) under the unavailable provider.
+// registry_address = None must be accepted (defaulted to the configured registry, not rejected
+// as a BadRequest). With the provider unavailable the strict check then surfaces as HTTP 500,
+// confirming the request reached the service layer rather than being turned away at validation.
 #[tokio::test]
 async fn test_unregister_beacon_defaults_registry_when_absent() {
     let mock_provider = crate::test_utils::create_mock_provider_with_network_error();
@@ -139,10 +138,8 @@ async fn test_unregister_beacon_defaults_registry_when_absent() {
     });
 
     let result = unregister_beacon(request, token, state).await;
-    assert!(
-        result.is_ok(),
-        "absent registry should default to the configured one and no-op OK: {result:?}"
-    );
+    // Not BadRequest: None was accepted and defaulted; the failure is the unreachable provider.
+    assert_eq!(result.unwrap_err(), Status::InternalServerError);
 }
 
 #[tokio::test]
