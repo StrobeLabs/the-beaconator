@@ -8,7 +8,13 @@ rocket = { version = "0.5.1", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
-alloy = { version = "2.1", features = ["full", "node-bindings", "signer-aws"] }
+# HTTP transport + local/AWS signers only. We deliberately avoid alloy's `full`
+# meta-feature: it pulls kzg (c-kzg C build), the ws/ipc/pubsub transports, and the
+# trace/txpool/debug/anvil RPC APIs -- none of which the service uses (the provider
+# is connect_http; signers are PrivateKeySigner + AwsSigner; the anvil test helpers
+# go through raw_request, not the typed AnvilApi). `essentials` already gives us
+# contract + provider-http + rpc-types + signer-local.
+alloy = { version = "2.1", features = ["essentials", "consensus", "eips", "network", "rlp", "k256", "node-bindings", "signer-aws"] }
 # AWS KMS signing: keys live in KMS (non-exportable), signed via kms:Sign, address
 # derived via kms:GetPublicKey. aws-sdk-kms is kept in the same 1.x line alloy's
 # signer-aws depends on so the `aws_sdk_kms::Client` type unifies with AwsSigner.
