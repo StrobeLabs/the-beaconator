@@ -10,7 +10,11 @@
 # rust:1.95 toolchain we already vet.
 FROM rust:1.95-bookworm AS chef
 WORKDIR /app
-RUN cargo install cargo-chef --locked
+# Pin the cargo-chef version for reproducible builds: --locked only freezes its
+# transitive deps, so an unpinned install could pull a future release that
+# changes the recipe format or bumps the required Rust toolchain and break the
+# build. 0.1.77 is the version verified against this Dockerfile.
+RUN cargo install cargo-chef --locked --version 0.1.77
 # Copy .cargo/config.toml before the cook step so the RUSTFLAGS it sets
 # (-D warnings) match between the dependency cook and the final build; a
 # mismatch changes the rustc fingerprint and makes the cooked-dependency cache
