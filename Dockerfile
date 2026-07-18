@@ -1,10 +1,41 @@
-FROM rust:1.95-bookworm AS builder
+# ---- Build ----------------------------------------------------------------
+# cargo-chef splits the ~600-crate dependency compile into its own layer, so a
+# source-only change rebuilds just the application crate instead of every
+# dependency. Before this, `COPY . . && cargo build` put all deps in a single
+# RUN layer that any source edit invalidated -- which defeated the buildx layer
+# cache (`cache-from/to: type=gha` in release-image.yml, the local buildx cache
+# in ci.yml's docker job). cargo-chef is installed into the pinned rust image
+# rather than pulled as a separate chef base image, so the build resolves
+# identically on amd64 (CI) and arm64 (Fargate/prod) and stays on the
+# rust:1.95 toolchain we already vet.
+FROM rust:1.95-bookworm AS chef
 WORKDIR /app
+# Pin the cargo-chef version for reproducible builds: --locked only freezes its
+# transitive deps, so an unpinned install could pull a future release that
+# changes the recipe format or bumps the required Rust toolchain and break the
+# build. 0.1.77 is the version verified against this Dockerfile.
+RUN cargo install cargo-chef --locked --version 0.1.77
+# Copy .cargo/config.toml before the cook step so the RUSTFLAGS it sets
+# (-D warnings) match between the dependency cook and the final build; a
+# mismatch changes the rustc fingerprint and makes the cooked-dependency cache
+# miss.
+COPY .cargo .cargo
 
-# Copy all source files
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+# Compile dependencies only. This layer is cached until Cargo.toml / Cargo.lock
+# change, so ordinary source edits skip it entirely.
+RUN cargo chef cook --release --recipe-path recipe.json
+# Copy the full source and build only the application crate on top of the
+# already-compiled dependencies.
 COPY . .
 RUN cargo build --release
 
+# ---- Runtime --------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
 # ca-certificates/libssl3 for HTTPS requests; curl so ECS container health
 # checks can run `curl -f http://localhost:8000/health`.

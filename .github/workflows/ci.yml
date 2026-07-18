@@ -35,10 +35,14 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: clippy
+      # One shared cache key across every compile job. rust-cache only caches
+      # the registry + compiled dependencies (not our own crates), so all jobs
+      # can safely share it and each restores the same warm ~600-crate build
+      # instead of maintaining its own copy.
       - name: Cache Rust dependencies and build
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "ci-lint"
+          shared-key: "ci"
           save-if: true
       - name: Lint
         run: cargo clippy --all --all-targets -- -D warnings
@@ -53,7 +57,7 @@ jobs:
       - name: Cache Rust dependencies and build
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "ci-test"
+          shared-key: "ci"
           save-if: true
       - name: Run unit tests
         run: cargo test unit_tests -- --nocapture
@@ -68,7 +72,7 @@ jobs:
       - name: Cache Rust dependencies and build
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "ci-test"
+          shared-key: "ci"
           save-if: true
       - name: Cache Foundry
         uses: actions/cache@v4
@@ -113,7 +117,7 @@ jobs:
       - name: Cache Rust dependencies and build
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "ci-test"
+          shared-key: "ci"
           save-if: true
       - name: Cache Foundry
         uses: actions/cache@v4
@@ -160,7 +164,7 @@ jobs:
       - name: Cache Rust dependencies and build
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "ci-full-integration"
+          shared-key: "ci"
           save-if: true
       - name: Cache Foundry
         uses: actions/cache@v4
