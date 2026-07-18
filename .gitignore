@@ -3,8 +3,8 @@
 **/*.rs.bk
 *.pdb
 
-# Cargo
-Cargo.lock
+# Cargo.lock is committed for reproducible builds (this is a deployed binary, not
+# a library) and to give cargo-chef a stable dependency-cache key in the image build.
 
 # IDE files
 .vscode/
