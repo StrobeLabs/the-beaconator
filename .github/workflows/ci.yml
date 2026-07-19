@@ -84,6 +84,15 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
+      - name: Cache compiled mock contracts
+        uses: actions/cache@v4
+        with:
+          path: |
+            tests/contracts/out
+            tests/contracts/cache
+          key: forge-${{ runner.os }}-${{ hashFiles('tests/contracts/**/*.sol', 'tests/contracts/foundry.toml') }}
+          restore-keys: |
+            forge-${{ runner.os }}-
       - name: Compile mock contracts
         working-directory: tests/contracts
         run: forge build
@@ -131,6 +140,15 @@ jobs:
 
       # The reserve-floor / pool-top-up route tests spawn an isolated Anvil
       # and deploy the compiled MockUSDC artifact.
+      - name: Cache compiled mock contracts
+        uses: actions/cache@v4
+        with:
+          path: |
+            tests/contracts/out
+            tests/contracts/cache
+          key: forge-${{ runner.os }}-${{ hashFiles('tests/contracts/**/*.sol', 'tests/contracts/foundry.toml') }}
+          restore-keys: |
+            forge-${{ runner.os }}-
       - name: Compile mock contracts
         working-directory: tests/contracts
         run: forge build
@@ -176,6 +194,15 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
+      - name: Cache compiled mock contracts
+        uses: actions/cache@v4
+        with:
+          path: |
+            tests/contracts/out
+            tests/contracts/cache
+          key: forge-${{ runner.os }}-${{ hashFiles('tests/contracts/**/*.sol', 'tests/contracts/foundry.toml') }}
+          restore-keys: |
+            forge-${{ runner.os }}-
       - name: Compile mock contracts
         working-directory: tests/contracts
         run: forge build
