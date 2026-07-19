@@ -74,3 +74,8 @@ debug = "line-tables-only"
 # container start. Observability here is structured logs + CloudWatch, not
 # symbol-based crash reporting, so nothing depends on the symbols.
 strip = true
+# opt-level 2 (not the release default of 3): the service is I/O-bound (RPC, Redis,
+# signing), so max codegen optimization buys no measurable runtime win but costs a
+# meaningful chunk of compile time. 2 keeps codegen fast enough and cuts the
+# release/image build time.
+opt-level = 2
