@@ -216,3 +216,35 @@ pub struct CreateModularBeaconResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub safe_proposal_hash: Option<String>,
 }
+
+/// A perp whose module swap is submitted but not yet executable (timelock pending)
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct PendingTimelock {
+    /// Perp contract address
+    pub perp_address: String,
+    /// Unix timestamp at which the setter becomes executable (call again with
+    /// phase = "execute" after this time)
+    pub executable_at: u64,
+}
+
+/// Response from a module swap
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SwapModuleResponse {
+    /// How the swap was carried out: "executed" (both batches on-chain),
+    /// "submitted_only" (submit batch on-chain; execute pending timelock or a
+    /// phase="execute" call), or "proposed" (batches proposed to the Safe
+    /// Transaction Service for multisig signing)
+    pub mode: String,
+    /// Transaction hash of the submit batch (Safe tx hash when mode = "proposed")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub submit_tx_hash: Option<String>,
+    /// Transaction hash of the execute batch (Safe tx hash when mode = "proposed")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execute_tx_hash: Option<String>,
+    /// Perps included in the batches
+    pub swapped: Vec<String>,
+    /// Perps skipped because the targeted module slot already equals the new address
+    pub skipped_already_set: Vec<String>,
+    /// Perps whose submit landed but whose timelock has not yet expired
+    pub pending_timelock: Vec<PendingTimelock>,
+}

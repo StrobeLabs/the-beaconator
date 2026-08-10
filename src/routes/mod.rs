@@ -395,5 +395,87 @@ mod component_factories {
 }
 pub use component_factories::*;
 
+// Interfaces for the /swap_module route: Perp timelocked admin functions, the Gnosis Safe
+// that owns every perp, MultiSendCallOnly batching, and one cheap view per module type used
+// as an interface probe before a swap.
+#[allow(clippy::too_many_arguments)]
+mod module_swap_interfaces {
+    alloy::sol! {
+        // Timelocked admin surface of a per-market Perp (perpcity-contracts@v0.1.0).
+        // The setters require a prior `submit(data)` from the owner where `data` is
+        // byte-identical to the eventual setter calldata; `executableAt` tracks pending
+        // submissions and `timelock` the delay (currently 0 on every deployed perp).
+        #[sol(rpc)]
+        interface IPerpAdmin {
+            function owner() external view returns (address);
+            function timelock() external view returns (uint256);
+            function executableAt(bytes calldata data) external view returns (uint256);
+            function modules() external view returns (
+                address beacon,
+                address fees,
+                address funding,
+                address marginRatios,
+                address priceImpact,
+                address pricing
+            );
+            function submit(bytes calldata data) external;
+            function setBeacon(address newBeacon) external;
+            function setPricingModule(address newPricing) external;
+            function setFundingModule(address newFunding) external;
+            function setFeesModule(address newFees) external;
+            function setMarginRatiosModule(address newMarginRatios) external;
+            function setPriceImpactModule(address newPriceImpact) external;
+        }
+
+        // Gnosis Safe v1.4.1 surface used for module swaps. The testnet Safe is 1-of-1 with
+        // the beaconator signer as owner (direct execution); mainnet is a 2-of-N multisig
+        // (proposal via the Safe Transaction Service).
+        #[sol(rpc)]
+        interface IGnosisSafe {
+            function getOwners() external view returns (address[] memory);
+            function getThreshold() external view returns (uint256);
+            function nonce() external view returns (uint256);
+            function execTransaction(
+                address to,
+                uint256 value,
+                bytes calldata data,
+                uint8 operation,
+                uint256 safeTxGas,
+                uint256 baseGas,
+                uint256 gasPrice,
+                address gasToken,
+                address refundReceiver,
+                bytes memory signatures
+            ) external payable returns (bool success);
+        }
+
+        #[sol(rpc)]
+        interface IMultiSendCallOnly {
+            function multiSend(bytes memory transactions) external payable;
+        }
+
+        // One cheap view per module type (src/interfaces/modules/*@v0.1.0), staticcalled with
+        // zeroed arguments as an interface probe: catches wrong-address / wrong-interface
+        // swaps, not semantic errors.
+        #[sol(rpc)]
+        interface IModuleProbes {
+            struct PricePair {
+                uint128 ammPrice;
+                uint128 index;
+            }
+
+            function sqrtPriceBounds(uint256 ammPrice, uint256 index, uint256 emaAmmPrice, uint256 emaIndex)
+                external view returns (uint256 sqrtMin, uint256 sqrtMax);
+            function fairPrice(uint256 ammPrice, uint256 index, uint256 emaAmmPrice, uint256 emaIndex)
+                external view returns (uint256);
+            function fees() external view returns (uint24 cFee, uint24 insFee, uint24 lpFee);
+            function makerMarginRatios() external view returns (uint24 init, uint24 liq, uint24 backstop);
+            function funding(PricePair memory spots, PricePair memory emas) external view returns (int88);
+            function index() external view returns (uint256);
+        }
+    }
+}
+pub use module_swap_interfaces::{IGnosisSafe, IModuleProbes, IMultiSendCallOnly, IPerpAdmin};
+
 // Re-export transaction utilities from services module
 pub use crate::services::transaction::execution::is_nonce_error;
