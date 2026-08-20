@@ -19,7 +19,10 @@ use redis::AsyncCommands;
 
 use crate::models::AppState;
 
-const DEFAULT_HEARTBEAT: Duration = Duration::from_secs(900);
+/// Just under the common 15-minute updater cadence, so an unchanged value
+/// arriving every 900s always republishes (elapsed ≈ 900 > 840) instead of
+/// racing the window boundary and stretching the heartbeat to two cycles.
+const DEFAULT_HEARTBEAT: Duration = Duration::from_secs(840);
 const HEARTBEAT_ENV: &str = "BEACON_UPDATE_HEARTBEAT_SECONDS";
 
 /// Dedupe window: an unchanged value is republished only after this long.
