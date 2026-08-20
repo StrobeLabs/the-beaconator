@@ -22,8 +22,9 @@ use crate::models::{
 };
 use crate::services::beacon::modular::create_modular_beacon as service_create_modular_beacon;
 use crate::services::beacon::{
-    RegistrationOutcome, UnregistrationOutcome, batch_update_beacon as service_batch_update_beacon,
-    create_and_register_beacon_by_type, create_and_register_factory_beacon, create_identity_beacon,
+    EcdsaUpdateOutcome, RegistrationOutcome, UnregistrationOutcome,
+    batch_update_beacon as service_batch_update_beacon, create_and_register_beacon_by_type,
+    create_and_register_factory_beacon, create_identity_beacon,
     create_weighted_sum_composite_beacon, register_beacon_with_registry,
     unregister_beacon_with_registry, update_beacon as service_update_beacon,
     update_beacon_with_ecdsa as service_update_beacon_with_ecdsa,
@@ -457,9 +458,25 @@ pub async fn update_beacon_with_ecdsa_adapter(
     tracing::info!("Received request: POST /update_beacon_with_ecdsa_adapter");
 
     match service_update_beacon_with_ecdsa(state.inner(), request.into_inner()).await {
-        Ok(outcome) => {
-            let tx_hash = outcome.tx_hash;
-            let message = if outcome.confirmed {
+        Ok(EcdsaUpdateOutcome::Skipped { beacon_address }) => {
+            // No tx was sent (value unchanged inside the heartbeat window), so
+            // there is nothing to touch and no hash to return.
+            tracing::info!("Beacon {beacon_address} update skipped: value unchanged on-chain");
+            Ok(Json(EcdsaUpdateResponse {
+                success: true,
+                data: None,
+                message: "Beacon update skipped: on-chain value already equals the measurement"
+                    .to_string(),
+                confirmed: true,
+                skipped: true,
+            }))
+        }
+        Ok(EcdsaUpdateOutcome::Published {
+            tx_hash,
+            confirmed,
+            beacon_address,
+        }) => {
+            let message = if confirmed {
                 tracing::info!(
                     "Successfully updated beacon with ECDSA signature. TX: {:?}",
                     tx_hash
@@ -480,14 +497,15 @@ pub async fn update_beacon_with_ecdsa_adapter(
             // worker touches the perps it backs. Non-blocking and never affects
             // this response. Only on a confirmed update, so the new index is
             // guaranteed on-chain before we touch.
-            if outcome.confirmed {
-                state.touch.dispatch(outcome.beacon_address);
+            if confirmed {
+                state.touch.dispatch(beacon_address);
             }
             Ok(Json(EcdsaUpdateResponse {
                 success: true,
                 data: Some(format!("Transaction hash: {tx_hash:?}")),
                 message,
-                confirmed: outcome.confirmed,
+                confirmed,
+                skipped: false,
             }))
         }
         Err(e) => {

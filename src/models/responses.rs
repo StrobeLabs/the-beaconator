@@ -29,6 +29,11 @@ pub struct EcdsaUpdateResponse {
     pub message: String,
     /// true = mined and succeeded; false = sent but unconfirmed at timeout
     pub confirmed: bool,
+    /// true = no transaction was sent: the on-chain value already equals the
+    /// requested measurement and the last publish is inside the dedupe
+    /// heartbeat window. `data` is null in that case.
+    #[serde(default)]
+    pub skipped: bool,
 }
 
 /// Result of updating a single beacon

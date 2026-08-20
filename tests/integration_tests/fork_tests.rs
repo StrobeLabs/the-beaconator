@@ -27,7 +27,7 @@ mod tests {
     use the_beaconator::services::beacon::core::{
         RegistrationOutcome, register_beacon_with_registry,
     };
-    use the_beaconator::services::beacon::ecdsa::update_beacon_with_ecdsa;
+    use the_beaconator::services::beacon::ecdsa::{EcdsaUpdateOutcome, update_beacon_with_ecdsa};
     use the_beaconator::services::beacon::modular::create_modular_beacon;
     use the_beaconator::services::perp::core::deploy_perp_for_beacon;
 
@@ -141,7 +141,10 @@ mod tests {
         )
         .await
         .expect("ECDSA update against real verifier");
-        assert_ne!(outcome.tx_hash, B256::ZERO);
+        let EcdsaUpdateOutcome::Published { tx_hash, .. } = outcome else {
+            panic!("update of a NEW value must publish, not dedupe-skip");
+        };
+        assert_ne!(tx_hash, B256::ZERO);
         let index = beacon_contract.index().call().await.expect("index()");
         assert_eq!(index, new_index_q96, "IndexUpdated must land the new value");
 
