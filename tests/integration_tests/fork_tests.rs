@@ -148,6 +148,45 @@ mod tests {
         let index = beacon_contract.index().call().await.expect("index()");
         assert_eq!(index, new_index_q96, "IndexUpdated must land the new value");
 
+        // --- Dedupe: same value again, inside the heartbeat window -> Skipped,
+        // no transaction (the publish above just recorded its timestamp) ---
+        let outcome = update_beacon_with_ecdsa(
+            &app_state,
+            UpdateBeaconWithEcdsaRequest {
+                beacon_address: beacon.to_string(),
+                measurement: vec![new_index_q96.to_string()],
+            },
+        )
+        .await
+        .expect("ECDSA dedupe re-update");
+        assert!(
+            matches!(outcome, EcdsaUpdateOutcome::Skipped { .. }),
+            "unchanged value inside the heartbeat window must dedupe-skip"
+        );
+        let index = beacon_contract.index().call().await.expect("index()");
+        assert_eq!(
+            index, new_index_q96,
+            "skip must leave the on-chain value untouched"
+        );
+
+        // --- Dedupe never suppresses a real change: a new value publishes ---
+        let third_index_q96: U256 = U256::from(3u128) << 96; // 3.0 in Q96
+        let outcome = update_beacon_with_ecdsa(
+            &app_state,
+            UpdateBeaconWithEcdsaRequest {
+                beacon_address: beacon.to_string(),
+                measurement: vec![third_index_q96.to_string()],
+            },
+        )
+        .await
+        .expect("ECDSA update with changed value after a skip");
+        assert!(
+            matches!(outcome, EcdsaUpdateOutcome::Published { .. }),
+            "a changed value must always publish"
+        );
+        let index = beacon_contract.index().call().await.expect("index()");
+        assert_eq!(index, third_index_q96, "changed value must land on-chain");
+
         // --- Perp deploy: real createPerp encoding + PerpCreated decode ---
         let response = deploy_perp_for_beacon(
             &app_state,

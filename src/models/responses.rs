@@ -14,10 +14,11 @@ pub struct ApiResponse<T> {
 
 /// Response for `/update_beacon_with_ecdsa_adapter`.
 ///
-/// Same shape as `ApiResponse<String>` plus a `confirmed` flag: `true` when the
-/// update transaction was mined successfully, `false` when it was sent but its
-/// receipt did not arrive within the wait window (it may still confirm — the
-/// transaction hash in `data`/`message` can be polled). The Python updater
+/// Same shape as `ApiResponse<String>` plus two flags. `success` means the
+/// request completed; `confirmed` means an update transaction was mined
+/// successfully. `confirmed: false` with a transaction hash in `data` means
+/// sent-but-unconfirmed (the hash can be polled); `confirmed: false` with
+/// `skipped: true` means no transaction exists at all. The Python updater
 /// parses the "Transaction hash: 0x..." text, so that format must be preserved.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EcdsaUpdateResponse {
@@ -27,11 +28,13 @@ pub struct EcdsaUpdateResponse {
     pub data: Option<String>,
     /// Human-readable message about the result
     pub message: String,
-    /// true = mined and succeeded; false = sent but unconfirmed at timeout
+    /// true = an update transaction was mined and succeeded. false = no
+    /// confirmed transaction: either sent-but-unconfirmed at timeout (`data`
+    /// carries the hash to poll) or skipped (no tx at all — see `skipped`)
     pub confirmed: bool,
     /// true = no transaction was sent: the on-chain value already equals the
     /// requested measurement and the last publish is inside the dedupe
-    /// heartbeat window. `data` is null in that case.
+    /// heartbeat window. `data` is null and `confirmed` is false in that case.
     #[serde(default)]
     pub skipped: bool,
 }
