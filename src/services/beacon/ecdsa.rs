@@ -69,17 +69,22 @@ fn hold_beacon_lock_until_receipt(
 }
 
 /// Outcome of an ECDSA beacon update.
-///
-/// `confirmed == false` means the transaction was SENT but its receipt did not
-/// arrive within the wait window — it may still confirm on-chain. The route
-/// surfaces this to the caller (the Python updater) instead of erroring, so the
-/// caller can poll the hash rather than blindly re-sending.
-pub struct EcdsaUpdateOutcome {
-    pub tx_hash: B256,
-    pub confirmed: bool,
-    /// The beacon that was updated. The route uses it to dispatch a follow-up
-    /// touch of the perps backed by this beacon (only when `confirmed`).
-    pub beacon_address: Address,
+pub enum EcdsaUpdateOutcome {
+    /// An update transaction was sent. `confirmed == false` means its receipt
+    /// did not arrive within the wait window — it may still confirm on-chain.
+    /// The route surfaces this to the caller (the Python updater) instead of
+    /// erroring, so the caller can poll the hash rather than blindly
+    /// re-sending. `beacon_address` lets the route dispatch a follow-up touch
+    /// of the perps backed by this beacon (only when `confirmed`).
+    Published {
+        tx_hash: B256,
+        confirmed: bool,
+        beacon_address: Address,
+    },
+    /// No transaction was sent: the on-chain index already equals the
+    /// requested measurement and the last publish is inside the dedupe
+    /// heartbeat window (see [`super::dedupe`]).
+    Skipped { beacon_address: Address },
 }
 
 /// Updates a beacon using ECDSA signature from the PRIVATE_KEY wallet.
@@ -172,6 +177,36 @@ pub async fn update_beacon_with_ecdsa(
         .manager
         .acquire_beacon_update_lock(beacon_address)
         .await?;
+
+    // 4b. Value dedupe: when the on-chain index already equals the requested
+    // measurement, skip the tx unless the heartbeat window has elapsed. The
+    // read happens under the beacon update lock, so it reflects the previous
+    // update. Every failure here falls through to a normal publish.
+    if let Some(window) = super::dedupe::heartbeat_window()
+        && measurement_array.len() == 1
+    {
+        match beacon_read.index().call().await {
+            Ok(current) if current == measurement_array[0] => {
+                if let Some(elapsed) =
+                    super::dedupe::seconds_since_last_publish(state, &beacon_address).await
+                    && elapsed < window.as_secs()
+                {
+                    tracing::info!(
+                        "Skipping update for beacon {beacon_address}: on-chain index \
+                         already {current}, last publish {elapsed}s ago (heartbeat {}s)",
+                        window.as_secs()
+                    );
+                    return Ok(EcdsaUpdateOutcome::Skipped { beacon_address });
+                }
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(
+                    "Dedupe index() read for beacon {beacon_address} failed: {e} — publishing"
+                );
+            }
+        }
+    }
 
     // 5. Bounded retry budget for wallet acquisition: one attempt per pool
     // wallet at most (floor 1). A wallet that turns out to be drained of gas
@@ -401,7 +436,8 @@ pub async fn update_beacon_with_ecdsa(
             tracing::error!(
                 "Failed to get receipt for sent update tx {tx_hash}: {e} - returning unconfirmed"
             );
-            return Ok(EcdsaUpdateOutcome {
+            super::dedupe::record_publish(state, &beacon_address).await;
+            return Ok(EcdsaUpdateOutcome::Published {
                 tx_hash,
                 confirmed: false,
                 beacon_address,
@@ -421,7 +457,8 @@ pub async fn update_beacon_with_ecdsa(
             tracing::warn!(
                 "Timeout waiting for transaction {tx_hash} receipt — returning unconfirmed"
             );
-            return Ok(EcdsaUpdateOutcome {
+            super::dedupe::record_publish(state, &beacon_address).await;
+            return Ok(EcdsaUpdateOutcome::Published {
                 tx_hash,
                 confirmed: false,
                 beacon_address,
@@ -451,11 +488,6 @@ pub async fn update_beacon_with_ecdsa(
             beacon_address,
             measurement_array.len()
         );
-        Ok(EcdsaUpdateOutcome {
-            tx_hash,
-            confirmed: true,
-            beacon_address,
-        })
     } else {
         // Transaction succeeded but event not found - still consider it a success
         // as the transaction was confirmed
@@ -464,12 +496,13 @@ pub async fn update_beacon_with_ecdsa(
              The update may have been applied but event parsing failed.",
             beacon_address
         );
-        Ok(EcdsaUpdateOutcome {
-            tx_hash,
-            confirmed: true,
-            beacon_address,
-        })
     }
+    super::dedupe::record_publish(state, &beacon_address).await;
+    Ok(EcdsaUpdateOutcome::Published {
+        tx_hash,
+        confirmed: true,
+        beacon_address,
+    })
 }
 
 #[cfg(test)]

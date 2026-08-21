@@ -166,7 +166,8 @@ impl BalanceTracker {
             ));
         }
 
-        for (&address, pair) in wallets.iter().zip(results.chunks_exact(2)) {
+        let (pairs, _) = results.as_chunks::<2>();
+        for (&address, pair) in wallets.iter().zip(pairs) {
             let eth = pair[0]
                 .success
                 .then(|| U256::abi_decode(&pair[0].returnData).ok())

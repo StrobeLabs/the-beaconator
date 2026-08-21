@@ -18,8 +18,9 @@ use alloy::signers::local::PrivateKeySigner;
 use alloy::signers::{Error as SignerError, Signature, Signer};
 
 use crate::AlloyProvider;
-use crate::models::wallet::{WalletInfo, WalletManagerConfig};
+use crate::models::wallet::{PrefixedRedisKeys, WalletInfo, WalletManagerConfig};
 use crate::services::wallet::sync::WalletSyncService;
+use redis::aio::ConnectionManager;
 
 /// A gas-payer pool signer: either a local private key (dev/CI) or an AWS KMS
 /// key (production). The pool is keyed by Ethereum address regardless of backend.
@@ -258,6 +259,15 @@ impl WalletManager {
     /// Get addresses of all signers (for populating wallet pool)
     pub fn signer_addresses(&self) -> Vec<Address> {
         self.signers.keys().copied().collect()
+    }
+
+    /// Redis handle for auxiliary beacon state (the dedupe last-publish
+    /// timestamps). `None` when the manager has no pool (test stub) — callers
+    /// treat that as "no record" and publish.
+    pub fn redis(&self) -> Option<(ConnectionManager, PrefixedRedisKeys)> {
+        self.pool
+            .as_ref()
+            .map(|p| (p.connection().clone(), p.keys().clone()))
     }
 
     fn require_pool(&self) -> &WalletPool {
