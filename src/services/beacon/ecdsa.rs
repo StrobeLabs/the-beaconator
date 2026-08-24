@@ -11,7 +11,7 @@ use tracing;
 use crate::ReadOnlyProvider;
 use crate::models::{AppState, UpdateBeaconWithEcdsaRequest};
 use crate::routes::{IBeacon, IEcdsaVerifier};
-use crate::services::transaction::execution::is_insufficient_funds_error;
+use crate::services::transaction::execution::{is_insufficient_funds_error, send_with_nonce_retry};
 use crate::services::wallet::{LockHeartbeat, WalletHandle, WalletLockGuard};
 
 /// How long a sent-but-unresolved update tx keeps its beacon lock alive while a
@@ -375,19 +375,26 @@ pub async fn update_beacon_with_ecdsa(
             "Sending update transaction to beacon with wallet {}",
             attempt_address
         );
-        handle.ensure_lock_held()?;
-        match beacon_write
-            .update(sig_bytes.clone(), inputs_bytes.clone())
-            .send()
-            .await
-        {
+        // Nonce errors are retried inside the helper; only non-nonce errors
+        // (e.g. a drained wallet) surface here for the rotation below.
+        let send_result = send_with_nonce_retry("ecdsa beacon update", || {
+            let handle = &handle;
+            let call = beacon_write.update(sig_bytes.clone(), inputs_bytes.clone());
+            Box::pin(async move {
+                handle.ensure_lock_held()?;
+                call.send()
+                    .await
+                    .map_err(|e| format!("Failed to send update transaction: {e}"))
+            })
+        })
+        .await;
+        match send_result {
             Ok(pt) => {
                 pending_tx = Some(pt);
                 wallet_handle = Some(handle);
                 break;
             }
-            Err(e) => {
-                let error_msg = format!("Failed to send update transaction: {e}");
+            Err(error_msg) => {
                 if is_insufficient_funds_error(&error_msg) && attempt < max_wallet_attempts {
                     tracing::warn!(
                         "Wallet {attempt_address} appears out of gas (send failed with \

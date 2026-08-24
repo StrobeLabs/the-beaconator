@@ -5,7 +5,7 @@ use tokio::time::timeout;
 use tracing;
 
 use super::super::transaction::events::{parse_maker_opened_event, parse_perp_created_event};
-use super::super::transaction::execution::is_nonce_error;
+use super::super::transaction::execution::send_with_nonce_retry;
 use super::validation::try_decode_revert_reason;
 use crate::models::{AppState, DeployPerpForBeaconResponse, DepositLiquidityForPerpResponse};
 use crate::routes::{IERC20, IPerp, IPerpFactory};
@@ -114,9 +114,9 @@ pub async fn deploy_perp_for_beacon(
     let ema_window_u24 = alloy::primitives::Uint::<24, 1>::from(ema_window);
 
     tracing::info!("Sending createPerp transaction to PerpFactory...");
-    wallet_handle.ensure_lock_held()?;
-    let pending_tx = factory
-        .createPerp(
+    let pending_tx = send_with_nonce_retry("createPerp", || {
+        let wallet_handle = &wallet_handle;
+        let call = factory.createPerp(
             owner,
             name.clone(),
             symbol.clone(),
@@ -124,21 +124,24 @@ pub async fn deploy_perp_for_beacon(
             modules.clone(),
             ema_window_u24,
             salt,
-        )
-        .send()
-        .await
-        .map_err(|e| {
-            let mut error_msg = format!("createPerp send failed: {e}");
-            if let Some(decoded) = try_decode_revert_reason(&e) {
-                error_msg = format!("createPerp reverted: {decoded}");
-            }
-            tracing::error!("{}", error_msg);
-            tracing::error!("Context:");
-            tracing::error!("  - PerpFactory: {}", state.contracts.perp_factory);
-            tracing::error!("  - Beacon: {}", beacon_address);
-            tracing::error!("  - Owner: {}", owner);
-            error_msg
-        })?;
+        );
+        Box::pin(async move {
+            wallet_handle.ensure_lock_held()?;
+            call.send().await.map_err(|e| {
+                let mut error_msg = format!("createPerp send failed: {e}");
+                if let Some(decoded) = try_decode_revert_reason(&e) {
+                    error_msg = format!("createPerp reverted: {decoded}");
+                }
+                tracing::error!("{}", error_msg);
+                tracing::error!("Context:");
+                tracing::error!("  - PerpFactory: {}", state.contracts.perp_factory);
+                tracing::error!("  - Beacon: {}", beacon_address);
+                tracing::error!("  - Owner: {}", owner);
+                error_msg
+            })
+        })
+    })
+    .await?;
 
     let pending_tx_hash = *pending_tx.tx_hash();
     tracing::info!("createPerp tx hash: {:?}", pending_tx_hash);
@@ -326,19 +329,19 @@ pub async fn deposit_liquidity_for_perp(
     );
 
     let usdc_contract = IERC20::new(state.contracts.usdc, &provider);
-    wallet_handle.ensure_lock_held()?;
-    let pending_approval = usdc_contract
-        .approve(perp_address, U256::from(margin_amount_usdc))
-        .send()
-        .await
-        .map_err(|e| {
-            let error_msg = format!("Failed to approve USDC spending: {e}");
-            tracing::error!("{}", error_msg);
-            if is_nonce_error(&error_msg) {
-                tracing::warn!("Nonce error detected, transaction failed");
-            }
-            error_msg
-        })?;
+    let pending_approval = send_with_nonce_retry("USDC approve", || {
+        let wallet_handle = &wallet_handle;
+        let call = usdc_contract.approve(perp_address, U256::from(margin_amount_usdc));
+        Box::pin(async move {
+            wallet_handle.ensure_lock_held()?;
+            call.send().await.map_err(|e| {
+                let error_msg = format!("Failed to approve USDC spending: {e}");
+                tracing::error!("{}", error_msg);
+                error_msg
+            })
+        })
+    })
+    .await?;
 
     let approval_tx_hash = *pending_approval.tx_hash();
     tracing::info!("USDC approval tx hash: {:?}", approval_tx_hash);
@@ -373,22 +376,24 @@ pub async fn deposit_liquidity_for_perp(
     }
 
     tracing::info!("Opening maker position with wallet {}", wallet_address);
-    wallet_handle.ensure_lock_held()?;
-    let pending_tx = perp
-        .openMaker(open_maker_params.clone())
-        .send()
-        .await
-        .map_err(|e| {
-            let mut error_msg = format!("openMaker send failed: {e}");
-            if let Some(decoded) = try_decode_revert_reason(&e) {
-                error_msg = format!("openMaker reverted: {decoded}");
-            }
-            tracing::error!("{}", error_msg);
-            if is_nonce_error(&error_msg) {
-                tracing::warn!("Nonce error detected, transaction failed");
-            }
-            error_msg
-        })?;
+    // openMaker follows the USDC approve on the same wallet — the same
+    // sequential-tx stale-nonce window as the beacon create path.
+    let pending_tx = send_with_nonce_retry("openMaker", || {
+        let wallet_handle = &wallet_handle;
+        let call = perp.openMaker(open_maker_params.clone());
+        Box::pin(async move {
+            wallet_handle.ensure_lock_held()?;
+            call.send().await.map_err(|e| {
+                let mut error_msg = format!("openMaker send failed: {e}");
+                if let Some(decoded) = try_decode_revert_reason(&e) {
+                    error_msg = format!("openMaker reverted: {decoded}");
+                }
+                tracing::error!("{}", error_msg);
+                error_msg
+            })
+        })
+    })
+    .await?;
 
     let deposit_tx_hash = *pending_tx.tx_hash();
     tracing::info!("openMaker tx hash: {:?}", deposit_tx_hash);
