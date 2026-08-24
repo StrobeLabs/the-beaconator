@@ -12,6 +12,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 use crate::models::AppState;
+use crate::services::transaction::execution::send_with_nonce_retry;
 use crate::services::wallet::WalletHandle;
 
 /// Deploys an IdentityBeacon contract with the given verifier and initial index.
@@ -50,12 +51,21 @@ pub async fn deploy_identity_beacon(
     // Build deployment transaction using with_deploy_code for proper contract creation
     let tx = TransactionRequest::default().with_deploy_code(Bytes::from(deploy_data));
 
-    // Send deployment transaction
-    wallet_handle.ensure_lock_held()?;
-    let pending_tx = provider
-        .send_transaction(tx)
-        .await
-        .map_err(|e| format!("Failed to send beacon deployment transaction: {e}"))?;
+    // Send deployment transaction (this is the send that failed "nonce too
+    // low" on prod 2026-08-24: it follows the verifier deploy on the same
+    // wallet, and a lagging RPC replica served the pre-confirmation nonce)
+    let pending_tx = send_with_nonce_retry("beacon deployment", || {
+        let provider = &provider;
+        let tx = tx.clone();
+        Box::pin(async move {
+            wallet_handle.ensure_lock_held()?;
+            provider
+                .send_transaction(tx)
+                .await
+                .map_err(|e| format!("Failed to send beacon deployment transaction: {e}"))
+        })
+    })
+    .await?;
 
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Beacon deployment tx sent: {:?}", tx_hash);

@@ -9,6 +9,7 @@ use tokio::time::timeout;
 
 use crate::models::AppState;
 use crate::routes::IEcdsaVerifierFactory;
+use crate::services::transaction::execution::send_with_nonce_retry;
 use crate::services::wallet::WalletHandle;
 
 /// Creates an ECDSAVerifier via the ECDSAVerifierFactory contract.
@@ -48,13 +49,18 @@ pub async fn create_ecdsa_verifier(
         verifier_address
     );
 
-    // Execute the actual transaction
-    wallet_handle.ensure_lock_held()?;
-    let pending_tx = factory
-        .createVerifier(signer_address)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to send createVerifier transaction: {e}"))?;
+    // Execute the actual transaction (nonce errors retried; lock re-checked
+    // per attempt since a retry can outlive a lock heartbeat)
+    let pending_tx = send_with_nonce_retry("createVerifier", || {
+        let call = factory.createVerifier(signer_address);
+        Box::pin(async move {
+            wallet_handle.ensure_lock_held()?;
+            call.send()
+                .await
+                .map_err(|e| format!("Failed to send createVerifier transaction: {e}"))
+        })
+    })
+    .await?;
 
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Verifier creation tx sent: {:?}", tx_hash);
