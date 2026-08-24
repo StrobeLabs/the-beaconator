@@ -5,10 +5,10 @@ use tokio::time::timeout;
 use tracing;
 
 use super::super::transaction::events::{parse_maker_opened_event, parse_perp_created_event};
-use super::super::transaction::execution::is_nonce_error;
 use super::validation::try_decode_revert_reason;
 use crate::models::{AppState, DeployPerpForBeaconResponse, DepositLiquidityForPerpResponse};
 use crate::routes::{IERC20, IPerp, IPerpFactory};
+use crate::services::transaction::{is_nonce_error, resynced_nonce};
 
 /// Deploys a per-market `Perp` contract via PerpFactory.createPerp (perpcity-contracts@v0.1.0).
 ///
@@ -115,8 +115,8 @@ pub async fn deploy_perp_for_beacon(
 
     tracing::info!("Sending createPerp transaction to PerpFactory...");
     wallet_handle.ensure_lock_held()?;
-    let pending_tx = factory
-        .createPerp(
+    let build_create_perp = || {
+        factory.createPerp(
             owner,
             name.clone(),
             symbol.clone(),
@@ -125,20 +125,39 @@ pub async fn deploy_perp_for_beacon(
             ema_window_u24,
             salt,
         )
-        .send()
-        .await
-        .map_err(|e| {
-            let mut error_msg = format!("createPerp send failed: {e}");
+    };
+    let log_create_perp_context = |error_msg: &str| {
+        tracing::error!("{}", error_msg);
+        tracing::error!("Context:");
+        tracing::error!("  - PerpFactory: {}", state.contracts.perp_factory);
+        tracing::error!("  - Beacon: {}", beacon_address);
+        tracing::error!("  - Owner: {}", owner);
+    };
+    // On a nonce-too-low send failure (fresh provider seeded from a lagging
+    // RPC read), resync from the chain's pending count and retry once. A
+    // decoded revert is a real on-chain rejection and is never retried.
+    let pending_tx = match build_create_perp().send().await {
+        Ok(pending) => pending,
+        Err(e) => {
             if let Some(decoded) = try_decode_revert_reason(&e) {
-                error_msg = format!("createPerp reverted: {decoded}");
+                let error_msg = format!("createPerp reverted: {decoded}");
+                log_create_perp_context(&error_msg);
+                return Err(error_msg);
             }
-            tracing::error!("{}", error_msg);
-            tracing::error!("Context:");
-            tracing::error!("  - PerpFactory: {}", state.contracts.perp_factory);
-            tracing::error!("  - Beacon: {}", beacon_address);
-            tracing::error!("  - Owner: {}", owner);
-            error_msg
-        })?;
+            let first = format!("createPerp send failed: {e}");
+            if !is_nonce_error(&first) {
+                log_create_perp_context(&first);
+                return Err(first);
+            }
+            let nonce = resynced_nonce(&provider, wallet_handle.address(), "createPerp").await?;
+            build_create_perp().nonce(nonce).send().await.map_err(|e| {
+                let error_msg =
+                    format!("createPerp send failed after nonce resync (first: {first}): {e}");
+                log_create_perp_context(&error_msg);
+                error_msg
+            })?
+        }
+    };
 
     let pending_tx_hash = *pending_tx.tx_hash();
     tracing::info!("createPerp tx hash: {:?}", pending_tx_hash);
@@ -327,18 +346,33 @@ pub async fn deposit_liquidity_for_perp(
 
     let usdc_contract = IERC20::new(state.contracts.usdc, &provider);
     wallet_handle.ensure_lock_held()?;
-    let pending_approval = usdc_contract
+    let pending_approval = match usdc_contract
         .approve(perp_address, U256::from(margin_amount_usdc))
         .send()
         .await
-        .map_err(|e| {
-            let error_msg = format!("Failed to approve USDC spending: {e}");
-            tracing::error!("{}", error_msg);
-            if is_nonce_error(&error_msg) {
-                tracing::warn!("Nonce error detected, transaction failed");
+    {
+        Ok(pending) => pending,
+        Err(e) => {
+            let first = format!("Failed to approve USDC spending: {e}");
+            if !is_nonce_error(&first) {
+                tracing::error!("{}", first);
+                return Err(first);
             }
-            error_msg
-        })?;
+            let nonce = resynced_nonce(&provider, wallet_address, "USDC approve").await?;
+            usdc_contract
+                .approve(perp_address, U256::from(margin_amount_usdc))
+                .nonce(nonce)
+                .send()
+                .await
+                .map_err(|e| {
+                    let error_msg = format!(
+                        "Failed to approve USDC spending after nonce resync (first: {first}): {e}"
+                    );
+                    tracing::error!("{}", error_msg);
+                    error_msg
+                })?
+        }
+    };
 
     let approval_tx_hash = *pending_approval.tx_hash();
     tracing::info!("USDC approval tx hash: {:?}", approval_tx_hash);
@@ -374,21 +408,36 @@ pub async fn deposit_liquidity_for_perp(
 
     tracing::info!("Opening maker position with wallet {}", wallet_address);
     wallet_handle.ensure_lock_held()?;
-    let pending_tx = perp
-        .openMaker(open_maker_params.clone())
-        .send()
-        .await
-        .map_err(|e| {
-            let mut error_msg = format!("openMaker send failed: {e}");
+    // Same one-shot nonce resync as the approve above: openMaker is the
+    // SECOND tx from this wallet in the deposit flow, so a nonce fill read
+    // from a lagging RPC node right after the approval lands reuses the
+    // approval's nonce. Decoded reverts are real rejections, never retried.
+    let pending_tx = match perp.openMaker(open_maker_params.clone()).send().await {
+        Ok(pending) => pending,
+        Err(e) => {
             if let Some(decoded) = try_decode_revert_reason(&e) {
-                error_msg = format!("openMaker reverted: {decoded}");
+                let error_msg = format!("openMaker reverted: {decoded}");
+                tracing::error!("{}", error_msg);
+                return Err(error_msg);
             }
-            tracing::error!("{}", error_msg);
-            if is_nonce_error(&error_msg) {
-                tracing::warn!("Nonce error detected, transaction failed");
+            let first = format!("openMaker send failed: {e}");
+            if !is_nonce_error(&first) {
+                tracing::error!("{}", first);
+                return Err(first);
             }
-            error_msg
-        })?;
+            let nonce = resynced_nonce(&provider, wallet_address, "openMaker").await?;
+            perp.openMaker(open_maker_params.clone())
+                .nonce(nonce)
+                .send()
+                .await
+                .map_err(|e| {
+                    let error_msg =
+                        format!("openMaker send failed after nonce resync (first: {first}): {e}");
+                    tracing::error!("{}", error_msg);
+                    error_msg
+                })?
+        }
+    };
 
     let deposit_tx_hash = *pending_tx.tx_hash();
     tracing::info!("openMaker tx hash: {:?}", deposit_tx_hash);

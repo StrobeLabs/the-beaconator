@@ -7,6 +7,7 @@ pub mod factory_integration_tests;
 pub mod fork_tests;
 pub mod models_test;
 pub mod nonce_conflict_tests;
+pub mod nonce_resync_tests;
 // pub mod nonce_sync_tests; // Removed - nonce management obsolete with WalletManager
 // pub mod perp_deployment_integration_tests; // Temporarily disabled during PerpManager refactor
 pub mod perp_integration_tests;

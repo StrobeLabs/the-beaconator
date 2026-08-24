@@ -9,6 +9,7 @@ use tokio::time::timeout;
 
 use crate::models::AppState;
 use crate::routes::IEcdsaVerifierFactory;
+use crate::services::transaction::{is_nonce_error, resynced_nonce};
 use crate::services::wallet::WalletHandle;
 
 /// Creates an ECDSAVerifier via the ECDSAVerifierFactory contract.
@@ -48,13 +49,34 @@ pub async fn create_ecdsa_verifier(
         verifier_address
     );
 
-    // Execute the actual transaction
+    // Execute the actual transaction. On a nonce-too-low send failure (a
+    // fresh provider seeded from a lagging RPC read), resync the nonce from
+    // the chain's pending count and retry once.
     wallet_handle.ensure_lock_held()?;
-    let pending_tx = factory
-        .createVerifier(signer_address)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to send createVerifier transaction: {e}"))?;
+    let pending_tx = match factory.createVerifier(signer_address).send().await {
+        Ok(pending) => pending,
+        Err(e) => {
+            let first = format!("{e}");
+            if !is_nonce_error(&first) {
+                return Err(format!(
+                    "Failed to send createVerifier transaction: {first}"
+                ));
+            }
+            let nonce =
+                resynced_nonce(&provider, wallet_handle.address(), "createVerifier").await?;
+            factory
+                .createVerifier(signer_address)
+                .nonce(nonce)
+                .send()
+                .await
+                .map_err(|e| {
+                    format!(
+                        "Failed to send createVerifier transaction after nonce resync \
+                         (first attempt: {first}): {e}"
+                    )
+                })?
+        }
+    };
 
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Verifier creation tx sent: {:?}", tx_hash);
