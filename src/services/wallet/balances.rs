@@ -266,6 +266,7 @@ impl BalanceTracker {
             loop {
                 self.refresh(&manager_addresses).await;
 
+                let mut min_eth: Option<U256> = None;
                 for &address in &manager_addresses {
                     if let Some(bal) = self.get(&address) {
                         if bal.eth < self.eth_floor {
@@ -275,10 +276,18 @@ impl BalanceTracker {
                                 "pool wallet below ETH floor - fund it"
                             );
                         }
+                        min_eth = Some(min_eth.map_or(bal.eth, |m| m.min(bal.eth)));
                         metrics
                             .put_wallet_balances(address, bal.eth, bal.usdc)
                             .await;
                     }
+                }
+                // The per-wallet metric carries a WalletAddress dimension, and
+                // pool membership rotates, so no alarm can watch it. The
+                // pool-min gauge has a fixed identity for the
+                // BeaconatorWalletGasLow alarm (sst.config.ts).
+                if let Some(min) = min_eth {
+                    metrics.put_pool_min_eth(min).await;
                 }
 
                 tokio::time::sleep(interval).await;
@@ -350,6 +359,35 @@ impl CloudWatchMetrics {
             // so debug only. See sst.config.ts follow-up for the required
             // cloudwatch:PutMetricData task-role grant in deployed environments.
             tracing::debug!("Failed to publish wallet balance metrics for {address}: {e}");
+        }
+    }
+
+    /// Publish the pool-wide minimum ETH balance under the Environment
+    /// dimension alone, giving the gas-low alarm a fixed metric identity
+    /// that survives pool membership changes.
+    async fn put_pool_min_eth(&self, min_eth: U256) {
+        use aws_sdk_cloudwatch::types::{Dimension, MetricDatum, StandardUnit};
+
+        let env_dim = Dimension::builder()
+            .name("Environment")
+            .value(self.environment.clone())
+            .build();
+        let datum = MetricDatum::builder()
+            .metric_name("WalletEthBalanceMin")
+            .unit(StandardUnit::None)
+            .value(wei_to_f64(min_eth, 1e18))
+            .dimensions(env_dim)
+            .build();
+
+        if let Err(e) = self
+            .client
+            .put_metric_data()
+            .namespace("PerpCity")
+            .metric_data(datum)
+            .send()
+            .await
+        {
+            tracing::debug!("Failed to publish pool-min ETH metric: {e}");
         }
     }
 }
