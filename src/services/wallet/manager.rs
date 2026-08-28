@@ -4,8 +4,8 @@
 //! operations, locking, and beacon mappings into a unified interface.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use super::balances::BalanceTracker;
 use super::lock::LockHeartbeat;
@@ -140,6 +140,15 @@ impl WalletHandle {
     }
 }
 
+/// How long a wallet stays excluded from selection after an OBSERVED
+/// insufficient-funds failure (preflight or send). Unlike the cached ETH-floor
+/// filter — which is soft because the cache can be stale — this is based on a
+/// fresh on-chain fact, so hard-blocking for a short window is sound. Bounds
+/// the RPC retry storm of a fully drained pool (2026-08-24..26: every update
+/// request swept every wallet through nonce/estimate/send rejections, 12x
+/// normal Alchemy CU burn) while a top-up self-heals within one cooldown.
+const DRAINED_COOLDOWN: Duration = Duration::from_secs(300);
+
 /// Central coordinator for wallet operations
 ///
 /// The WalletManager provides a high-level interface for:
@@ -160,6 +169,9 @@ pub struct WalletManager {
     /// `None` in test stubs and any manager that never had one attached —
     /// selection treats that exactly like an all-missing cache (no filtering).
     balance_tracker: Option<Arc<BalanceTracker>>,
+    /// Wallets observed failing with insufficient funds, excluded from
+    /// selection until the recorded deadline (see [`DRAINED_COOLDOWN`]).
+    drained_until: RwLock<HashMap<Address, Instant>>,
 }
 
 impl WalletManager {
@@ -188,6 +200,7 @@ impl WalletManager {
             is_test_stub: false,
             signers: signers_map,
             balance_tracker: None,
+            drained_until: RwLock::new(HashMap::new()),
         })
     }
 
@@ -212,6 +225,7 @@ impl WalletManager {
             is_test_stub: true,
             signers: HashMap::new(),
             balance_tracker: None,
+            drained_until: RwLock::new(HashMap::new()),
         }
     }
 
@@ -253,6 +267,7 @@ impl WalletManager {
             is_test_stub: false,
             signers: signers_map,
             balance_tracker: None,
+            drained_until: RwLock::new(HashMap::new()),
         })
     }
 
@@ -372,6 +387,59 @@ impl WalletManager {
 
     /// Acquire any available wallet from the pool.
     ///
+    /// Record that `address` just failed with insufficient funds, excluding
+    /// it from selection for [`DRAINED_COOLDOWN`].
+    ///
+    /// Callers detect the failure at preflight or send (see
+    /// `is_insufficient_funds_error`); recording it here makes the exclusion
+    /// PROCESS-WIDE instead of per-request, so a drained pool costs one RPC
+    /// sweep per cooldown window rather than one per incoming update.
+    pub fn mark_drained(&self, address: Address) {
+        let until = Instant::now() + DRAINED_COOLDOWN;
+        let mut map = match self.drained_until.write() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        map.insert(address, until);
+    }
+
+    /// Wallets currently inside their insufficient-funds cooldown window.
+    /// Expired entries are purged as a side effect.
+    fn drained_wallets(&self) -> HashSet<Address> {
+        let now = Instant::now();
+        let mut map = match self.drained_until.write() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        map.retain(|_, until| *until > now);
+        map.keys().copied().collect()
+    }
+
+    /// Split `candidates` into (selectable, cooling-down) against the drained
+    /// set, warning about the skipped ones. Returns an error when the drained
+    /// filter would empty selection: with every wallet OBSERVED out of gas
+    /// moments ago, attempting more sends is pure RPC burn — fail fast and
+    /// cheap until a cooldown expires or the pool is topped up.
+    fn filter_drained(&self, candidates: Vec<Address>) -> Result<Vec<Address>, String> {
+        let drained = self.drained_wallets();
+        if drained.is_empty() {
+            return Ok(candidates);
+        }
+        let (selectable, cooling): (Vec<Address>, Vec<Address>) =
+            candidates.into_iter().partition(|a| !drained.contains(a));
+        Self::warn_skipped(&cooling, "cooling down after an insufficient-funds failure");
+        if selectable.is_empty() {
+            return Err(format!(
+                "Every available pool wallet ({}) is cooling down after an \
+                 insufficient-funds failure; top up gas — selection resumes \
+                 within {}s",
+                cooling.len(),
+                DRAINED_COOLDOWN.as_secs()
+            ));
+        }
+        Ok(selectable)
+    }
+
     /// Delegates to [`Self::acquire_any_wallet_excluding`] with an empty
     /// exclusion set.
     pub async fn acquire_any_wallet(&self) -> Result<WalletHandle, String> {
@@ -411,6 +479,7 @@ impl WalletManager {
         if candidates.is_empty() {
             return Err("No available wallets in the pool after exclusions".to_string());
         }
+        let candidates = self.filter_drained(candidates)?;
 
         let ordered = self.order_by_lru(candidates).await;
         let (filtered, skipped) = self.filter_balance_floor(ordered);
@@ -445,6 +514,8 @@ impl WalletManager {
         if candidates.is_empty() {
             return Err("No available wallets in the pool after exclusions".to_string());
         }
+        // A wallet with no ETH cannot pay gas for a USDC transfer either.
+        let candidates = self.filter_drained(candidates)?;
 
         let ordered = self.order_by_usdc_desc(candidates);
         let (filtered, skipped) = self.filter_usdc_floor(ordered, min_usdc);
@@ -815,5 +886,38 @@ mod tests {
 
         drop(handle);
         manager.pool().cleanup().await.expect("Failed to cleanup");
+    }
+}
+
+// Named `unit_tests` (not `tests`) so the CI and `make test-fast` substring
+// filters (`cargo test unit_tests`) pick these up — they need no Redis.
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn test_filter_drained_excludes_marked_wallet_and_fails_fast_when_all_cooling() {
+        let manager = WalletManager::test_stub();
+        let drained = Address::from([0x11; 20]);
+        let healthy = Address::from([0x22; 20]);
+
+        // Nothing marked: candidates pass through untouched.
+        let out = manager
+            .filter_drained(vec![drained, healthy])
+            .expect("no cooldown yet");
+        assert_eq!(out, vec![drained, healthy]);
+
+        // Marked wallet is excluded while a healthy one remains.
+        manager.mark_drained(drained);
+        let out = manager
+            .filter_drained(vec![drained, healthy])
+            .expect("healthy wallet remains selectable");
+        assert_eq!(out, vec![healthy]);
+
+        // Every candidate cooling down: selection fails fast (no RPC sweep).
+        let err = manager
+            .filter_drained(vec![drained])
+            .expect_err("all-cooling pool must fail fast");
+        assert!(err.contains("cooling down"), "unexpected error: {err}");
     }
 }
