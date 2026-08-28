@@ -357,14 +357,20 @@ pub async fn update_beacon_with_ecdsa(
             };
             tracing::error!("{}", error_msg);
 
-            if is_insufficient_funds_error(&error_msg) && attempt < max_wallet_attempts {
-                tracing::warn!(
-                    "Wallet {attempt_address} appears out of gas (preflight simulation failed with \
-                     insufficient funds); excluding it and retrying with a different pool wallet"
-                );
-                excluded_wallets.insert(attempt_address);
-                drop(handle);
-                continue;
+            if is_insufficient_funds_error(&error_msg) {
+                // Process-wide cooldown, not just this request's exclusion set:
+                // without it a fully drained pool re-sweeps every wallet on
+                // every incoming update (the 2026-08-24..26 RPC burn storm).
+                state.wallets.manager.mark_drained(attempt_address);
+                if attempt < max_wallet_attempts {
+                    tracing::warn!(
+                        "Wallet {attempt_address} appears out of gas (preflight simulation failed with \
+                         insufficient funds); excluding it and retrying with a different pool wallet"
+                    );
+                    excluded_wallets.insert(attempt_address);
+                    drop(handle);
+                    continue;
+                }
             }
             return Err(error_msg);
         }
@@ -395,14 +401,20 @@ pub async fn update_beacon_with_ecdsa(
                 break;
             }
             Err(error_msg) => {
-                if is_insufficient_funds_error(&error_msg) && attempt < max_wallet_attempts {
-                    tracing::warn!(
-                        "Wallet {attempt_address} appears out of gas (send failed with \
-                         insufficient funds); excluding it and retrying with a different pool wallet"
-                    );
-                    excluded_wallets.insert(attempt_address);
-                    drop(handle);
-                    continue;
+                if is_insufficient_funds_error(&error_msg) {
+                    // Process-wide cooldown, not just this request's exclusion
+                    // set: without it a fully drained pool re-sweeps every
+                    // wallet on every incoming update (2026-08-24..26 storm).
+                    state.wallets.manager.mark_drained(attempt_address);
+                    if attempt < max_wallet_attempts {
+                        tracing::warn!(
+                            "Wallet {attempt_address} appears out of gas (send failed with \
+                             insufficient funds); excluding it and retrying with a different pool wallet"
+                        );
+                        excluded_wallets.insert(attempt_address);
+                        drop(handle);
+                        continue;
+                    }
                 }
                 return Err(error_msg);
             }

@@ -67,12 +67,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.foundry
-          key: foundry-${{ runner.os }}-stable
-          restore-keys: |
-            foundry-${{ runner.os }}-
+          key: foundry-${{ runner.os }}-v1.7.1
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1
+        with:
+          # Pinned: the unpinned default (latest nightly) broke Arbitrum
+          # Sepolia forks. The 1.8.0 line (v1.8.0 + every 1.8.0-nightly,
+          # including the one behind the last green 2026-08-24 runs) fails
+          # every eth_call with "-32602: Excess blob gas not set" once
+          # wall-clock passed a scheduled fork activation midweek — the same
+          # binary was green on 08-24 and red on 08-28. v1.7.1 verified
+          # working against the current Sepolia tip. Re-test before bumping.
+          version: v1.7.1
 
       - name: Run fork tests (Anvil fork of Arbitrum Sepolia)
         env:
