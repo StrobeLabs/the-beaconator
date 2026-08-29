@@ -21,6 +21,24 @@ use crate::models::{
 /// Default per-wallet USDC balance target for `/top_up_pool`: 10,000 USDC.
 const DEFAULT_TOP_UP_USDC_TARGET: u128 = 10_000_000_000;
 
+/// Marker placed in `ApiResponse.data` on `/fund_bonus_wallet` error responses
+/// where no transfer can have reached the chain (failure before the send, or a
+/// receipt proving a revert). The backend releases the invite-code claim when
+/// it sees this marker; error responses without it must keep the claim, since
+/// a transfer may still land.
+pub const NO_FUNDS_MOVED_MARKER: &str = "no_funds_moved";
+
+fn no_funds_moved(status: Status, message: String) -> (Status, Json<ApiResponse<String>>) {
+    (
+        status,
+        Json(ApiResponse {
+            success: false,
+            data: Some(NO_FUNDS_MOVED_MARKER.to_string()),
+            message,
+        }),
+    )
+}
+
 /// Production chain ids the beaconator can target. Any chain id NOT in the testnet/local
 /// allow-list (Arbitrum Sepolia = 421614, Anvil default = 31337) is treated as production
 /// so a future mainnet addition fails closed instead of accidentally unlocking the funding
@@ -479,6 +497,12 @@ pub async fn fund_guest_wallet(
 ///     The real-money safety lives in (a) the tighter `usdc_bonus_limit` cap,
 ///     (b) the bearer-token auth, and (c) the caller's own kill-switch + atomic
 ///     single-use claim. The faucet route keeps its mainnet guard untouched.
+///
+/// Error contract: responses carrying `data = "no_funds_moved"` guarantee no
+/// transfer reached the chain, so the caller may release its invite-code claim
+/// and let the user retry. Error responses WITHOUT the marker (broadcast
+/// failed, receipt unconfirmed) may still settle on-chain — the caller must
+/// keep the claim and reconcile before retrying.
 #[openapi(tag = "Wallet")]
 #[post("/fund_bonus_wallet", format = "json", data = "<request>")]
 pub async fn fund_bonus_wallet(
@@ -562,13 +586,9 @@ pub async fn fund_bonus_wallet(
             .map_err(|e| {
                 let detailed_error = format!("Failed to acquire pool wallet: {e}");
                 tracing::error!("{}", detailed_error);
-                (
+                no_funds_moved(
                     Status::ServiceUnavailable,
-                    Json(ApiResponse {
-                        success: false,
-                        data: None,
-                        message: "Funding wallet temporarily unavailable".to_string(),
-                    }),
+                    "Funding wallet temporarily unavailable".to_string(),
                 )
             })?;
         let candidate = handle.address();
@@ -581,13 +601,9 @@ pub async fn fund_bonus_wallet(
             Err(e) => {
                 let detailed_error = format!("Failed to get USDC balance: {e}");
                 tracing::error!("{}", detailed_error);
-                return Err((
+                return Err(no_funds_moved(
                     Status::InternalServerError,
-                    Json(ApiResponse {
-                        success: false,
-                        data: None,
-                        message: "Failed to retrieve USDC balance".to_string(),
-                    }),
+                    "Failed to retrieve USDC balance".to_string(),
                 ));
             }
         };
@@ -604,17 +620,13 @@ pub async fn fund_bonus_wallet(
                 drop(handle);
                 continue;
             }
-            return Err((
+            return Err(no_funds_moved(
                 Status::InternalServerError,
-                Json(ApiResponse {
-                    success: false,
-                    data: None,
-                    message: format!(
-                        "Insufficient USDC balance. Have: {} USDC, Need: {} USDC",
-                        usdc_balance / U256::from(1_000_000),
-                        usdc_amount / 1_000_000
-                    ),
-                }),
+                format!(
+                    "Insufficient USDC balance. Have: {} USDC, Need: {} USDC",
+                    usdc_balance / U256::from(1_000_000),
+                    usdc_amount / 1_000_000
+                ),
             ));
         }
 
@@ -632,13 +644,9 @@ pub async fn fund_bonus_wallet(
         .map_err(|e| {
             let detailed_error = format!("Failed to build funding provider: {e}");
             tracing::error!("{}", detailed_error);
-            (
+            no_funds_moved(
                 Status::InternalServerError,
-                Json(ApiResponse {
-                    success: false,
-                    data: None,
-                    message: "Server RPC configuration is invalid".to_string(),
-                }),
+                "Server RPC configuration is invalid".to_string(),
             )
         })?;
 
@@ -646,13 +654,9 @@ pub async fn fund_bonus_wallet(
     if let Err(e) = wallet_handle.ensure_lock_held() {
         let detailed_error = format!("Pool wallet lock lost before USDC transfer: {e}");
         tracing::error!("{}", detailed_error);
-        return Err((
+        return Err(no_funds_moved(
             Status::InternalServerError,
-            Json(ApiResponse {
-                success: false,
-                data: None,
-                message: format!("USDC transfer aborted: {e}"),
-            }),
+            format!("USDC transfer aborted: {e}"),
         ));
     }
 
@@ -674,16 +678,12 @@ pub async fn fund_bonus_wallet(
                     let detailed_error =
                         format!("USDC transfer reverted on-chain (tx {usdc_tx_hash:?})");
                     tracing::error!("{}", detailed_error);
-                    return Err((
+                    return Err(no_funds_moved(
                         Status::InternalServerError,
-                        Json(ApiResponse {
-                            success: false,
-                            data: None,
-                            message: format!(
-                                "USDC transfer reverted on-chain (tx {usdc_tx_hash:?}); \
-                                 no USDC moved"
-                            ),
-                        }),
+                        format!(
+                            "USDC transfer reverted on-chain (tx {usdc_tx_hash:?}); \
+                             no USDC moved"
+                        ),
                     ));
                 }
                 Ok(Ok(receipt)) => receipt,
