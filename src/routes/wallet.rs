@@ -22,10 +22,11 @@ use crate::models::{
 const DEFAULT_TOP_UP_USDC_TARGET: u128 = 10_000_000_000;
 
 /// Marker placed in `ApiResponse.data` on `/fund_bonus_wallet` error responses
-/// where no transfer can have reached the chain (failure before the send, or a
-/// receipt proving a revert). The backend releases the invite-code claim when
-/// it sees this marker; error responses without it must keep the claim, since
-/// a transfer may still land.
+/// where no USDC moved: either the failure happened before the send, or a
+/// receipt proves the transfer reverted (a transaction reached the chain, but
+/// it moved no tokens). The backend releases the invite-code claim when it
+/// sees this marker; error responses without it must keep the claim, since a
+/// transfer may still land.
 pub const NO_FUNDS_MOVED_MARKER: &str = "no_funds_moved";
 
 fn no_funds_moved(status: Status, message: String) -> (Status, Json<ApiResponse<String>>) {
@@ -499,10 +500,12 @@ pub async fn fund_guest_wallet(
 ///     single-use claim. The faucet route keeps its mainnet guard untouched.
 ///
 /// Error contract: responses carrying `data = "no_funds_moved"` guarantee no
-/// transfer reached the chain, so the caller may release its invite-code claim
-/// and let the user retry. Error responses WITHOUT the marker (broadcast
-/// failed, receipt unconfirmed) may still settle on-chain — the caller must
-/// keep the claim and reconcile before retrying.
+/// USDC moved — the failure happened before the send, or a receipt proves the
+/// transfer reverted (a transaction may exist on-chain, but it moved no
+/// tokens) — so the caller may release its invite-code claim and let the user
+/// retry. Error responses WITHOUT the marker (broadcast failed, receipt
+/// unconfirmed) may still settle on-chain — the caller must keep the claim
+/// and reconcile before retrying.
 #[openapi(tag = "Wallet")]
 #[post("/fund_bonus_wallet", format = "json", data = "<request>")]
 pub async fn fund_bonus_wallet(
