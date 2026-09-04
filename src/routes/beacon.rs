@@ -458,16 +458,18 @@ pub async fn update_beacon_with_ecdsa_adapter(
     tracing::info!("Received request: POST /update_beacon_with_ecdsa_adapter");
 
     match service_update_beacon_with_ecdsa(state.inner(), request.into_inner()).await {
-        Ok(EcdsaUpdateOutcome::Skipped { beacon_address }) => {
-            // No tx was sent (value unchanged inside the heartbeat window), so
-            // there is nothing to touch, no hash to return, and no transaction
-            // to report as confirmed.
-            tracing::info!("Beacon {beacon_address} update skipped: value unchanged on-chain");
+        Ok(EcdsaUpdateOutcome::Skipped {
+            beacon_address,
+            reason,
+        }) => {
+            // No tx was sent (rate limited, or value unchanged inside the
+            // heartbeat window), so there is nothing to touch, no hash to
+            // return, and no transaction to report as confirmed.
+            tracing::info!("Beacon {beacon_address} update skipped: {reason}");
             Ok(Json(EcdsaUpdateResponse {
                 success: true,
                 data: None,
-                message: "Beacon update skipped: on-chain value already equals the measurement"
-                    .to_string(),
+                message: format!("Beacon update skipped: {reason}"),
                 confirmed: false,
                 skipped: true,
             }))

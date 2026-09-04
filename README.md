@@ -111,7 +111,35 @@ ENV=testnet
 # Keep ABOVE the 0.01 ETH BeaconatorWalletGasLow paging threshold so the
 # faucet throttles before beacon gas is at risk. Default 0.02 ETH.
 FAUCET_RESERVE_ETH_WEI=20000000000000000
+
+# Minimum seconds between two publishes for a beacon, applied whether or not
+# the measurement changed. 0 or unset disables the rate limit (the default —
+# every update publishes). An updater pushing faster than its market needs is
+# pure gas burn, so set this to the slowest cadence the market can tolerate.
+BEACON_MIN_PUBLISH_INTERVAL_SECONDS=0
+
+# Per-beacon overrides for the above, as `address=seconds` pairs. Use it to
+# hold rarely-consumed beacons to a slower cadence than the fleet default
+# without redeploying their updater. Malformed entries are skipped with a
+# warning; the rest of the map still applies.
+BEACON_MIN_PUBLISH_INTERVAL_OVERRIDES=0xabc...=3600,0xdef...=3600
 ```
+
+### Publish gating and gas
+
+Three settings decide how much gas the pool actually spends:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `BEACON_MIN_PUBLISH_INTERVAL_SECONDS` | `0` (off) | Floor on time between publishes per beacon, regardless of value change |
+| `BEACON_UPDATE_HEARTBEAT_SECONDS` | `840` | Skips a publish when the value is UNCHANGED and the last one was this recent |
+| `TOUCH_FLUSH_INTERVAL_MS` | `1000` | How long the touch worker coalesces perps before sending one `Multicall3` batch |
+
+The heartbeat only catches identical values, so it does nothing for a
+continuously varying feed — the rate limit is what bounds those. The touch
+batch matters more than it looks: a funding touch costs ~212k gas against
+~72k for the beacon write, so on a busy stage the touches are the majority of
+the bill and a 1s flush window coalesces almost nothing.
 
 ## Wallet pool top-up (testnet)
 

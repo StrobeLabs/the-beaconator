@@ -68,6 +68,29 @@ fn hold_beacon_lock_until_receipt(
     });
 }
 
+/// Why an update produced no transaction. Logging detail only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipReason {
+    /// The beacon published too recently (see
+    /// [`super::dedupe::min_publish_interval`]).
+    RateLimited { elapsed: u64, interval: u64 },
+    /// The on-chain value already equals the measurement and the heartbeat has
+    /// not elapsed.
+    ValueUnchanged,
+}
+
+impl std::fmt::Display for SkipReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RateLimited { elapsed, interval } => write!(
+                f,
+                "rate limited: last publish {elapsed}s ago, minimum interval {interval}s"
+            ),
+            Self::ValueUnchanged => write!(f, "on-chain value already equals the measurement"),
+        }
+    }
+}
+
 /// Outcome of an ECDSA beacon update.
 pub enum EcdsaUpdateOutcome {
     /// An update transaction was sent. `confirmed == false` means its receipt
@@ -81,10 +104,15 @@ pub enum EcdsaUpdateOutcome {
         confirmed: bool,
         beacon_address: Address,
     },
-    /// No transaction was sent: the on-chain index already equals the
-    /// requested measurement and the last publish is inside the dedupe
-    /// heartbeat window (see [`super::dedupe`]).
-    Skipped { beacon_address: Address },
+    /// No transaction was sent. Either the beacon is inside its publish rate
+    /// limit, or the on-chain index already equals the requested measurement
+    /// and the last publish is inside the dedupe heartbeat window (see
+    /// [`super::dedupe`]). `reason` is for logging only — the route reports
+    /// every skip to the updater the same way.
+    Skipped {
+        beacon_address: Address,
+        reason: SkipReason,
+    },
 }
 
 /// Updates a beacon using ECDSA signature from the PRIVATE_KEY wallet.
@@ -178,6 +206,27 @@ pub async fn update_beacon_with_ecdsa(
         .acquire_beacon_update_lock(beacon_address)
         .await?;
 
+    // 4a-bis. Publish rate limit: a floor on time between publishes, applied
+    // whether or not the value changed. This runs before the dedupe's index()
+    // read so a rate-limited update costs no RPC call at all, and before any
+    // wallet is acquired so it never parks a pool wallet. A missing record
+    // (no Redis, first publish, expired key) falls through and publishes.
+    if let Some(interval) = super::dedupe::min_publish_interval(&beacon_address)
+        && let Some(elapsed) =
+            super::dedupe::seconds_since_last_publish(state, &beacon_address).await
+        && elapsed < interval.as_secs()
+    {
+        let reason = SkipReason::RateLimited {
+            elapsed,
+            interval: interval.as_secs(),
+        };
+        tracing::info!("Skipping update for beacon {beacon_address}: {reason}");
+        return Ok(EcdsaUpdateOutcome::Skipped {
+            beacon_address,
+            reason,
+        });
+    }
+
     // 4b. Value dedupe: when the on-chain index already equals the requested
     // measurement, skip the tx unless the heartbeat window has elapsed. The
     // read happens under the beacon update lock, so it reflects the previous
@@ -196,7 +245,10 @@ pub async fn update_beacon_with_ecdsa(
                          already {current}, last publish {elapsed}s ago (heartbeat {}s)",
                         window.as_secs()
                     );
-                    return Ok(EcdsaUpdateOutcome::Skipped { beacon_address });
+                    return Ok(EcdsaUpdateOutcome::Skipped {
+                        beacon_address,
+                        reason: SkipReason::ValueUnchanged,
+                    });
                 }
             }
             Ok(_) => {}
