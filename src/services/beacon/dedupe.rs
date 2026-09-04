@@ -73,6 +73,16 @@ const MIN_INTERVAL_OVERRIDES_ENV: &str = "BEACON_MIN_PUBLISH_INTERVAL_OVERRIDES"
 /// configured, else the global floor, else `None` (no rate limit).
 ///
 /// Parsed once per process — these are deployment config, not runtime state.
+///
+/// **Set the interval below the updater's cadence, not equal to it.** The
+/// last-publish record has whole-second resolution, so an updater pushing every
+/// `N`s yields an `elapsed` of `N` or `N-1` depending on where the two clocks
+/// round. A floor of exactly `N` therefore skips on the `N-1` ticks and
+/// stretches that beacon to two cycles at random — the same boundary race
+/// [`DEFAULT_HEARTBEAT`] avoids by sitting at 840s against a 900s cadence.
+/// Leaving a few percent of headroom makes the limit deterministic; the extra
+/// publishes it allows are far cheaper than an index that silently halves its
+/// refresh rate.
 pub fn min_publish_interval(beacon: &Address) -> Option<Duration> {
     static GLOBAL: LazyLock<Option<Duration>> =
         LazyLock::new(|| parse_interval(std::env::var(MIN_INTERVAL_ENV).ok().as_deref()));
