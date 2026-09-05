@@ -52,7 +52,7 @@ pub const MAX_BATCH_CEILING: usize = 80;
 
 pub struct TouchWorker {
     rx: mpsc::Receiver<Address>,
-    resolver: PerpResolver,
+    resolver: Arc<PerpResolver>,
     manager: Arc<WalletManager>,
     rpc_url: String,
     multicall3: Address,
@@ -64,7 +64,7 @@ impl TouchWorker {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         rx: mpsc::Receiver<Address>,
-        resolver: PerpResolver,
+        resolver: Arc<PerpResolver>,
         manager: Arc<WalletManager>,
         rpc_url: String,
         multicall3: Address,
