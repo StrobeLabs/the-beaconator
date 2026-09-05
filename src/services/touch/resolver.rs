@@ -37,8 +37,13 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 /// payload degrades to "no perps" rather than a hard decode error.
 #[derive(Debug, Deserialize)]
 struct MarketsPage {
+    /// `Option` rather than a defaulted `Vec` so an absent or null `items`
+    /// stays distinguishable from an explicit `[]`. They mean opposite things
+    /// for the tier: `[]` is a beacon that genuinely backs no market
+    /// (Dormant), while a missing key is a payload we failed to understand,
+    /// which must classify as Active — see [`tier_from_page`].
     #[serde(default)]
-    items: Vec<MarketItem>,
+    items: Option<Vec<MarketItem>>,
     #[serde(default)]
     has_more: bool,
 }
@@ -285,23 +290,25 @@ pub fn parse_tier_from_json(body: &str) -> Result<Tier, String> {
 fn parse_markets_page(body: &str) -> Result<(Vec<Address>, bool, Tier), String> {
     let page: MarketsPage =
         serde_json::from_str(body).map_err(|e| format!("decode failed: {e}"))?;
-    let usage: Vec<(Option<bool>, Option<bool>)> = page
-        .items
-        .iter()
-        .map(|it| {
-            let any = |a: &Value, b: &Value| match (positive(a), positive(b)) {
-                (Some(x), Some(y)) => Some(x || y),
-                _ => None,
-            };
-            (
-                any(&it.open_interest_long, &it.open_interest_short),
-                any(&it.capacity_long, &it.capacity_short),
-            )
-        })
-        .collect();
-    let tier = tier_from_items(&usage);
+    let usage: Option<Vec<(Option<bool>, Option<bool>)>> = page.items.as_ref().map(|items| {
+        items
+            .iter()
+            .map(|it| {
+                let any = |a: &Value, b: &Value| match (positive(a), positive(b)) {
+                    (Some(x), Some(y)) => Some(x || y),
+                    _ => None,
+                };
+                (
+                    any(&it.open_interest_long, &it.open_interest_short),
+                    any(&it.capacity_long, &it.capacity_short),
+                )
+            })
+            .collect()
+    });
+    let tier = tier_from_page(usage.as_deref());
     let perps = page
         .items
+        .unwrap_or_default()
         .iter()
         .filter_map(|it| match Address::from_str(it.perp_address.trim()) {
             Ok(addr) => Some(addr),
@@ -328,7 +335,8 @@ fn parse_markets_page(body: &str) -> Result<(Vec<Address>, bool, Tier), String> 
 /// dormant would stale the index a real trader's funding depends on, while
 /// misreading a dead one as active costs a few cents of testnet gas.
 ///
-/// No markets at all is [`Tier::Dormant`]: nothing can trade against it.
+/// An explicitly empty list is [`Tier::Dormant`]: nothing can trade against it.
+/// An *absent* list is not the same thing — see [`tier_from_page`].
 pub fn tier_from_items(markets: &[(Option<bool>, Option<bool>)]) -> Tier {
     let mut tier = Tier::Dormant;
     for (has_oi, has_capacity) in markets {
@@ -349,6 +357,20 @@ pub fn tier_from_items(markets: &[(Option<bool>, Option<bool>)]) -> Tier {
         }
     }
     tier
+}
+
+/// Classify a whole page, distinguishing "no markets" from "no readable
+/// markets".
+///
+/// `None` means the response carried no `items` key at all (absent or null) —
+/// a shape we do not understand, so it takes the same expensive-but-safe
+/// answer as an unreadable market: [`Tier::Active`]. Only an explicit empty
+/// list means the beacon genuinely backs nothing.
+pub fn tier_from_page(items: Option<&[(Option<bool>, Option<bool>)]>) -> Tier {
+    match items {
+        None => Tier::Active,
+        Some(v) => tier_from_items(v),
+    }
 }
 
 /// A cache entry is fresh within `ttl` normally, or within the shorter
