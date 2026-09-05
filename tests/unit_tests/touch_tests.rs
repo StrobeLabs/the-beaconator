@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use alloy::primitives::Address;
 use the_beaconator::services::touch::{
     MAX_BATCH_CEILING, Tier, dedup_preserving_order, entry_is_fresh, markets_url,
-    parse_perp_addresses_from_json, parse_tier_from_json, tier_from_items, touch_batch_gas_limit,
-    touch_calldata, touch_calls,
+    parse_perp_addresses_from_json, parse_tier_from_json, tier_from_items, tier_from_page,
+    touch_batch_gas_limit, touch_calldata, touch_calls,
 };
 
 #[test]
@@ -235,10 +235,47 @@ fn tier_treats_unreadable_usage_as_active() {
     assert_eq!(parse_tier_from_json(p).unwrap(), Tier::Active);
 }
 
-/// No markets at all: nothing can trade against this index.
+/// An EXPLICIT empty list: the beacon genuinely backs no market.
 #[test]
-fn tier_dormant_when_no_markets() {
+fn tier_dormant_when_items_is_an_empty_list() {
     assert_eq!(parse_tier_from_json(&page(&[])).unwrap(), Tier::Dormant);
+}
+
+/// An ABSENT `items` key is a payload we could not understand, not a beacon
+/// with no markets. Classifying it dormant would drop a possibly-traded index
+/// to the slowest cadence on the strength of a malformed response.
+#[test]
+fn tier_active_when_items_key_is_absent() {
+    assert_eq!(
+        parse_tier_from_json(r#"{"has_more":false}"#).unwrap(),
+        Tier::Active
+    );
+}
+
+/// Same for an explicit null, which previously failed to deserialise at all.
+#[test]
+fn tier_active_when_items_is_null() {
+    assert_eq!(
+        parse_tier_from_json(r#"{"items":null,"has_more":false}"#).unwrap(),
+        Tier::Active
+    );
+}
+
+/// A null/absent page must still yield no perps rather than erroring the whole
+/// fetch, so the touch worker degrades the same way it always has.
+#[test]
+fn absent_items_yields_no_perps() {
+    assert!(
+        parse_perp_addresses_from_json(r#"{"items":null,"has_more":false}"#)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn tier_from_page_distinguishes_absent_from_empty() {
+    assert_eq!(tier_from_page(None), Tier::Active);
+    assert_eq!(tier_from_page(Some(&[])), Tier::Dormant);
 }
 
 #[test]

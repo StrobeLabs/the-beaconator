@@ -18,7 +18,7 @@ mod worker;
 
 pub use resolver::{
     PerpResolver, Tier, dedup_preserving_order, entry_is_fresh, markets_url,
-    parse_perp_addresses_from_json, parse_tier_from_json, tier_from_items,
+    parse_perp_addresses_from_json, parse_tier_from_json, tier_from_items, tier_from_page,
 };
 pub use worker::{
     MAX_BATCH_CEILING, TouchWorker, touch_batch_gas_limit, touch_calldata, touch_calls,
