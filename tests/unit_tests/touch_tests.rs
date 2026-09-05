@@ -5,8 +5,9 @@ use std::time::{Duration, Instant};
 
 use alloy::primitives::Address;
 use the_beaconator::services::touch::{
-    MAX_BATCH_CEILING, dedup_preserving_order, entry_is_fresh, markets_url,
-    parse_perp_addresses_from_json, touch_batch_gas_limit, touch_calldata, touch_calls,
+    MAX_BATCH_CEILING, Tier, dedup_preserving_order, entry_is_fresh, markets_url,
+    parse_perp_addresses_from_json, parse_tier_from_json, tier_from_items, tier_from_page,
+    touch_batch_gas_limit, touch_calldata, touch_calls,
 };
 
 #[test]
@@ -170,4 +171,122 @@ fn touch_batch_gas_limit_scales_per_perp() {
 #[test]
 fn touch_batch_gas_limit_saturates_instead_of_panicking() {
     assert_eq!(touch_batch_gas_limit(usize::MAX), u64::MAX);
+}
+
+// ── usage tiers ─────────────────────────────────────────────────────────
+
+fn item(oi: &str, cap: &str) -> String {
+    format!(
+        r#"{{"perp_address":"0x0000000000000000000000000000000000000001",
+            "open_interest_long":"{oi}","open_interest_short":"0",
+            "capacity_long":"{cap}","capacity_short":"0"}}"#
+    )
+}
+
+fn page(items: &[String]) -> String {
+    format!(r#"{{"items":[{}],"has_more":false}}"#, items.join(","))
+}
+
+#[test]
+fn tier_active_when_any_open_interest() {
+    assert_eq!(
+        parse_tier_from_json(&page(&[item("5", "0")])).unwrap(),
+        Tier::Active
+    );
+}
+
+#[test]
+fn tier_idle_when_capacity_but_no_positions() {
+    assert_eq!(
+        parse_tier_from_json(&page(&[item("0", "1000")])).unwrap(),
+        Tier::Idle
+    );
+}
+
+#[test]
+fn tier_dormant_when_neither() {
+    assert_eq!(
+        parse_tier_from_json(&page(&[item("0", "0")])).unwrap(),
+        Tier::Dormant
+    );
+}
+
+/// A beacon backing one traded market and several dead ones must stay fast.
+#[test]
+fn tier_takes_the_highest_across_markets() {
+    let p = page(&[item("0", "0"), item("0", "500"), item("7", "0")]);
+    assert_eq!(parse_tier_from_json(&p).unwrap(), Tier::Active);
+}
+
+#[test]
+fn tier_accepts_numeric_encoding_as_well_as_string() {
+    let p = r#"{"items":[{"perp_address":"0x0000000000000000000000000000000000000001",
+        "open_interest_long":3,"open_interest_short":0,
+        "capacity_long":0,"capacity_short":0}],"has_more":false}"#;
+    assert_eq!(parse_tier_from_json(p).unwrap(), Tier::Active);
+}
+
+/// Missing usage fields must NOT read as a dormant (all-zero) market: staling
+/// an index a real trader depends on is far worse than a little extra gas.
+#[test]
+fn tier_treats_unreadable_usage_as_active() {
+    let p = r#"{"items":[{"perp_address":"0x0000000000000000000000000000000000000001"}],
+        "has_more":false}"#;
+    assert_eq!(parse_tier_from_json(p).unwrap(), Tier::Active);
+}
+
+/// An EXPLICIT empty list: the beacon genuinely backs no market.
+#[test]
+fn tier_dormant_when_items_is_an_empty_list() {
+    assert_eq!(parse_tier_from_json(&page(&[])).unwrap(), Tier::Dormant);
+}
+
+/// An ABSENT `items` key is a payload we could not understand, not a beacon
+/// with no markets. Classifying it dormant would drop a possibly-traded index
+/// to the slowest cadence on the strength of a malformed response.
+#[test]
+fn tier_active_when_items_key_is_absent() {
+    assert_eq!(
+        parse_tier_from_json(r#"{"has_more":false}"#).unwrap(),
+        Tier::Active
+    );
+}
+
+/// Same for an explicit null, which previously failed to deserialise at all.
+#[test]
+fn tier_active_when_items_is_null() {
+    assert_eq!(
+        parse_tier_from_json(r#"{"items":null,"has_more":false}"#).unwrap(),
+        Tier::Active
+    );
+}
+
+/// A null/absent page must still yield no perps rather than erroring the whole
+/// fetch, so the touch worker degrades the same way it always has.
+#[test]
+fn absent_items_yields_no_perps() {
+    assert!(
+        parse_perp_addresses_from_json(r#"{"items":null,"has_more":false}"#)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn tier_from_page_distinguishes_absent_from_empty() {
+    assert_eq!(tier_from_page(None), Tier::Active);
+    assert_eq!(tier_from_page(Some(&[])), Tier::Dormant);
+}
+
+#[test]
+fn tier_from_items_precedence() {
+    assert_eq!(tier_from_items(&[]), Tier::Dormant);
+    assert_eq!(
+        tier_from_items(&[(Some(false), Some(false)), (Some(false), Some(true))]),
+        Tier::Idle
+    );
+    assert_eq!(
+        tier_from_items(&[(Some(false), Some(true)), (Some(true), Some(false))]),
+        Tier::Active
+    );
 }
