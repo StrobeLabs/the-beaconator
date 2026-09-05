@@ -5,6 +5,12 @@
 //! `GET /markets?beacon=<hex>&limit=500` returns a page of markets, each with a
 //! `perp_address`. One beacon can back several perps, so the result is a list.
 //!
+//! The same page also carries each market's open interest and LP capacity, so
+//! the resolver classifies the beacon into a [`Tier`] on the way past. That
+//! costs nothing extra — it is the response we already fetch and cache — and
+//! lets the publish rate limit follow real usage instead of a hand-audited
+//! list. See [`crate::services::beacon::dedupe`].
+//!
 //! [`PerpResolver::resolve_perps`] never errors: on any failure it degrades to a
 //! fresh-enough cached entry (stale-if-error) or an empty set, so a bot-api
 //! outage never propagates into the touch worker.
@@ -15,6 +21,7 @@ use std::time::{Duration, Instant};
 
 use alloy::primitives::Address;
 use serde::Deserialize;
+use serde_json::Value;
 use tokio::sync::RwLock;
 
 /// bot-api caps `limit` at 500; request the max to minimise round trips.
@@ -40,10 +47,66 @@ struct MarketsPage {
 struct MarketItem {
     #[serde(default)]
     perp_address: String,
+    // Usage signals, kept as raw JSON: bot-api serialises these as strings
+    // (Pydantic `Decimal`) but has emitted numbers before, and the tier only
+    // ever asks "is this > 0", never the magnitude. A missing or unreadable
+    // field reads as absent, and `tier_from_items` treats a market it cannot
+    // classify as Active — erring toward a fresher index, never a staler one.
+    #[serde(default)]
+    open_interest_long: Value,
+    #[serde(default)]
+    open_interest_short: Value,
+    #[serde(default)]
+    capacity_long: Value,
+    #[serde(default)]
+    capacity_short: Value,
+}
+
+/// Is this JSON value a number greater than zero? Accepts both the string and
+/// numeric encodings; anything else (null, absent, unparseable) is `None`,
+/// which the caller must distinguish from a genuine zero.
+fn positive(v: &Value) -> Option<bool> {
+    let n = match v {
+        Value::String(s) => s.trim().parse::<f64>().ok()?,
+        Value::Number(n) => n.as_f64()?,
+        _ => return None,
+    };
+    Some(n > 0.0)
+}
+
+/// How much a beacon's markets are actually used. Drives the publish cadence:
+/// an index nobody can trade against does not need refreshing every 5 minutes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    /// Someone holds a position. Index freshness feeds their funding and
+    /// liquidation price, so this tier stays fast.
+    Active,
+    /// Tradeable (LP capacity present) but nobody is in it.
+    Idle,
+    /// No liquidity and no positions — nothing can trade against this index.
+    Dormant,
+}
+
+impl Tier {
+    /// Env key suffix / config token for this tier.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Idle => "idle",
+            Self::Dormant => "dormant",
+        }
+    }
+}
+
+impl std::fmt::Display for Tier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 struct CacheEntry {
     perps: Vec<Address>,
+    tier: Tier,
     fetched_at: Instant,
 }
 
@@ -84,12 +147,12 @@ impl PerpResolver {
     /// returned directly; otherwise it fetches and, on failure, degrades to a
     /// stale cache entry (if any) or an empty set.
     pub async fn resolve_perps(&self, beacon: Address) -> Vec<Address> {
-        if let Some(perps) = self.fresh_cached(beacon).await {
+        if let Some((perps, _)) = self.fresh_cached(beacon).await {
             return perps;
         }
         match self.fetch(beacon).await {
-            Ok(perps) => {
-                self.store(beacon, perps.clone()).await;
+            Ok((perps, tier)) => {
+                self.store(beacon, perps.clone(), tier).await;
                 perps
             }
             Err(e) => {
@@ -105,7 +168,17 @@ impl PerpResolver {
         }
     }
 
-    async fn fresh_cached(&self, beacon: Address) -> Option<Vec<Address>> {
+    /// The cached tier for `beacon`, or `None` when nothing fresh is cached.
+    ///
+    /// **Never fetches.** The publish path calls this while holding the beacon
+    /// update lock, where a 5s bot-api timeout would be far more expensive than
+    /// the cadence decision is worth. A miss falls back to the configured
+    /// default and the touch worker warms the entry on its next pass.
+    pub async fn cached_tier(&self, beacon: Address) -> Option<Tier> {
+        self.fresh_cached(beacon).await.map(|(_, tier)| tier)
+    }
+
+    async fn fresh_cached(&self, beacon: Address) -> Option<(Vec<Address>, Tier)> {
         let cache = self.cache.read().await;
         let entry = cache.get(&beacon)?;
         entry_is_fresh(
@@ -115,7 +188,7 @@ impl PerpResolver {
             self.empty_ttl,
             Instant::now(),
         )
-        .then(|| entry.perps.clone())
+        .then(|| (entry.perps.clone(), entry.tier))
     }
 
     async fn stale(&self, beacon: Address) -> Vec<Address> {
@@ -127,11 +200,12 @@ impl PerpResolver {
             .unwrap_or_default()
     }
 
-    async fn store(&self, beacon: Address, perps: Vec<Address>) {
+    async fn store(&self, beacon: Address, perps: Vec<Address>, tier: Tier) {
         self.cache.write().await.insert(
             beacon,
             CacheEntry {
                 perps,
+                tier,
                 fetched_at: Instant::now(),
             },
         );
@@ -140,8 +214,9 @@ impl PerpResolver {
     /// Fetch every page for `beacon`, de-duplicating perps across pages. Returns
     /// `Err` (leaving the cache untouched) if any page request/decode fails, so
     /// a partial mapping is never cached as complete.
-    async fn fetch(&self, beacon: Address) -> Result<Vec<Address>, String> {
+    async fn fetch(&self, beacon: Address) -> Result<(Vec<Address>, Tier), String> {
         let mut out: Vec<Address> = Vec::new();
+        let mut tier = Tier::Dormant;
         let mut offset = 0usize;
         for _ in 0..MAX_PAGES {
             let url = markets_url(&self.base_url, beacon, PAGE_LIMIT, offset);
@@ -168,15 +243,23 @@ impl PerpResolver {
                 .text()
                 .await
                 .map_err(|e| format!("read body failed: {e}"))?;
-            let (perps, has_more) = parse_markets_page(&body)?;
+            let (perps, has_more, page_tier) = parse_markets_page(&body)?;
             out.extend(perps);
+            // Highest tier across all pages wins, same rule as within a page.
+            tier = tier_from_items(&[
+                (Some(tier == Tier::Active), Some(tier != Tier::Dormant)),
+                (
+                    Some(page_tier == Tier::Active),
+                    Some(page_tier != Tier::Dormant),
+                ),
+            ]);
             if !has_more {
                 break;
             }
             offset += PAGE_LIMIT;
         }
         dedup_preserving_order(&mut out);
-        Ok(out)
+        Ok((out, tier))
     }
 }
 
@@ -194,9 +277,29 @@ pub fn parse_perp_addresses_from_json(body: &str) -> Result<Vec<Address>, String
     Ok(parse_markets_page(body)?.0)
 }
 
-fn parse_markets_page(body: &str) -> Result<(Vec<Address>, bool), String> {
+/// Classify one `/markets` page body. Exposed for unit tests.
+pub fn parse_tier_from_json(body: &str) -> Result<Tier, String> {
+    Ok(parse_markets_page(body)?.2)
+}
+
+fn parse_markets_page(body: &str) -> Result<(Vec<Address>, bool, Tier), String> {
     let page: MarketsPage =
         serde_json::from_str(body).map_err(|e| format!("decode failed: {e}"))?;
+    let usage: Vec<(Option<bool>, Option<bool>)> = page
+        .items
+        .iter()
+        .map(|it| {
+            let any = |a: &Value, b: &Value| match (positive(a), positive(b)) {
+                (Some(x), Some(y)) => Some(x || y),
+                _ => None,
+            };
+            (
+                any(&it.open_interest_long, &it.open_interest_short),
+                any(&it.capacity_long, &it.capacity_short),
+            )
+        })
+        .collect();
+    let tier = tier_from_items(&usage);
     let perps = page
         .items
         .iter()
@@ -213,7 +316,39 @@ fn parse_markets_page(body: &str) -> Result<(Vec<Address>, bool), String> {
             }
         })
         .collect();
-    Ok((perps, page.has_more))
+    Ok((perps, page.has_more, tier))
+}
+
+/// Classify a beacon from the market rows backing it, taking the *highest*
+/// tier any one market reaches: a beacon feeding one traded market and nine
+/// dormant ones must stay fast.
+///
+/// A market whose usage fields could not be read counts as [`Tier::Active`].
+/// The failure directions are not symmetric — misreading a busy market as
+/// dormant would stale the index a real trader's funding depends on, while
+/// misreading a dead one as active costs a few cents of testnet gas.
+///
+/// No markets at all is [`Tier::Dormant`]: nothing can trade against it.
+pub fn tier_from_items(markets: &[(Option<bool>, Option<bool>)]) -> Tier {
+    let mut tier = Tier::Dormant;
+    for (has_oi, has_capacity) in markets {
+        let m = match (has_oi, has_capacity) {
+            // Unreadable on either axis: assume the expensive, safe answer.
+            (None, _) | (_, None) => Tier::Active,
+            (Some(true), _) => Tier::Active,
+            (Some(false), Some(true)) => Tier::Idle,
+            (Some(false), Some(false)) => Tier::Dormant,
+        };
+        tier = match (tier, m) {
+            (Tier::Active, _) | (_, Tier::Active) => Tier::Active,
+            (Tier::Idle, _) | (_, Tier::Idle) => Tier::Idle,
+            _ => Tier::Dormant,
+        };
+        if tier == Tier::Active {
+            break;
+        }
+    }
+    tier
 }
 
 /// A cache entry is fresh within `ttl` normally, or within the shorter

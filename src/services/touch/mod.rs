@@ -17,8 +17,8 @@ mod resolver;
 mod worker;
 
 pub use resolver::{
-    PerpResolver, dedup_preserving_order, entry_is_fresh, markets_url,
-    parse_perp_addresses_from_json,
+    PerpResolver, Tier, dedup_preserving_order, entry_is_fresh, markets_url,
+    parse_perp_addresses_from_json, parse_tier_from_json, tier_from_items,
 };
 pub use worker::{
     MAX_BATCH_CEILING, TouchWorker, touch_batch_gas_limit, touch_calldata, touch_calls,
@@ -49,16 +49,33 @@ const DEFAULT_MAPPING_EMPTY_TTL_SECS: u64 = 60;
 #[derive(Clone)]
 pub struct TouchDispatcher {
     tx: Option<mpsc::Sender<Address>>,
+    /// Shared with the worker so the publish path can read the cached tier the
+    /// worker already fetched. `None` when touch is disabled — callers then
+    /// fall back to the configured default interval.
+    resolver: Option<Arc<PerpResolver>>,
 }
 
 impl TouchDispatcher {
     /// A no-op dispatcher (feature disabled).
     pub fn disabled() -> Self {
-        Self { tx: None }
+        Self {
+            tx: None,
+            resolver: None,
+        }
     }
 
-    fn enabled(tx: mpsc::Sender<Address>) -> Self {
-        Self { tx: Some(tx) }
+    fn enabled(tx: mpsc::Sender<Address>, resolver: Arc<PerpResolver>) -> Self {
+        Self {
+            tx: Some(tx),
+            resolver: Some(resolver),
+        }
+    }
+
+    /// The cached usage [`Tier`] for `beacon`, or `None` when touch is off or
+    /// nothing is cached yet. Never performs I/O — see
+    /// [`PerpResolver::cached_tier`].
+    pub async fn cached_tier(&self, beacon: Address) -> Option<Tier> {
+        self.resolver.as_ref()?.cached_tier(beacon).await
     }
 
     /// Non-blocking: enqueue `beacon` for a follow-up touch of its perps. Never
@@ -155,10 +172,11 @@ pub fn spawn_from_env(
         }
     };
 
+    let resolver = Arc::new(resolver);
     let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
     let worker = TouchWorker::new(
         rx,
-        resolver,
+        Arc::clone(&resolver),
         manager,
         rpc_url,
         multicall3,
@@ -174,7 +192,7 @@ pub fn spawn_from_env(
         mapping_ttl_secs = mapping_ttl.as_secs(),
         "touch-on-update enabled: worker started"
     );
-    TouchDispatcher::enabled(tx)
+    TouchDispatcher::enabled(tx, resolver)
 }
 
 fn env_bool(key: &str, default: bool) -> bool {
