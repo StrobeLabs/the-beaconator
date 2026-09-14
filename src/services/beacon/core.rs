@@ -260,6 +260,7 @@ pub async fn register_beacon_with_registry(
                 state.provider.chain_id,
                 registry_address,
                 &calldata,
+                0,
                 nonce,
                 &state.wallets.signer,
             )
@@ -589,6 +590,7 @@ pub async fn unregister_beacon_with_registry(
                 state.provider.chain_id,
                 registry_address,
                 &calldata,
+                0,
                 nonce,
                 &state.wallets.signer,
             )

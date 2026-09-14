@@ -155,11 +155,15 @@ impl SafeTransactionService {
     /// This follows the Gnosis Safe EIP-712 signing scheme:
     /// - Domain: {chainId, verifyingContract: safeAddress}
     /// - SafeTx type with all gas/payment fields set to 0
+    ///
+    /// `operation` is 0 (CALL) for a direct call to `to`, 1 (DELEGATECALL) for
+    /// MultiSend batches.
     pub fn encode_safe_tx_hash(
         safe_address: Address,
         chain_id: u64,
         to: Address,
         data: &[u8],
+        operation: u8,
         nonce: u64,
     ) -> B256 {
         // EIP-712 domain separator
@@ -183,13 +187,15 @@ impl SafeTransactionService {
         let zero_u256 = U256::ZERO.to_be_bytes::<32>();
         let zero_address = B256::ZERO;
 
+        let operation_u256 = U256::from(operation).to_be_bytes::<32>();
+
         let struct_hash = keccak256(
             [
                 safe_tx_type_hash.as_slice(),              // typeHash
                 &B256::left_padding_from(to.as_slice()).0, // to
                 &zero_u256,                                // value = 0
                 data_hash.as_slice(),                      // keccak256(data)
-                &zero_u256,                                // operation = 0 (CALL)
+                &operation_u256,                           // operation
                 &zero_u256,                                // safeTxGas = 0
                 &zero_u256,                                // baseGas = 0
                 &zero_u256,                                // gasPrice = 0
@@ -215,16 +221,19 @@ impl SafeTransactionService {
     ///
     /// Signs the transaction with the provided signer and submits it.
     /// The signer must be one of the Safe owners.
+    #[allow(clippy::too_many_arguments)]
     pub async fn propose_transaction(
         &self,
         safe_address: Address,
         chain_id: u64,
         to: Address,
         data: &[u8],
+        operation: u8,
         nonce: u64,
         signer: &PrivateKeySigner,
     ) -> Result<B256, String> {
-        let safe_tx_hash = Self::encode_safe_tx_hash(safe_address, chain_id, to, data, nonce);
+        let safe_tx_hash =
+            Self::encode_safe_tx_hash(safe_address, chain_id, to, data, operation, nonce);
 
         // Sign the hash
         let signature = signer
@@ -244,7 +253,7 @@ impl SafeTransactionService {
             to: to.to_checksum(None),
             value: "0".to_string(),
             data: format!("0x{}", hex::encode(data)),
-            operation: 0,
+            operation,
             safe_tx_gas: "0".to_string(),
             base_gas: "0".to_string(),
             gas_price: "0".to_string(),

@@ -951,6 +951,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::beacon::create_weighted_sum_composite_beacon_endpoint,
         routes::perp::deploy_perp_for_beacon_endpoint,
         routes::perp::deposit_liquidity_for_perp_endpoint,
+        routes::perp::swap_module_endpoint,
         routes::wallet::fund_guest_wallet,
         routes::wallet::fund_bonus_wallet,
         routes::wallet::top_up_pool,

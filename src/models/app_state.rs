@@ -80,6 +80,13 @@ impl ApiEndpoints {
             },
             EndpointInfo {
                 method: "POST".to_string(),
+                path: "/swap_module".to_string(),
+                description: "Swap a module (beacon/pricing/funding/fees/margin_ratios/price_impact) on a batch of perps via the owning Safe (admin)".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
                 path: "/update_beacon".to_string(),
                 description: "Update beacon data (supports both ownable and verifiable beacons)".to_string(),
                 requires_auth: true,

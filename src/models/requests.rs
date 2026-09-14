@@ -402,3 +402,23 @@ pub struct ModularBeaconParams {
     #[schemars(with = "Option<Vec<String>>")]
     pub initial_m_slow: Option<Vec<u128>>,
 }
+
+/// Swap a module on a batch of per-market Perp contracts (admin only).
+///
+/// Builds the timelocked `submit` + setter call pair for every perp and routes them
+/// through the Safe that owns the perps: executed directly when the beaconator signer
+/// controls a 1-of-1 Safe (testnet), proposed to the Safe Transaction Service otherwise
+/// (mainnet multisig).
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SwapModuleRequest {
+    /// Which module slot to swap: "beacon", "pricing", "funding", "fees",
+    /// "margin_ratios", or "price_impact"
+    pub module_type: String,
+    /// Address of the new module implementation (must be deployed)
+    pub new_module_address: String,
+    /// Perp contract addresses to swap (1..=100)
+    pub perp_addresses: Vec<String>,
+    /// Which half of the timelocked two-step to run: "both" (default), "submit",
+    /// or "execute". "execute" requires a prior submit whose timelock has expired.
+    pub phase: Option<String>,
+}

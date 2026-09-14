@@ -21,11 +21,11 @@ pub use requests::{
     RegisterBeaconRequest, RegisterBeaconTypeRequest, TopUpPoolRequest, UnregisterBeaconRequest,
     UpdateBeaconRequest, UpdateBeaconTypeRequest, UpdateBeaconWithEcdsaRequest,
 };
-pub use requests::{CreateModularBeaconRequest, ModularBeaconParams};
+pub use requests::{CreateModularBeaconRequest, ModularBeaconParams, SwapModuleRequest};
 pub use responses::{
     ApiResponse, BatchUpdateBeaconResponse, BeaconComponentAddresses, BeaconTypeListResponse,
     BeaconUpdateResult, CreateBeaconResponse, CreateBeaconWithEcdsaResponse,
     CreateModularBeaconResponse, DeployPerpForBeaconResponse, DepositLiquidityForPerpResponse,
-    EcdsaUpdateResponse,
+    EcdsaUpdateResponse, PendingTimelock, SwapModuleResponse,
 };
 pub use wallet::{RedisKeys, WalletInfo, WalletManagerConfig, WalletStatus};

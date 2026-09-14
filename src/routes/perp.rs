@@ -6,13 +6,17 @@ use rocket_okapi::openapi;
 use std::str::FromStr;
 use tracing;
 
-use crate::guards::ApiToken;
+use crate::guards::{AdminToken, ApiToken};
 use crate::models::{
     ApiResponse, AppState, DeployPerpForBeaconRequest, DeployPerpForBeaconResponse,
-    DepositLiquidityForPerpRequest, DepositLiquidityForPerpResponse,
+    DepositLiquidityForPerpRequest, DepositLiquidityForPerpResponse, SwapModuleRequest,
+    SwapModuleResponse,
 };
 use crate::routes::IPerpFactory;
-use crate::services::perp::{deploy_perp_for_beacon, deposit_liquidity_for_perp};
+use crate::services::perp::{
+    ModuleType, SwapModuleError, SwapPhase, deploy_perp_for_beacon, deposit_liquidity_for_perp,
+    swap_module,
+};
 
 /// Derive a deterministic 32-byte salt from the deploy request. Reusing this salt on retry
 /// causes `LibClone.cloneDeterministic` inside PerpFactory.createPerp to revert if the previous
@@ -252,6 +256,95 @@ pub async fn deposit_liquidity_for_perp_endpoint(
             tracing::error!("  - Margin amount: {} USDC", request.margin_amount_usdc);
             tracing::error!("  - PerpFactory address: {}", state.contracts.perp_factory);
 
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
+/// Swaps a module on a batch of per-market Perp contracts (admin only).
+///
+/// Runs the timelocked `submit` + setter two-step for every perp through the Safe
+/// that owns them: executed directly when the beaconator signer controls a 1-of-1
+/// Safe (testnet), proposed to the Safe Transaction Service otherwise (mainnet).
+/// Perps already set to the new address are skipped, so retries are idempotent.
+#[openapi(tag = "Perpetual")]
+#[post("/swap_module", data = "<request>")]
+pub async fn swap_module_endpoint(
+    request: Json<SwapModuleRequest>,
+    _token: AdminToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<SwapModuleResponse>>, Status> {
+    tracing::info!("Received request: POST /swap_module");
+
+    let module_type = match ModuleType::parse(&request.module_type) {
+        Some(m) => m,
+        None => {
+            tracing::error!("Invalid module_type '{}'", request.module_type);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    let new_module = match Address::from_str(&request.new_module_address) {
+        Ok(addr) => addr,
+        Err(e) => {
+            tracing::error!(
+                "Invalid new_module_address '{}': {e}",
+                request.new_module_address
+            );
+            return Err(Status::BadRequest);
+        }
+    };
+
+    let phase = match SwapPhase::parse(request.phase.as_deref()) {
+        Some(p) => p,
+        None => {
+            tracing::error!(
+                "Invalid phase '{:?}': expected both | submit | execute",
+                request.phase
+            );
+            return Err(Status::BadRequest);
+        }
+    };
+
+    let mut perps = Vec::with_capacity(request.perp_addresses.len());
+    for raw in &request.perp_addresses {
+        match Address::from_str(raw) {
+            Ok(addr) => perps.push(addr),
+            Err(e) => {
+                tracing::error!("Invalid perp address '{raw}': {e}");
+                return Err(Status::BadRequest);
+            }
+        }
+    }
+
+    match swap_module(state, module_type, new_module, perps, phase).await {
+        Ok(response) => {
+            let message = match response.mode.as_str() {
+                "executed" => "Module swap executed",
+                "submitted_only" => "Module swap submitted; execution pending",
+                _ => "Module swap proposed to the Safe Transaction Service",
+            };
+            tracing::info!(
+                "{message}: {} swapped, {} skipped",
+                response.swapped.len(),
+                response.skipped_already_set.len()
+            );
+            Ok(Json(ApiResponse {
+                success: true,
+                data: Some(response),
+                message: message.to_string(),
+            }))
+        }
+        Err(SwapModuleError::Validation(msg)) => {
+            tracing::error!("swap_module validation failed: {msg}");
+            Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: msg,
+            }))
+        }
+        Err(SwapModuleError::Internal(msg)) => {
+            tracing::error!("swap_module failed: {msg}");
             Err(Status::InternalServerError)
         }
     }
