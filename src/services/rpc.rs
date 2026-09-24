@@ -4,6 +4,8 @@ use alloy::providers::ProviderBuilder;
 use alloy::signers::{Signer, local::PrivateKeySigner};
 use std::env;
 
+use super::rpc_transport::rpc_client;
+
 // Import provider types from lib.rs
 use crate::{AlloyProvider, ReadOnlyProvider};
 
@@ -55,20 +57,16 @@ impl RpcConfig {
 
         let wallet = EthereumWallet::from(signer);
 
-        let provider = ProviderBuilder::new().wallet(wallet).connect_http(
-            url.parse()
-                .map_err(|e| format!("Invalid RPC URL '{url}': {e}"))?,
-        );
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_client(rpc_client(url)?);
 
         Ok(provider)
     }
 
     /// Build a read-only provider from a URL (no wallet, for queries only)
     pub fn build_read_only_provider(url: &str) -> Result<ReadOnlyProvider, String> {
-        let provider = ProviderBuilder::new().connect_http(
-            url.parse()
-                .map_err(|e| format!("Invalid RPC URL '{url}': {e}"))?,
-        );
+        let provider = ProviderBuilder::new().connect_client(rpc_client(url)?);
 
         Ok(provider)
     }
