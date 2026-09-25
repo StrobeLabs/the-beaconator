@@ -10,12 +10,13 @@ async fn rocket() -> _ {
     // already installed, which is the desired end state.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    // Initialize logging first with environment variable support
-    use tracing_subscriber::{EnvFilter, fmt};
+    // Initialize logging first with RUST_LOG support (alloy's HTTP transport
+    // is capped at INFO so its URL-bearing span never prints).
+    use tracing_subscriber::fmt;
 
-    // Set up logging with RUST_LOG environment variable support
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,the_beaconator=info,rocket=warn"));
+    let filter = the_beaconator::services::rpc_transport::log_filter(
+        std::env::var("RUST_LOG").ok().as_deref(),
+    );
 
     fmt()
         .with_env_filter(filter)
