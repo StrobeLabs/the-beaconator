@@ -30,23 +30,6 @@ pub fn redact_url(url: &str) -> String {
     }
 }
 
-/// Log filter from `RUST_LOG` (or the default), with alloy's HTTP transport
-/// capped at INFO: its DEBUG `ReqwestTransport` span records the full RPC URL,
-/// API key included, and `RUST_LOG=debug` would otherwise print it on every
-/// event inside a provider call.
-pub fn log_filter(spec: Option<&str>) -> tracing_subscriber::EnvFilter {
-    let filter = spec
-        .and_then(|s| tracing_subscriber::EnvFilter::try_new(s).ok())
-        .unwrap_or_else(|| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER));
-    filter.add_directive(
-        "alloy_transport_http=info"
-            .parse()
-            .expect("static directive parses"),
-    )
-}
-
-pub const DEFAULT_LOG_FILTER: &str = "info,the_beaconator=info,rocket=warn";
-
 /// Drop the request URL from a reqwest transport error, keeping its kind
 /// (timeout, connect, ...) and source chain.
 fn strip_url(err: TransportError) -> TransportError {
@@ -131,55 +114,6 @@ mod unit_tests {
                 assert!(!err.contains(KEY), "{err}");
             }
         }
-    }
-
-    /// With RUST_LOG=debug, alloy's `ReqwestTransport` DEBUG span (target
-    /// `alloy_transport_http::reqwest_transport`, field `url` = full URL) would
-    /// print with every event inside a provider call. The filter must keep that
-    /// target off at DEBUG while everything else follows RUST_LOG.
-    #[test]
-    fn log_filter_caps_alloy_http_transport_at_info() {
-        use tracing::Level;
-
-        for spec in [
-            Some("debug"),
-            Some("trace"),
-            Some("alloy_transport_http=trace"),
-            None,
-        ] {
-            let dispatch = tracing::Dispatch::new(
-                tracing_subscriber::fmt()
-                    .with_env_filter(log_filter(spec))
-                    .with_writer(std::io::sink)
-                    .finish(),
-            );
-            tracing::dispatcher::with_default(&dispatch, || {
-                assert!(
-                    !tracing::enabled!(
-                        target: "alloy_transport_http::reqwest_transport",
-                        Level::DEBUG
-                    ),
-                    "{spec:?} enables alloy's URL-bearing span"
-                );
-                assert!(
-                    tracing::enabled!(
-                        target: "alloy_transport_http::reqwest_transport",
-                        Level::INFO
-                    ),
-                    "{spec:?} silences alloy transport warnings"
-                );
-            });
-        }
-
-        let debug = tracing::Dispatch::new(
-            tracing_subscriber::fmt()
-                .with_env_filter(log_filter(Some("debug")))
-                .with_writer(std::io::sink)
-                .finish(),
-        );
-        tracing::dispatcher::with_default(&debug, || {
-            assert!(tracing::enabled!(target: "the_beaconator", Level::DEBUG));
-        });
     }
 
     /// A refused connection is the common case where reqwest prints the URL.

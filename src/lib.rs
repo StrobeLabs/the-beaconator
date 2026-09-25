@@ -9,6 +9,7 @@ use std::str::FromStr;
 
 pub mod fairings;
 pub mod guards;
+pub mod logging;
 pub mod models;
 pub mod routes;
 pub mod services;
