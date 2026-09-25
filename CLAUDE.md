@@ -91,7 +91,7 @@ See `ARCHITECTURE.md` for detailed guidelines on code organization and best prac
 **Critical:** Alloy uses complex nested generic types for providers. The project uses a concrete type definition (`AlloyProvider`) instead of trait objects because the `sol!` macro requires concrete types.
 
 Key patterns:
-- Provider setup in `src/lib.rs:50-90` using `ProviderBuilder::new().wallet(wallet).connect_http(url)`
+- Provider setup uses `ProviderBuilder::new().wallet(wallet).connect_client(rpc_client(url)?)` (`src/services/rpc_transport.rs`); never `connect_http` with the real RPC URL
 - Contract instantiation uses `&*state.provider` to dereference Arc
 - AppState stores wallet address separately for easy access
 
@@ -189,10 +189,11 @@ MULTICALL3_ADDRESS=0xcA11bde05977b3631167028862bE2a173976CA11
 
 ### Modern Provider Pattern
 ```rust
-// CORRECT - Current Alloy v1.5+ pattern
+// CORRECT - build on rpc_client so RPC_URL (which carries the API key)
+// never appears in errors; reqwest errors otherwise print the full URL.
 let provider = ProviderBuilder::new()
     .wallet(wallet)
-    .connect_http(url);
+    .connect_client(services::rpc_transport::rpc_client(&url)?);
 
 // AVOID - Deprecated pattern
 let provider = ProviderBuilder::new()

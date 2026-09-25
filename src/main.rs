@@ -10,19 +10,10 @@ async fn rocket() -> _ {
     // already installed, which is the desired end state.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    // Initialize logging first with environment variable support
-    use tracing_subscriber::{EnvFilter, fmt};
-
-    // Set up logging with RUST_LOG environment variable support
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,the_beaconator=info,rocket=warn"));
-
-    fmt()
-        .with_env_filter(filter)
-        .with_thread_ids(true)
-        .with_file(true)
-        .with_line_number(true)
-        .init();
+    // Initialize logging first with RUST_LOG support (see `logging` for the
+    // hard caps RUST_LOG cannot lift).
+    use tracing_subscriber::util::SubscriberInitExt;
+    the_beaconator::logging::subscriber(std::env::var("RUST_LOG").ok().as_deref()).init();
 
     tracing::info!("Starting the Beaconator server...");
 
