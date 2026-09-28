@@ -130,11 +130,9 @@ impl WalletHandle {
     pub fn build_provider(&self, rpc_url: &str) -> Result<AlloyProvider, String> {
         let wallet = self.signer.0.ethereum_wallet();
 
-        let provider = ProviderBuilder::new().wallet(wallet).connect_http(
-            rpc_url
-                .parse()
-                .map_err(|e| format!("Invalid RPC URL '{rpc_url}': {e}"))?,
-        );
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_client(crate::services::rpc_transport::rpc_client(rpc_url)?);
 
         Ok(provider)
     }
