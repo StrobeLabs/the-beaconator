@@ -16,3 +16,5 @@ pub mod unregister_beacon_integration_tests;
 // pub mod transaction_execution_integration_tests; // Removed - nonce management obsolete with WalletManager
 pub mod modular_registry_tests;
 pub mod wallet_test;
+
+pub mod retirement_tests;

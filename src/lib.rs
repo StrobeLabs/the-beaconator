@@ -945,6 +945,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::beacon::create_beacon_with_ecdsa,
         routes::beacon::register_beacon,
         routes::beacon::unregister_beacon,
+        routes::retirement::retire_perp,
         routes::beacon::update_beacon,
         routes::beacon::batch_update_beacon,
         routes::beacon::update_beacon_with_ecdsa_adapter,

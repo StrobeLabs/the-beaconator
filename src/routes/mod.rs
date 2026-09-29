@@ -3,6 +3,7 @@ pub mod beacon_type;
 pub mod info;
 pub mod perp;
 pub mod recipe;
+pub mod retirement;
 pub mod wallet;
 
 #[cfg(test)]
