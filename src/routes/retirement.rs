@@ -193,8 +193,9 @@ pub async fn retire_perp(
                 .to(zero)
                 .input(input.into()),
         )
+        .block(block_id)
         .await
-        .map_err(|_| Status::Conflict)?;
+        .map_err(|_| Status::BadGateway)?;
     if result.as_ref() != [0_u8; 32] {
         return Err(Status::Conflict);
     }
