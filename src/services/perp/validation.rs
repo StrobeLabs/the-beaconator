@@ -4,11 +4,12 @@ use std::sync::Arc;
 
 use crate::ReadOnlyProvider;
 
-/// Decodes 4-byte error selectors emitted by perpcity-contracts@v0.1.0 (`Perp.sol`,
-/// `PerpFactory.sol`, `ProtocolFeeManager.sol`) into human-readable strings for API responses.
+/// Decodes 4-byte error selectors emitted by perpcity-contracts (`Perp.sol`, `PerpFactory.sol`,
+/// `ProtocolFeeManager.sol`, the UUPS proxy surface) into human-readable strings for API
+/// responses. Covers build 58b42b7 (the live old perps) and tag `v0.2.2-upgradeable`.
 ///
-/// Selectors are derived from the v0.1.0 contracts via `cast sig "<ErrorName>()"` (and similar
-/// for parameterized errors). Update this list whenever the pinned contracts version bumps.
+/// Selectors are derived via `cast sig "<ErrorName>()"` (and similar for parameterized
+/// errors). Update this list whenever the pinned contracts version bumps.
 pub struct ContractErrorDecoder;
 
 impl ContractErrorDecoder {
@@ -38,16 +39,33 @@ impl ContractErrorDecoder {
     const TIMELOCK_NOT_EXPIRED: &'static str = "0x621e25c3";
     const ABDICATED: &'static str = "0x281df4aa";
 
+    // Added at v0.2.2-upgradeable (Perp.skim, PerpGuardHook, solady ERC721).
+    const NO_SURPLUS: &'static str = "0xc0ef17d3";
+    const ZERO_ADDRESS: &'static str = "0xd92e233d";
+    const UNAUTHORIZED_POOL_ACTION: &'static str = "0xb7cc5070";
+    const TOKEN_DOES_NOT_EXIST: &'static str = "0xceea21b6";
+
+    // OpenZeppelin ERC-1967 / UUPS proxy errors (markets are proxies from v0.2.2).
+    const ERC1967_INVALID_IMPLEMENTATION: &'static str = "0x4c9c8ce3";
+    const ERC1967_NON_PAYABLE: &'static str = "0xb398979f";
+    const UUPS_UNAUTHORIZED_CALL_CONTEXT: &'static str = "0xe07c8dba";
+    const UUPS_UNSUPPORTED_PROXIABLE_UUID: &'static str = "0xaa1d49a4";
+    const INVALID_INITIALIZATION: &'static str = "0xf92ee8a9";
+
     // From src/interfaces/IPerpFactory.sol@v0.1.0.
     const STARTING_PRICE_TOO_LOW: &'static str = "0xac8ac5a5";
     const STARTING_PRICE_TOO_HIGH: &'static str = "0x32231715";
     const EMA_WINDOW_TOO_LOW: &'static str = "0xc657a809";
+    // v0.2.2-upgradeable PerpFactory.setPerpImplementation gates.
+    const INVALID_PERP_IMPLEMENTATION: &'static str = "0xa457695f";
+    const NOT_PROTOCOL_OWNER: &'static str = "0xfb6fc0b7";
 
     // From src/interfaces/IProtocolFeeManager.sol@v0.1.0.
     const PROTOCOL_FEE_TOO_HIGH: &'static str = "0x499fddb1";
 
-    // Solady SafeCastLib — has parameter (the offending uint).
-    const SAFECAST_OVERFLOW: &'static str = "0x24775e06";
+    // Solady SafeCastLib `Overflow()` — parameterless (the earlier pin listed the OZ
+    // `SafeCastOverflowedUintToInt(uint256)` selector, which the contracts never emit).
+    const SAFECAST_OVERFLOW: &'static str = "0x35278d12";
 
     pub fn decode_error_data(error_data: &str) -> Option<String> {
         if error_data.len() < 10 {
@@ -55,7 +73,6 @@ impl ContractErrorDecoder {
         }
 
         let selector = &error_data[0..10];
-        let params_data = &error_data[10..];
 
         match selector {
             Self::ZERO_DELTA => Some("ZeroDelta: requested perp delta is zero".to_string()),
@@ -131,6 +148,34 @@ impl ContractErrorDecoder {
             Self::ABDICATED => {
                 Some("Abdicated: this admin function has been permanently abdicated".to_string())
             }
+            Self::NO_SURPLUS => {
+                Some("NoSurplus: balance does not exceed margin, insurance and fees".to_string())
+            }
+            Self::ZERO_ADDRESS => Some("ZeroAddress: recipient must not be zero".to_string()),
+            Self::UNAUTHORIZED_POOL_ACTION => Some(
+                "UnauthorizedPoolAction: only the Perp may swap or modify liquidity on its pool"
+                    .to_string(),
+            ),
+            Self::TOKEN_DOES_NOT_EXIST => Some(
+                "TokenDoesNotExist: the position NFT has been burned or never existed".to_string(),
+            ),
+            Self::ERC1967_INVALID_IMPLEMENTATION => Some(
+                "ERC1967InvalidImplementation: the new implementation is not a contract"
+                    .to_string(),
+            ),
+            Self::ERC1967_NON_PAYABLE => {
+                Some("ERC1967NonPayable: proxy upgrade call must not carry value".to_string())
+            }
+            Self::UUPS_UNAUTHORIZED_CALL_CONTEXT => {
+                Some("UUPSUnauthorizedCallContext: upgrade must go through the proxy".to_string())
+            }
+            Self::UUPS_UNSUPPORTED_PROXIABLE_UUID => Some(
+                "UUPSUnsupportedProxiableUUID: the new implementation is not UUPS compatible"
+                    .to_string(),
+            ),
+            Self::INVALID_INITIALIZATION => {
+                Some("InvalidInitialization: the market is already initialized".to_string())
+            }
             Self::STARTING_PRICE_TOO_LOW => Some(
                 "StartingPriceTooLow: beacon index implies a sqrt price below the AMM minimum"
                     .to_string(),
@@ -142,26 +187,23 @@ impl ContractErrorDecoder {
             Self::EMA_WINDOW_TOO_LOW => {
                 Some("EmaWindowTooLow: emaWindow must be > 0 (uint24)".to_string())
             }
+            Self::INVALID_PERP_IMPLEMENTATION => Some(
+                "InvalidPerpImplementation: the proposed Perp implementation is not a contract"
+                    .to_string(),
+            ),
+            Self::NOT_PROTOCOL_OWNER => Some(
+                "NotProtocolOwner: only the ProtocolFeeManager owner may set the implementation"
+                    .to_string(),
+            ),
             Self::PROTOCOL_FEE_TOO_HIGH => Some(
                 "ProtocolFeeTooHigh: requested protocol fee exceeds the configured maximum"
                     .to_string(),
             ),
-            Self::SAFECAST_OVERFLOW => Self::decode_safecast_overflow(params_data),
+            Self::SAFECAST_OVERFLOW => {
+                Some("Overflow: a SafeCastLib conversion overflowed".to_string())
+            }
             _ => Some(format!("Unknown contract error: {selector}")),
         }
-    }
-
-    fn decode_safecast_overflow(params_data: &str) -> Option<String> {
-        if params_data.len() < 64 {
-            return None;
-        }
-
-        let value_hex = &params_data[0..64];
-        let value = u128::from_str_radix(value_hex, 16).ok()?;
-
-        Some(format!(
-            "SafeCastOverflowedUintToInt: value {value} overflows when casting to int"
-        ))
     }
 }
 

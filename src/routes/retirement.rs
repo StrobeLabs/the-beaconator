@@ -2,8 +2,8 @@
 use crate::{
     guards::ApiToken,
     models::{ApiResponse, AppState},
-    routes::{IBeaconRegistry, IPerpFactory},
-    services::safe::SafeTransactionService,
+    routes::IBeaconRegistry,
+    services::{perp::perp_factory_of, safe::SafeTransactionService},
 };
 use alloy::{
     primitives::{Address, B256, Bytes, U256},
@@ -141,15 +141,16 @@ pub async fn retire_perp(
         .map_err(|_| Status::BadGateway)?
         .try_into()
         .map_err(|_| Status::Conflict)?;
-    let factory = IPerpFactory::new(state.contracts.perp_factory, provider);
-    if !factory
-        .perps(perp)
-        .call()
-        .block(block_id)
+    // The perp may sit on the primary factory or on a legacy one (old markets being wound
+    // down after a contracts redeploy); both are trusted deployers.
+    match perp_factory_of(&state.contracts, provider, perp, Some(block_id))
         .await
         .map_err(|_| Status::BadGateway)?
     {
-        return Err(Status::BadRequest);
+        Some(factory) => {
+            tracing::info!("retire_perp: {perp} registered with PerpFactory {factory}")
+        }
+        None => return Err(Status::BadRequest),
     }
     let contract = RetirementPerp::new(perp, provider);
     let owner = contract
