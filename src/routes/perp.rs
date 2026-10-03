@@ -11,8 +11,7 @@ use crate::models::{
     ApiResponse, AppState, DeployPerpForBeaconRequest, DeployPerpForBeaconResponse,
     DepositLiquidityForPerpRequest, DepositLiquidityForPerpResponse,
 };
-use crate::routes::IPerpFactory;
-use crate::services::perp::{deploy_perp_for_beacon, deposit_liquidity_for_perp};
+use crate::services::perp::{deploy_perp_for_beacon, deposit_liquidity_for_perp, perp_factory_of};
 
 /// Derive a deterministic 32-byte salt from the deploy request. Reusing this salt on retry
 /// causes `LibClone.cloneDeterministic` inside PerpFactory.createPerp to revert if the previous
@@ -189,24 +188,33 @@ pub async fn deposit_liquidity_for_perp_endpoint(
     let tick_lower = request.tick_lower.unwrap_or(24390);
     let tick_upper = request.tick_upper.unwrap_or(53850);
 
-    // Defense in depth: refuse to approve USDC against any address that wasn't deployed by the
-    // trusted PerpFactory. The endpoint is gated by the API token, but a caller typo or a
-    // compromised token must never produce a USDC allowance on an EOA or a non-Perp contract.
+    // Defense in depth: refuse to approve USDC against any address that wasn't deployed by a
+    // trusted PerpFactory (the primary one or a listed legacy one). The endpoint is gated by
+    // the API token, but a caller typo or a compromised token must never produce a USDC
+    // allowance on an EOA or a non-Perp contract.
     //
     // The on-chain check is `PerpFactory.perps(address)` (boolean mapping populated in
     // createPerp). Run AFTER cheap input validation so 400-class errors are surfaced first.
-    let factory = IPerpFactory::new(state.contracts.perp_factory, &state.provider.read_provider);
-    match factory.perps(perp_address).call().await {
-        Ok(is_known_perp) => {
-            if !is_known_perp {
-                let error_msg = format!(
-                    "perp_address {perp_address} is not registered with PerpFactory \
-                     {} — refusing to approve USDC to an untrusted address",
-                    state.contracts.perp_factory
-                );
-                tracing::error!("{}", error_msg);
-                return Err(Status::BadRequest);
-            }
+    match perp_factory_of(
+        &state.contracts,
+        &state.provider.read_provider,
+        perp_address,
+        None,
+    )
+    .await
+    {
+        Ok(Some(factory)) => {
+            tracing::info!("perp_address {perp_address} is registered with PerpFactory {factory}");
+        }
+        Ok(None) => {
+            let error_msg = format!(
+                "perp_address {perp_address} is not registered with PerpFactory {} or any \
+                 legacy factory ({}) — refusing to approve USDC to an untrusted address",
+                state.contracts.perp_factory,
+                state.contracts.legacy_perp_factories.len()
+            );
+            tracing::error!("{}", error_msg);
+            return Err(Status::BadRequest);
         }
         Err(e) => {
             let error_msg =

@@ -141,7 +141,8 @@ BEACONATOR_ACCESS_TOKEN=your_secret_token     # API authentication
 PRIVATE_KEY=...                               # EIP-712 measurement signer key (no 0x prefix); signs only, holds no funds
 WALLET_PRIVATE_KEYS=...                       # Comma-separated pool keys (gas + guest funding transfers; need ETH + testnet USDC)
 PERPCITY_REGISTRY_ADDRESS=0x...               # BeaconRegistry (beacons@v0.0.1)
-PERP_FACTORY_ADDRESS=0x...                    # PerpFactory (perpcity-contracts@v0.1.0)
+PERP_FACTORY_ADDRESS=0x...                    # PerpFactory new perps are created on (v0.2.2-upgradeable on mainnet)
+LEGACY_PERP_FACTORY_ADDRESSES=0x...,0x...     # Optional: earlier factories whose perps are still live; perps() gates accept them
 ECDSA_VERIFIER_FACTORY_ADDRESS=0x...          # ECDSAVerifierFactory (beacons@v0.0.1)
 USDC_ADDRESS=0x...                            # USDC ERC20 (network-specific)
 

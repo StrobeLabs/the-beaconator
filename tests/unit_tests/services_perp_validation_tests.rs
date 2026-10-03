@@ -1,5 +1,6 @@
-// Unit tests for the v0.1.0 perp validation / error decoder.
-// Selectors come from `cast sig "<ErrorName>()"` against perpcity-contracts@v0.1.0.
+// Unit tests for the perp validation / error decoder.
+// Selectors come from `cast sig "<ErrorName>()"` against perpcity-contracts (build 58b42b7
+// and tag v0.2.2-upgradeable).
 
 use the_beaconator::services::perp::validation::{ContractErrorDecoder, try_decode_revert_reason};
 
@@ -166,17 +167,82 @@ mod contract_error_decoder_tests {
         assert_contains("0x499fddb1", "ProtocolFeeTooHigh");
     }
 
-    // ---- Solady SafeCastLib (parameterized) ----
+    // ---- Solady SafeCastLib ----
 
     #[test]
     fn test_decode_safecast_overflow() {
+        assert_contains("0x35278d12", "Overflow");
+    }
+
+    #[test]
+    fn test_old_oz_safecast_selector_is_unknown() {
+        let result = ContractErrorDecoder::decode_error_data("0x24775e06");
+        assert!(result.unwrap().contains("Unknown contract error"));
+    }
+
+    // ---- v0.2.2-upgradeable additions ----
+
+    #[test]
+    fn test_decode_no_surplus() {
+        assert_contains("0xc0ef17d3", "NoSurplus");
+    }
+
+    #[test]
+    fn test_decode_zero_address() {
+        assert_contains("0xd92e233d", "ZeroAddress");
+    }
+
+    #[test]
+    fn test_decode_invalid_perp_implementation() {
+        assert_contains("0xa457695f", "InvalidPerpImplementation");
+    }
+
+    #[test]
+    fn test_decode_not_protocol_owner() {
+        assert_contains("0xfb6fc0b7", "NotProtocolOwner");
+    }
+
+    #[test]
+    fn test_decode_unauthorized_pool_action() {
+        assert_contains("0xb7cc5070", "UnauthorizedPoolAction");
+    }
+
+    #[test]
+    fn test_decode_token_does_not_exist() {
+        assert_contains("0xceea21b6", "TokenDoesNotExist");
+    }
+
+    #[test]
+    fn test_decode_erc1967_invalid_implementation_with_params() {
         let error_data = concat!(
-            "0x24775e06",
-            "00000000000000000000000000000000ffffffffffffffffffffffffffffffff"
+            "0x4c9c8ce3",
+            "0000000000000000000000001111111111111111111111111111111111111111"
         );
-        let result = ContractErrorDecoder::decode_error_data(error_data);
-        assert!(result.is_some());
-        assert!(result.unwrap().contains("SafeCastOverflowedUintToInt"));
+        assert_contains(error_data, "ERC1967InvalidImplementation");
+    }
+
+    #[test]
+    fn test_decode_erc1967_non_payable() {
+        assert_contains("0xb398979f", "ERC1967NonPayable");
+    }
+
+    #[test]
+    fn test_decode_uups_unauthorized_call_context() {
+        assert_contains("0xe07c8dba", "UUPSUnauthorizedCallContext");
+    }
+
+    #[test]
+    fn test_decode_uups_unsupported_proxiable_uuid_with_params() {
+        let error_data = concat!(
+            "0xaa1d49a4",
+            "360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
+        );
+        assert_contains(error_data, "UUPSUnsupportedProxiableUUID");
+    }
+
+    #[test]
+    fn test_decode_invalid_initialization() {
+        assert_contains("0xf92ee8a9", "InvalidInitialization");
     }
 
     // ---- Edge cases ----
@@ -197,13 +263,6 @@ mod contract_error_decoder_tests {
     #[test]
     fn test_decode_error_data_too_short() {
         let error_data = "0x1234";
-        let result = ContractErrorDecoder::decode_error_data(error_data);
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_decode_safecast_overflow_insufficient_params() {
-        let error_data = "0x24775e0600000000000000000000000000000000";
         let result = ContractErrorDecoder::decode_error_data(error_data);
         assert!(result.is_none());
     }
