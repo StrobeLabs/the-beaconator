@@ -9,6 +9,7 @@ use super::super::transaction::execution::send_with_nonce_retry;
 use super::validation::try_decode_revert_reason;
 use crate::models::{AppState, DeployPerpForBeaconResponse, DepositLiquidityForPerpResponse};
 use crate::routes::{IERC20, IPerp, IPerpFactory};
+use alloy::eips::BlockId;
 
 /// Deploys a per-market `Perp` contract via PerpFactory.createPerp (perpcity-contracts@v0.1.0).
 ///
@@ -478,4 +479,28 @@ async fn wait_for_receipt(
     let msg = format!("{label} receipt {tx_hash} not found after retries");
     tracing::error!("{}", msg);
     Err(msg)
+}
+
+/// Which factory, if any, created `perp`: the primary `PERP_FACTORY_ADDRESS` first, then
+/// each `LEGACY_PERP_FACTORY_ADDRESSES` entry in order. `PerpFactory.perps(address)` is the
+/// membership mapping every factory release exposes. Pass `block` to pin the reads.
+pub async fn perp_factory_of<P: alloy::providers::Provider + Clone>(
+    contracts: &crate::models::ContractAddresses,
+    provider: P,
+    perp: Address,
+    block: Option<BlockId>,
+) -> Result<Option<Address>, alloy::contract::Error> {
+    for factory_address in
+        std::iter::once(&contracts.perp_factory).chain(contracts.legacy_perp_factories.iter())
+    {
+        let factory = IPerpFactory::new(*factory_address, provider.clone());
+        let mut call = factory.perps(perp);
+        if let Some(block) = block {
+            call = call.block(block);
+        }
+        if call.call().await? {
+            return Ok(Some(*factory_address));
+        }
+    }
+    Ok(None)
 }

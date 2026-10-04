@@ -574,6 +574,7 @@ pub async fn create_test_app_state() -> AppState {
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
             perp_factory: deployment.perp_factory,
+            legacy_perp_factories: Vec::new(),
             usdc: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
             ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
                 .unwrap(), // Mock factory address
@@ -645,6 +646,7 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
             perp_factory: deployment.perp_factory,
+            legacy_perp_factories: Vec::new(),
             usdc: deployment.usdc,
             ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
                 .unwrap(),
@@ -741,6 +743,7 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
             perp_factory: deployment.perp_factory,
+            legacy_perp_factories: Vec::new(),
             usdc: deployment.usdc,
             ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
                 .unwrap(),
@@ -809,6 +812,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
         contracts: ContractAddresses {
             perpcity_registry: deployment.beacon_registry,
             perp_factory: deployment.perp_factory,
+            legacy_perp_factories: Vec::new(),
             usdc: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // Mock USDC address
             ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
                 .unwrap(),
@@ -928,6 +932,7 @@ pub async fn create_simple_test_app_state() -> AppState {
             perpcity_registry: Address::from_str("0x2345678901234567890123456789012345678901")
                 .unwrap(),
             perp_factory: Address::from_str("0x3456789012345678901234567890123456789012").unwrap(),
+            legacy_perp_factories: Vec::new(),
             usdc: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
             ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
                 .unwrap(),
@@ -996,6 +1001,7 @@ pub async fn create_test_app_state_with_provider(
             perpcity_registry: Address::from_str("0x2345678901234567890123456789012345678901")
                 .unwrap(),
             perp_factory: Address::from_str("0x3456789012345678901234567890123456789012").unwrap(),
+            legacy_perp_factories: Vec::new(),
             usdc: Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
             ecdsa_verifier_factory: Address::from_str("0x8901234567890123456789012345678901234567")
                 .unwrap(),
@@ -1293,6 +1299,7 @@ pub async fn create_fork_fixture() -> ForkFixture {
         contracts: ContractAddresses {
             perpcity_registry: addresses.perpcity_registry,
             perp_factory: addresses.perp_factory,
+            legacy_perp_factories: Vec::new(),
             usdc: addresses.usdc,
             ecdsa_verifier_factory: addresses.ecdsa_verifier_factory,
             multicall3: Some(addresses.multicall3),

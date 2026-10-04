@@ -167,6 +167,9 @@ mod root_sol_interfaces {
         error StartingPriceTooLow();
         error StartingPriceTooHigh();
         error EmaWindowTooLow();
+        // v0.2.2-upgradeable: setPerpImplementation gates.
+        error InvalidPerpImplementation();
+        error NotProtocolOwner();
     }
 
     // Perp: per-market contract created by PerpFactory.createPerp. Each market has its own
