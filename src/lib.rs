@@ -822,7 +822,7 @@ pub async fn create_rocket() -> Rocket<Build> {
 
     // Seed factory addresses from COMPONENT_FACTORIES_JSON when provided (the AWS
     // deployment sets it because ElastiCache is VPC-internal and cannot be seeded by
-    // hand the way the Railway Redis was). Existing entries are never overwritten, so
+    // hand). Existing entries are never overwritten, so
     // re-deploys and registry edits made through Redis stay intact.
     if let Ok(factories_json) = env::var("COMPONENT_FACTORIES_JSON") {
         let configs = models::component_factory::parse_component_factories_json(&factories_json)

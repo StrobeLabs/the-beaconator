@@ -76,7 +76,7 @@ make lint               # Run clippy linter with strict warnings
 
 ### Docker Deployment
 
-The project uses a single `Dockerfile` optimized for Railway deployment that builds everything from scratch for reliability.
+The project uses a single `Dockerfile` that builds everything from scratch for reliability.
 
 #### Local Docker Build
 ```bash
