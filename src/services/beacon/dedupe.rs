@@ -3,7 +3,7 @@
 //! Two independent guards decide whether an update actually costs a
 //! transaction:
 //!
-//! 1. **Rate limit** ([`min_publish_interval`]) — a floor on the time between
+//! 1. **Rate limit** ([`publish_interval`]) — a floor on the time between
 //!    two publishes for a beacon, applied whether or not the value changed.
 //!    Off by default. It exists because an updater pushing faster than its
 //!    market needs is pure gas burn: on testnet in 2026-09 the fastest beacon
@@ -28,6 +28,7 @@ use alloy::primitives::Address;
 use redis::AsyncCommands;
 
 use crate::models::AppState;
+use crate::services::touch::Tier;
 
 /// Just under the common 15-minute updater cadence, so an unchanged value
 /// arriving every 900s always republishes (elapsed ≈ 900 > 840) instead of
@@ -69,8 +70,87 @@ const MIN_INTERVAL_ENV: &str = "BEACON_MIN_PUBLISH_INTERVAL_SECONDS";
 /// cadence than the fleet default without touching their updater.
 const MIN_INTERVAL_OVERRIDES_ENV: &str = "BEACON_MIN_PUBLISH_INTERVAL_OVERRIDES";
 
-/// The publish rate limit for `beacon`: the per-beacon override when one is
-/// configured, else the global floor, else `None` (no rate limit).
+/// Per-tier intervals, e.g. `active=280,idle=900,dormant=3600`. A tier absent
+/// from the map falls through to the global floor, so a partial setting is
+/// still coherent.
+const TIER_INTERVALS_ENV: &str = "BEACON_TIER_INTERVALS";
+
+/// The publish rate limit for `beacon`, in precedence order:
+///
+/// 1. an explicit per-beacon override ([`MIN_INTERVAL_OVERRIDES_ENV`]) — the
+///    manual escape hatch, always wins;
+/// 2. the interval for the beacon's usage [`Tier`], when one is cached and
+///    configured — this is the part that follows real usage without anyone
+///    maintaining a list;
+/// 3. the global floor ([`MIN_INTERVAL_ENV`]);
+/// 4. `None` — no rate limit.
+///
+/// `tier` is whatever the caller could read without I/O; `None` (touch
+/// disabled, or nothing cached yet) simply falls through to the global floor.
+pub fn publish_interval(beacon: &Address, tier: Option<Tier>) -> Option<Duration> {
+    if let Some(explicit) = overrides().get(beacon) {
+        return Some(*explicit);
+    }
+    if let Some(t) = tier
+        && let Some(d) = tier_intervals().get(t.as_str())
+    {
+        return Some(*d);
+    }
+    *global_interval()
+}
+
+fn tier_intervals() -> &'static HashMap<String, Duration> {
+    static MAP: LazyLock<HashMap<String, Duration>> =
+        LazyLock::new(|| parse_tier_intervals(std::env::var(TIER_INTERVALS_ENV).ok().as_deref()));
+    &MAP
+}
+
+/// Parse `active=280,idle=900,dormant=3600`. Unknown tier names and
+/// non-positive values are skipped with a warning; the rest still apply.
+fn parse_tier_intervals(raw: Option<&str>) -> HashMap<String, Duration> {
+    const KNOWN: [&str; 3] = ["active", "idle", "dormant"];
+    let mut out = HashMap::new();
+    let Some(raw) = raw else {
+        return out;
+    };
+    for entry in raw.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        let Some((name, secs)) = entry.split_once('=') else {
+            tracing::warn!("Ignoring {TIER_INTERVALS_ENV} entry {entry:?}: expected tier=seconds");
+            continue;
+        };
+        let name = name.trim().to_ascii_lowercase();
+        match (KNOWN.contains(&name.as_str()), secs.trim().parse::<u64>()) {
+            (true, Ok(s)) if s > 0 => {
+                out.insert(name, Duration::from_secs(s));
+            }
+            (false, _) => {
+                tracing::warn!("Ignoring {TIER_INTERVALS_ENV} entry {entry:?}: unknown tier");
+            }
+            _ => {
+                tracing::warn!(
+                    "Ignoring {TIER_INTERVALS_ENV} entry {entry:?}: seconds must be > 0"
+                );
+            }
+        }
+    }
+    out
+}
+
+fn global_interval() -> &'static Option<Duration> {
+    static GLOBAL: LazyLock<Option<Duration>> =
+        LazyLock::new(|| parse_interval(std::env::var(MIN_INTERVAL_ENV).ok().as_deref()));
+    &GLOBAL
+}
+
+fn overrides() -> &'static HashMap<Address, Duration> {
+    static OVERRIDES: LazyLock<HashMap<Address, Duration>> = LazyLock::new(|| {
+        parse_overrides(std::env::var(MIN_INTERVAL_OVERRIDES_ENV).ok().as_deref())
+    });
+    &OVERRIDES
+}
+
+/// The publish rate limit for `beacon` ignoring usage tiers: the per-beacon
+/// override when one is configured, else the global floor, else `None`.
 ///
 /// Parsed once per process — these are deployment config, not runtime state.
 ///
@@ -84,13 +164,20 @@ const MIN_INTERVAL_OVERRIDES_ENV: &str = "BEACON_MIN_PUBLISH_INTERVAL_OVERRIDES"
 /// publishes it allows are far cheaper than an index that silently halves its
 /// refresh rate.
 pub fn min_publish_interval(beacon: &Address) -> Option<Duration> {
-    static GLOBAL: LazyLock<Option<Duration>> =
-        LazyLock::new(|| parse_interval(std::env::var(MIN_INTERVAL_ENV).ok().as_deref()));
-    static OVERRIDES: LazyLock<HashMap<Address, Duration>> = LazyLock::new(|| {
-        parse_overrides(std::env::var(MIN_INTERVAL_OVERRIDES_ENV).ok().as_deref())
-    });
+    overrides().get(beacon).copied().or(*global_interval())
+}
 
-    OVERRIDES.get(beacon).copied().or(*GLOBAL)
+/// The longest interval this process could ever apply to any beacon. Used to
+/// size the last-publish TTL: a record that expires before the interval it
+/// gates would let the beacon publish early, so the TTL must clear the
+/// slowest tier, not just this beacon's current one (its tier can change).
+fn max_configured_interval() -> Option<Duration> {
+    heartbeat_window()
+        .into_iter()
+        .chain(*global_interval())
+        .chain(overrides().values().copied())
+        .chain(tier_intervals().values().copied())
+        .max()
 }
 
 /// `None`/absent/`0`/garbage all mean "no rate limit" — unlike the heartbeat,
@@ -171,14 +258,11 @@ pub async fn seconds_since_last_publish(state: &AppState, beacon: &Address) -> O
 /// publish.
 ///
 /// Both guards read this record, so it is written whenever *either* is active
-/// and the TTL is sized from the longer of the two — otherwise disabling the
-/// heartbeat would silently blind the rate limit.
+/// and the TTL is sized from the longest interval configured anywhere (see
+/// [`max_configured_interval`]) — otherwise disabling the heartbeat, or a
+/// beacon moving to a slower tier, would silently blind the rate limit.
 pub async fn record_publish(state: &AppState, beacon: &Address) {
-    let Some(window) = heartbeat_window()
-        .into_iter()
-        .chain(min_publish_interval(beacon))
-        .max()
-    else {
+    let Some(window) = max_configured_interval() else {
         return;
     };
     let Some((mut conn, keys)) = state.wallets.manager.redis() else {
@@ -270,6 +354,37 @@ mod tests {
             .unwrap();
         assert_eq!(m.len(), 1, "only the well-formed positive entry survives");
         assert_eq!(m.get(&three), Some(&Duration::from_secs(120)));
+    }
+
+    // ── tier intervals ──────────────────────────────────────────────────
+
+    #[test]
+    fn tier_intervals_parse() {
+        let m = parse_tier_intervals(Some("active=280,idle=900,dormant=3600"));
+        assert_eq!(m.get("active"), Some(&Duration::from_secs(280)));
+        assert_eq!(m.get("idle"), Some(&Duration::from_secs(900)));
+        assert_eq!(m.get("dormant"), Some(&Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn tier_intervals_are_case_insensitive_and_trimmed() {
+        let m = parse_tier_intervals(Some(" Active = 280 "));
+        assert_eq!(m.get("active"), Some(&Duration::from_secs(280)));
+    }
+
+    /// A typo in one tier must not silently unset the others — a partial map
+    /// still applies, and the unset tier falls through to the global floor.
+    #[test]
+    fn tier_intervals_skip_bad_entries_but_keep_good_ones() {
+        let m = parse_tier_intervals(Some("active=280,bogus=60,idle=0,dormant"));
+        assert_eq!(m.len(), 1);
+        assert_eq!(m.get("active"), Some(&Duration::from_secs(280)));
+    }
+
+    #[test]
+    fn tier_intervals_empty_when_unset() {
+        assert!(parse_tier_intervals(None).is_empty());
+        assert!(parse_tier_intervals(Some("   ")).is_empty());
     }
 
     #[test]

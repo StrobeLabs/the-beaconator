@@ -211,7 +211,11 @@ pub async fn update_beacon_with_ecdsa(
     // read so a rate-limited update costs no RPC call at all, and before any
     // wallet is acquired so it never parks a pool wallet. A missing record
     // (no Redis, first publish, expired key) falls through and publishes.
-    if let Some(interval) = super::dedupe::min_publish_interval(&beacon_address)
+    // The tier read is cache-only (see TouchDispatcher::cached_tier): a cold
+    // cache or disabled touch yields None and falls through to the configured
+    // default, never a bot-api round trip under the beacon lock.
+    let tier = state.touch.cached_tier(beacon_address).await;
+    if let Some(interval) = super::dedupe::publish_interval(&beacon_address, tier)
         && let Some(elapsed) =
             super::dedupe::seconds_since_last_publish(state, &beacon_address).await
         && elapsed < interval.as_secs()
@@ -220,7 +224,10 @@ pub async fn update_beacon_with_ecdsa(
             elapsed,
             interval: interval.as_secs(),
         };
-        tracing::info!("Skipping update for beacon {beacon_address}: {reason}");
+        tracing::info!(
+            tier = tier.map(|t| t.as_str()).unwrap_or("unknown"),
+            "Skipping update for beacon {beacon_address}: {reason}"
+        );
         return Ok(EcdsaUpdateOutcome::Skipped {
             beacon_address,
             reason,
