@@ -9,7 +9,7 @@ use rocket::{State, http::Status, serde::json::Json};
 use the_beaconator::{
     guards::ApiToken,
     models::SafeConfig,
-    routes::retirement::{RetirementIntent, RetirementRequest, retire_perp},
+    routes::retirement::{MULTI_SEND_CALL_ONLY, RetirementIntent, RetirementRequest, retire_perp},
 };
 
 alloy::sol! {
@@ -18,6 +18,9 @@ alloy::sol! {
         function configure(address module, int88 newRate, uint256 deadline) external;
         function setKnown(bool known) external;
         function setDisabled(bool value) external;
+        function setOwner(address value) external;
+        function setTimelock(uint256 value) external;
+        function setTouchFails(bool value) external;
     }
 }
 
@@ -170,4 +173,136 @@ async fn retirement_enforces_chain_state_and_binds_exact_proposals() {
             .unwrap_err(),
         Status::BadRequest
     );
+}
+
+async fn deploy<P: Provider>(provider: &P, name: &str) -> Address {
+    provider
+        .send_transaction(
+            TransactionRequest::default().with_deploy_code(load_contract_bytecode(name)),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .contract_address
+        .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires Anvil and compiled Solidity fixtures"]
+async fn zero_timelock_funding_shutdown_is_one_simulated_safe_batch() {
+    let anvil = AnvilManager::new().await;
+    let provider = ProviderBuilder::new()
+        .wallet(EthereumWallet::from(anvil.deployer_signer()))
+        .connect_http(anvil.rpc_url().parse().unwrap());
+    let perp = deploy(&provider, "RetirementHarness").await;
+    let safe = deploy(&provider, "RetirementHarness").await;
+    let multi_send = deploy(&provider, "MultiSendCallOnly").await;
+    provider
+        .anvil_set_code(
+            MULTI_SEND_CALL_ONLY,
+            provider.get_code_at(multi_send).await.unwrap(),
+        )
+        .await
+        .unwrap();
+    let zero: Address = "0x8e562a533a92B47F9cF14300e42d6822a81aD4e1"
+        .parse()
+        .unwrap();
+    provider
+        .anvil_set_code(
+            zero,
+            Bytes::from(hex::decode("600060005260206000f3").unwrap()),
+        )
+        .await
+        .unwrap();
+    let mut app = create_simple_test_app_state().await;
+    app.provider.read_provider = std::sync::Arc::new(
+        the_beaconator::services::rpc::RpcConfig::build_read_only_provider(anvil.rpc_url())
+            .unwrap(),
+    );
+    app.provider.chain_id = 42161;
+    app.contracts.perp_factory = perp;
+    app.contracts.perpcity_registry = perp;
+    app.contracts.safe = Some(SafeConfig {
+        address: safe,
+        tx_service_url: Some("http://127.0.0.1:1".into()),
+    });
+    let harness = Harness::new(perp, &provider);
+    harness
+        .setOwner(safe)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    harness
+        .configure(
+            app.contracts.funding_module,
+            alloy::primitives::aliases::I88::ONE,
+            U256::ZERO,
+        )
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let state = State::from(&app);
+    let token = || ApiToken("test_token".into());
+    let propose = |hash: Option<String>| {
+        let mut request = request(perp, RetirementIntent::Funding);
+        request.propose = true;
+        request.expected_hash = hash;
+        request
+    };
+
+    let batch = retire_perp(request(perp, RetirementIntent::Funding), token(), state)
+        .await
+        .unwrap()
+        .into_inner()
+        .data
+        .unwrap();
+    assert_eq!(batch.step, "submit_funding");
+    assert!(batch.batched);
+    // The simulation passes, so the proposal reaches the (unreachable) Safe service.
+    assert_eq!(
+        retire_perp(propose(batch.proposal_hash.clone()), token(), state)
+            .await
+            .unwrap_err(),
+        Status::BadGateway
+    );
+
+    harness
+        .setTouchFails(true)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert_eq!(
+        retire_perp(propose(batch.proposal_hash.clone()), token(), state)
+            .await
+            .unwrap_err(),
+        Status::Conflict
+    );
+
+    harness
+        .setTimelock(U256::from(60))
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let stepwise = retire_perp(request(perp, RetirementIntent::Funding), token(), state)
+        .await
+        .unwrap()
+        .into_inner()
+        .data
+        .unwrap();
+    assert!(!stepwise.batched);
+    assert_ne!(stepwise.proposal_hash, batch.proposal_hash);
 }

@@ -23,6 +23,32 @@ where
     }
 }
 
+/// How the Safe runs its transaction. Batches delegatecall the MultiSend library.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SafeOperation {
+    Call = 0,
+    DelegateCall = 1,
+}
+
+/// The call a Safe transaction makes.
+#[derive(Clone, Copy, Debug)]
+pub struct SafeCall<'a> {
+    pub to: Address,
+    pub data: &'a [u8],
+    pub operation: SafeOperation,
+}
+
+impl<'a> SafeCall<'a> {
+    pub fn call(to: Address, data: &'a [u8]) -> Self {
+        Self {
+            to,
+            data,
+            operation: SafeOperation::Call,
+        }
+    }
+}
+
 /// Client for the Safe Transaction Service API.
 ///
 /// Proposes multisig transactions to a Gnosis Safe via the off-chain
@@ -176,8 +202,7 @@ impl SafeTransactionService {
     pub fn encode_safe_tx_hash(
         safe_address: Address,
         chain_id: u64,
-        to: Address,
-        data: &[u8],
+        call: SafeCall,
         nonce: u64,
     ) -> B256 {
         // EIP-712 domain separator
@@ -197,23 +222,23 @@ impl SafeTransactionService {
         );
 
         // Encode the struct hash
-        let data_hash = keccak256(data);
+        let data_hash = keccak256(call.data);
         let zero_u256 = U256::ZERO.to_be_bytes::<32>();
         let zero_address = B256::ZERO;
 
         let struct_hash = keccak256(
             [
-                safe_tx_type_hash.as_slice(),              // typeHash
-                &B256::left_padding_from(to.as_slice()).0, // to
-                &zero_u256,                                // value = 0
-                data_hash.as_slice(),                      // keccak256(data)
-                &zero_u256,                                // operation = 0 (CALL)
-                &zero_u256,                                // safeTxGas = 0
-                &zero_u256,                                // baseGas = 0
-                &zero_u256,                                // gasPrice = 0
-                &zero_address.0,                           // gasToken = address(0)
-                &zero_address.0,                           // refundReceiver = address(0)
-                &U256::from(nonce).to_be_bytes::<32>(),    // nonce
+                safe_tx_type_hash.as_slice(),                          // typeHash
+                &B256::left_padding_from(call.to.as_slice()).0,        // to
+                &zero_u256,                                            // value = 0
+                data_hash.as_slice(),                                  // keccak256(data)
+                &U256::from(call.operation as u8).to_be_bytes::<32>(), // operation
+                &zero_u256,                                            // safeTxGas = 0
+                &zero_u256,                                            // baseGas = 0
+                &zero_u256,                                            // gasPrice = 0
+                &zero_address.0,                                       // gasToken = address(0)
+                &zero_address.0,                        // refundReceiver = address(0)
+                &U256::from(nonce).to_be_bytes::<32>(), // nonce
             ]
             .concat(),
         );
@@ -237,12 +262,11 @@ impl SafeTransactionService {
         &self,
         safe_address: Address,
         chain_id: u64,
-        to: Address,
-        data: &[u8],
+        call: SafeCall<'_>,
         nonce: u64,
         signer: &PrivateKeySigner,
     ) -> Result<B256, String> {
-        let safe_tx_hash = Self::encode_safe_tx_hash(safe_address, chain_id, to, data, nonce);
+        let safe_tx_hash = Self::encode_safe_tx_hash(safe_address, chain_id, call, nonce);
 
         // Sign the hash
         let signature = signer
@@ -259,10 +283,10 @@ impl SafeTransactionService {
         let sender = signer.address();
 
         let request_body = ProposeTransactionRequest {
-            to: to.to_checksum(None),
+            to: call.to.to_checksum(None),
             value: "0".to_string(),
-            data: format!("0x{}", hex::encode(data)),
-            operation: 0,
+            data: format!("0x{}", hex::encode(call.data)),
+            operation: call.operation as u8,
             safe_tx_gas: "0".to_string(),
             base_gas: "0".to_string(),
             gas_price: "0".to_string(),
@@ -309,5 +333,54 @@ impl SafeTransactionService {
             421614 => Some("https://safe-transaction-arbitrum-sepolia.safe.global".to_string()),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delegatecall_hash_matches_an_executed_production_batch() {
+        // Prod Safe nonce 63 on Arbitrum One: a MultiSendCallOnly batch the owners signed.
+        let data = hex::decode(
+            [
+                "8d80ff0a000000000000000000000000000000000000000000000000000000000000002000000000",
+                "000000000000000000000000000000000000000000000000000001e400bef280befee2cb28c20d1e",
+                "4cc1da999b4da0f1fd00000000000000000000000000000000000000000000000000000000000000",
+                "00000000000000000000000000000000000000000000000000000000000000002478ab09d8000000",
+                "0000000000000000000a33ea45fe9011029641ef63ce8e1c94a8a2999000bef280befee2cb28c20d",
+                "1e4cc1da999b4da0f1fd000000000000000000000000000000000000000000000000000000000000",
+                "0000000000000000000000000000000000000000000000000000000000000000002478ab09d80000",
+                "00000000000000000000c86afc57e78395311a0dfcb11b2d4aaf7a98404d00bef280befee2cb28c2",
+                "0d1e4cc1da999b4da0f1fd0000000000000000000000000000000000000000000000000000000000",
+                "000000000000000000000000000000000000000000000000000000000000000000002478ab09d800",
+                "0000000000000000000000c621c64c6cefe5a6efb1ec42a2264b39726bf83400bef280befee2cb28",
+                "c20d1e4cc1da999b4da0f1fd00000000000000000000000000000000000000000000000000000000",
+                "00000000000000000000000000000000000000000000000000000000000000000000002478ab09d8",
+                "0000000000000000000000003f887db6fa1e5c87646a05f91c304c78a6109dde0000000000000000",
+                "0000000000000000000000000000000000000000",
+            ]
+            .concat(),
+        )
+        .unwrap();
+        let hash = SafeTransactionService::encode_safe_tx_hash(
+            "0x2D0be18386297d833E63d0B1F6bc93F391aF6F93"
+                .parse()
+                .unwrap(),
+            42161,
+            SafeCall {
+                to: "0x9641d764fc13c8B624c04430C7356C1C7C8102e2"
+                    .parse()
+                    .unwrap(),
+                data: &data,
+                operation: SafeOperation::DelegateCall,
+            },
+            63,
+        );
+        assert_eq!(
+            format!("{hash:#x}"),
+            "0x4c2ddfb2cce7a7b45e59ad7276c86d27497657d0ac6516eb3246c320139ee338"
+        );
     }
 }

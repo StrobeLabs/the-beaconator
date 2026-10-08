@@ -11,7 +11,7 @@ use crate::models::{AppState, UpdateBeaconRequest};
 use crate::routes::{IBeacon, IBeaconRegistry};
 use crate::services::beacon::ecdsa_deploy::create_ecdsa_verifier;
 use crate::services::beacon::verifiable::deploy_identity_beacon;
-use crate::services::safe::SafeTransactionService;
+use crate::services::safe::{SafeCall, SafeTransactionService};
 use crate::services::transaction::events::parse_index_updated_event;
 use crate::services::transaction::execution::send_with_nonce_retry;
 
@@ -258,8 +258,7 @@ pub async fn register_beacon_with_registry(
             .propose_transaction(
                 safe.address,
                 state.provider.chain_id,
-                registry_address,
-                &calldata,
+                SafeCall::call(registry_address, &calldata),
                 nonce,
                 &state.wallets.signer,
             )
@@ -587,8 +586,7 @@ pub async fn unregister_beacon_with_registry(
             .propose_transaction(
                 safe.address,
                 state.provider.chain_id,
-                registry_address,
-                &calldata,
+                SafeCall::call(registry_address, &calldata),
                 nonce,
                 &state.wallets.signer,
             )
