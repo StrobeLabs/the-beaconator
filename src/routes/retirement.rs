@@ -437,6 +437,7 @@ fn retirement_response(response: RetirementResponse) -> Json<ApiResponse<Retirem
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Each packed call is operation, to, value, length and data, in that order.
     #[test]
     fn unit_tests_multi_send_packs_each_call() {
         let to = Address::repeat_byte(0x11);
@@ -451,6 +452,7 @@ mod tests {
         assert_eq!(packed[87], 0);
     }
 
+    /// The funding step follows the module, rate and timelock state.
     #[test]
     fn unit_tests_retirement_requires_refresh_and_honors_timelock() {
         assert_eq!(

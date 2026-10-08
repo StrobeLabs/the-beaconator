@@ -175,6 +175,7 @@ async fn retirement_enforces_chain_state_and_binds_exact_proposals() {
     );
 }
 
+/// Deploy a compiled test fixture and return its address.
 async fn deploy<P: Provider>(provider: &P, name: &str) -> Address {
     provider
         .send_transaction(
@@ -189,6 +190,7 @@ async fn deploy<P: Provider>(provider: &P, name: &str) -> Address {
         .unwrap()
 }
 
+/// With no timelock, funding shutdown is one Safe batch, simulated as the Safe.
 #[tokio::test]
 #[ignore = "requires Anvil and compiled Solidity fixtures"]
 async fn zero_timelock_funding_shutdown_is_one_simulated_safe_batch() {

@@ -40,6 +40,7 @@ pub struct SafeCall<'a> {
 }
 
 impl<'a> SafeCall<'a> {
+    /// A plain call from the Safe to `to`.
     pub fn call(to: Address, data: &'a [u8]) -> Self {
         Self {
             to,
@@ -340,6 +341,7 @@ impl SafeTransactionService {
 mod tests {
     use super::*;
 
+    /// Our EIP-712 hash for a DelegateCall must equal the hash the prod Safe signed.
     #[test]
     fn delegatecall_hash_matches_an_executed_production_batch() {
         // Prod Safe nonce 63 on Arbitrum One: a MultiSendCallOnly batch the owners signed.
