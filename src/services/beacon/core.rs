@@ -13,7 +13,7 @@ use crate::services::beacon::ecdsa_deploy::create_ecdsa_verifier;
 use crate::services::beacon::verifiable::deploy_identity_beacon;
 use crate::services::safe::SafeTransactionService;
 use crate::services::transaction::events::parse_index_updated_event;
-use crate::services::transaction::execution::is_nonce_error;
+use crate::services::transaction::execution::send_with_nonce_retry;
 
 /// Outcome of a beacon registration attempt.
 #[derive(Debug)]
@@ -292,23 +292,21 @@ pub async fn register_beacon_with_registry(
     // Create contract instance using the wallet's provider
     let contract = IBeaconRegistry::new(registry_address, &provider);
 
-    // Send the registration transaction
+    // Send the registration transaction (nonce errors retried)
     tracing::info!("Registering beacon with wallet {}", wallet_address);
-    wallet_handle.ensure_lock_held()?;
-    let pending_tx = match contract.registerBeacon(beacon_address).send().await {
-        Ok(pending) => Ok(pending),
-        Err(e) => {
-            let error_msg = format!("Failed to send registerBeacon transaction: {e}");
-            tracing::error!("{}", error_msg);
-
-            // Check if nonce error
-            if is_nonce_error(&error_msg) {
-                tracing::warn!("Nonce error detected, transaction failed");
-            }
-
-            Err(error_msg)
-        }
-    }?;
+    let pending_tx = send_with_nonce_retry("registerBeacon", || {
+        let wallet_handle = &wallet_handle;
+        let call = contract.registerBeacon(beacon_address);
+        Box::pin(async move {
+            wallet_handle.ensure_lock_held()?;
+            call.send().await.map_err(|e| {
+                let error_msg = format!("Failed to send registerBeacon transaction: {e}");
+                tracing::error!("{}", error_msg);
+                error_msg
+            })
+        })
+    })
+    .await?;
 
     tracing::info!("Registration transaction sent, waiting for receipt...");
 
@@ -626,20 +624,21 @@ pub async fn unregister_beacon_with_registry(
     // Create contract instance using the wallet's provider
     let contract = IBeaconRegistry::new(registry_address, &provider);
 
-    // Send the unregistration transaction
+    // Send the unregistration transaction (nonce errors retried)
     tracing::info!("Unregistering beacon with wallet {}", wallet_address);
-    wallet_handle.ensure_lock_held()?;
-    let pending_tx = match contract.unregisterBeacon(beacon_address).send().await {
-        Ok(pending) => Ok(pending),
-        Err(e) => {
-            let error_msg = format!("Failed to send unregisterBeacon transaction: {e}");
-            tracing::error!("{}", error_msg);
-            if is_nonce_error(&error_msg) {
-                tracing::warn!("Nonce error detected, transaction failed");
-            }
-            Err(error_msg)
-        }
-    }?;
+    let pending_tx = send_with_nonce_retry("unregisterBeacon", || {
+        let wallet_handle = &wallet_handle;
+        let call = contract.unregisterBeacon(beacon_address);
+        Box::pin(async move {
+            wallet_handle.ensure_lock_held()?;
+            call.send().await.map_err(|e| {
+                let error_msg = format!("Failed to send unregisterBeacon transaction: {e}");
+                tracing::error!("{}", error_msg);
+                error_msg
+            })
+        })
+    })
+    .await?;
 
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Unregistration transaction sent, hash: {:?}", tx_hash);
@@ -715,27 +714,21 @@ pub async fn update_beacon(state: &AppState, request: UpdateBeaconRequest) -> Re
     // Create contract instance using the wallet's provider
     let contract = IBeacon::new(beacon_address, &provider);
 
-    // Send the update transaction
+    // Send the update transaction (nonce errors retried)
     tracing::info!("Updating beacon with wallet {}", wallet_address);
-    wallet_handle.ensure_lock_held()?;
-    let pending_tx = match contract
-        .update(proof_bytes.clone(), inputs_bytes.clone())
-        .send()
-        .await
-    {
-        Ok(pending) => Ok(pending),
-        Err(e) => {
-            let error_msg = format!("Failed to send update transaction: {e}");
-            tracing::error!("{}", error_msg);
-
-            // Check if nonce error
-            if is_nonce_error(&error_msg) {
-                tracing::warn!("Nonce error detected, transaction failed");
-            }
-
-            Err(error_msg)
-        }
-    }?;
+    let pending_tx = send_with_nonce_retry("beacon update", || {
+        let wallet_handle = &wallet_handle;
+        let call = contract.update(proof_bytes.clone(), inputs_bytes.clone());
+        Box::pin(async move {
+            wallet_handle.ensure_lock_held()?;
+            call.send().await.map_err(|e| {
+                let error_msg = format!("Failed to send update transaction: {e}");
+                tracing::error!("{}", error_msg);
+                error_msg
+            })
+        })
+    })
+    .await?;
 
     tracing::info!("Transaction sent, waiting for receipt...");
 

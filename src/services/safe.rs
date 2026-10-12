@@ -80,6 +80,24 @@ impl SafeTransactionService {
         }
     }
 
+    /// Retrying a persisted proposal uses its exact hash, never a fresh nonce.
+    pub async fn proposal_exists(&self, hash: B256) -> Result<bool, String> {
+        let response = self
+            .client
+            .get(format!(
+                "{}/api/v1/multisig-transactions/{hash:#x}/",
+                self.base_url
+            ))
+            .send()
+            .await
+            .map_err(|_| "Safe lookup failed".to_string())?;
+        match response.status().as_u16() {
+            200 => Ok(true),
+            404 => Ok(false),
+            _ => Err("Safe lookup unavailable".to_string()),
+        }
+    }
+
     /// Get the next available nonce for a Safe transaction proposal.
     ///
     /// Returns `max(on_chain_nonce, highest_pending_nonce + 1)` to avoid

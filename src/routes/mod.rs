@@ -3,6 +3,7 @@ pub mod beacon_type;
 pub mod info;
 pub mod perp;
 pub mod recipe;
+pub mod retirement;
 pub mod wallet;
 
 #[cfg(test)]
@@ -166,6 +167,9 @@ mod root_sol_interfaces {
         error StartingPriceTooLow();
         error StartingPriceTooHigh();
         error EmaWindowTooLow();
+        // v0.2.2-upgradeable: setPerpImplementation gates.
+        error InvalidPerpImplementation();
+        error NotProtocolOwner();
     }
 
     // Perp: per-market contract created by PerpFactory.createPerp. Each market has its own

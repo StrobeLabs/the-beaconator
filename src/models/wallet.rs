@@ -128,6 +128,12 @@ impl PrefixedRedisKeys {
         format!("{}beacon_update_lock:{beacon}", self.prefix)
     }
 
+    /// Unix-seconds timestamp of the last sent update tx for a beacon, used by
+    /// the value-dedupe heartbeat: beacon_last_publish:{beacon}
+    pub fn beacon_last_publish(&self, beacon: &Address) -> String {
+        format!("{}beacon_last_publish:{beacon}", self.prefix)
+    }
+
     /// Mapping from beacon address to designated wallet: beacon_wallet:{beacon}
     pub fn beacon_wallet(&self, beacon: &Address) -> String {
         format!("{}beacon_wallet:{beacon}", self.prefix)

@@ -9,6 +9,7 @@ use std::str::FromStr;
 
 pub mod fairings;
 pub mod guards;
+pub mod logging;
 pub mod models;
 pub mod routes;
 pub mod services;
@@ -131,6 +132,8 @@ fn audit_environment() {
         // Tokens / utility
         "USDC_ADDRESS",
     ];
+    // Comma-separated address lists; each entry must parse as an Address.
+    const ADDRESS_LIST_VARS_OPTIONAL: &[&str] = &["LEGACY_PERP_FACTORY_ADDRESSES"];
     const ADDRESS_VARS_OPTIONAL: &[&str] = &[
         "MULTICALL3_ADDRESS",
         "LBCGBM_FACTORY_ADDRESS",
@@ -216,6 +219,7 @@ fn audit_environment() {
     // Optional vars: only check whitespace if present. Missing is silent.
     for &key in ADDRESS_VARS_OPTIONAL
         .iter()
+        .chain(ADDRESS_LIST_VARS_OPTIONAL.iter())
         .chain(SECRET_VARS_OPTIONAL.iter())
         .chain(OTHER_VARS_OPTIONAL.iter())
     {
@@ -243,6 +247,20 @@ fn audit_environment() {
         {
             tracing::error!("{key} does not parse as Address: {e}");
             problems += 1;
+        }
+    }
+
+    // Address lists: validate each non-empty entry; log only the index and the error class.
+    for &key in ADDRESS_LIST_VARS_OPTIONAL {
+        if let Ok(raw) = env::var(key) {
+            for (i, entry) in raw.split(',').map(str::trim).enumerate() {
+                if !entry.is_empty()
+                    && let Err(e) = Address::from_str(entry)
+                {
+                    tracing::error!("{key} entry {i} does not parse as Address: {e}");
+                    problems += 1;
+                }
+            }
         }
     }
 
@@ -349,6 +367,24 @@ pub async fn create_rocket() -> Rocket<Build> {
             .expect("PERP_FACTORY_ADDRESS environment variable not set"),
     )
     .expect("Failed to parse perp factory address");
+
+    // Factories from earlier contract releases whose perps are still live. Optional,
+    // comma-separated; a malformed entry fails startup so a typo cannot silently lock
+    // `/retire_perp` and `deposit_liquidity_for_perp` out of an old market.
+    let legacy_perp_factories: Vec<Address> = env::var("LEGACY_PERP_FACTORY_ADDRESSES")
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| {
+                    Address::from_str(s).unwrap_or_else(|e| {
+                        panic!("Failed to parse LEGACY_PERP_FACTORY_ADDRESSES entry: {e}")
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     // Module addresses for the v0.1.0 perp Modules struct. All required at startup so
     // /deploy_perp_for_beacon never has to ask the caller for them.
@@ -786,7 +822,7 @@ pub async fn create_rocket() -> Rocket<Build> {
 
     // Seed factory addresses from COMPONENT_FACTORIES_JSON when provided (the AWS
     // deployment sets it because ElastiCache is VPC-internal and cannot be seeded by
-    // hand the way the Railway Redis was). Existing entries are never overwritten, so
+    // hand). Existing entries are never overwritten, so
     // re-deploys and registry edits made through Redis stay intact.
     if let Ok(factories_json) = env::var("COMPONENT_FACTORIES_JSON") {
         let configs = models::component_factory::parse_component_factories_json(&factories_json)
@@ -908,6 +944,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         contracts: ContractAddresses {
             perpcity_registry: perpcity_registry_address,
             perp_factory: perp_factory_address,
+            legacy_perp_factories,
             usdc: usdc_address,
             ecdsa_verifier_factory: ecdsa_verifier_factory_address,
             multicall3: multicall3_address,
@@ -944,6 +981,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::beacon::create_beacon_with_ecdsa,
         routes::beacon::register_beacon,
         routes::beacon::unregister_beacon,
+        routes::retirement::retire_perp,
         routes::beacon::update_beacon,
         routes::beacon::batch_update_beacon,
         routes::beacon::update_beacon_with_ecdsa_adapter,

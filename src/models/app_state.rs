@@ -228,6 +228,10 @@ pub struct WalletConfig {
 pub struct ContractAddresses {
     pub perpcity_registry: Address,
     pub perp_factory: Address,
+    /// Earlier PerpFactory deployments whose perps are still live (env
+    /// `LEGACY_PERP_FACTORY_ADDRESSES`, comma-separated). New perps land on
+    /// `perp_factory`; the `perps()` membership gates accept either.
+    pub legacy_perp_factories: Vec<Address>,
     pub usdc: Address,
     pub ecdsa_verifier_factory: Address,
     pub multicall3: Option<Address>,

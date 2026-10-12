@@ -11,7 +11,7 @@ use tracing;
 use crate::ReadOnlyProvider;
 use crate::models::{AppState, UpdateBeaconWithEcdsaRequest};
 use crate::routes::{IBeacon, IEcdsaVerifier};
-use crate::services::transaction::execution::is_insufficient_funds_error;
+use crate::services::transaction::execution::{is_insufficient_funds_error, send_with_nonce_retry};
 use crate::services::wallet::{LockHeartbeat, WalletHandle, WalletLockGuard};
 
 /// How long a sent-but-unresolved update tx keeps its beacon lock alive while a
@@ -68,18 +68,51 @@ fn hold_beacon_lock_until_receipt(
     });
 }
 
+/// Why an update produced no transaction. Logging detail only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipReason {
+    /// The beacon published too recently (see
+    /// [`super::dedupe::min_publish_interval`]).
+    RateLimited { elapsed: u64, interval: u64 },
+    /// The on-chain value already equals the measurement and the heartbeat has
+    /// not elapsed.
+    ValueUnchanged,
+}
+
+impl std::fmt::Display for SkipReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RateLimited { elapsed, interval } => write!(
+                f,
+                "rate limited: last publish {elapsed}s ago, minimum interval {interval}s"
+            ),
+            Self::ValueUnchanged => write!(f, "on-chain value already equals the measurement"),
+        }
+    }
+}
+
 /// Outcome of an ECDSA beacon update.
-///
-/// `confirmed == false` means the transaction was SENT but its receipt did not
-/// arrive within the wait window — it may still confirm on-chain. The route
-/// surfaces this to the caller (the Python updater) instead of erroring, so the
-/// caller can poll the hash rather than blindly re-sending.
-pub struct EcdsaUpdateOutcome {
-    pub tx_hash: B256,
-    pub confirmed: bool,
-    /// The beacon that was updated. The route uses it to dispatch a follow-up
-    /// touch of the perps backed by this beacon (only when `confirmed`).
-    pub beacon_address: Address,
+pub enum EcdsaUpdateOutcome {
+    /// An update transaction was sent. `confirmed == false` means its receipt
+    /// did not arrive within the wait window — it may still confirm on-chain.
+    /// The route surfaces this to the caller (the Python updater) instead of
+    /// erroring, so the caller can poll the hash rather than blindly
+    /// re-sending. `beacon_address` lets the route dispatch a follow-up touch
+    /// of the perps backed by this beacon (only when `confirmed`).
+    Published {
+        tx_hash: B256,
+        confirmed: bool,
+        beacon_address: Address,
+    },
+    /// No transaction was sent. Either the beacon is inside its publish rate
+    /// limit, or the on-chain index already equals the requested measurement
+    /// and the last publish is inside the dedupe heartbeat window (see
+    /// [`super::dedupe`]). `reason` is for logging only — the route reports
+    /// every skip to the updater the same way.
+    Skipped {
+        beacon_address: Address,
+        reason: SkipReason,
+    },
 }
 
 /// Updates a beacon using ECDSA signature from the PRIVATE_KEY wallet.
@@ -172,6 +205,60 @@ pub async fn update_beacon_with_ecdsa(
         .manager
         .acquire_beacon_update_lock(beacon_address)
         .await?;
+
+    // 4a-bis. Publish rate limit: a floor on time between publishes, applied
+    // whether or not the value changed. This runs before the dedupe's index()
+    // read so a rate-limited update costs no RPC call at all, and before any
+    // wallet is acquired so it never parks a pool wallet. A missing record
+    // (no Redis, first publish, expired key) falls through and publishes.
+    if let Some(interval) = super::dedupe::min_publish_interval(&beacon_address)
+        && let Some(elapsed) =
+            super::dedupe::seconds_since_last_publish(state, &beacon_address).await
+        && elapsed < interval.as_secs()
+    {
+        let reason = SkipReason::RateLimited {
+            elapsed,
+            interval: interval.as_secs(),
+        };
+        tracing::info!("Skipping update for beacon {beacon_address}: {reason}");
+        return Ok(EcdsaUpdateOutcome::Skipped {
+            beacon_address,
+            reason,
+        });
+    }
+
+    // 4b. Value dedupe: when the on-chain index already equals the requested
+    // measurement, skip the tx unless the heartbeat window has elapsed. The
+    // read happens under the beacon update lock, so it reflects the previous
+    // update. Every failure here falls through to a normal publish.
+    if let Some(window) = super::dedupe::heartbeat_window()
+        && measurement_array.len() == 1
+    {
+        match beacon_read.index().call().await {
+            Ok(current) if current == measurement_array[0] => {
+                if let Some(elapsed) =
+                    super::dedupe::seconds_since_last_publish(state, &beacon_address).await
+                    && elapsed < window.as_secs()
+                {
+                    tracing::info!(
+                        "Skipping update for beacon {beacon_address}: on-chain index \
+                         already {current}, last publish {elapsed}s ago (heartbeat {}s)",
+                        window.as_secs()
+                    );
+                    return Ok(EcdsaUpdateOutcome::Skipped {
+                        beacon_address,
+                        reason: SkipReason::ValueUnchanged,
+                    });
+                }
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(
+                    "Dedupe index() read for beacon {beacon_address} failed: {e} — publishing"
+                );
+            }
+        }
+    }
 
     // 5. Bounded retry budget for wallet acquisition: one attempt per pool
     // wallet at most (floor 1). A wallet that turns out to be drained of gas
@@ -322,14 +409,20 @@ pub async fn update_beacon_with_ecdsa(
             };
             tracing::error!("{}", error_msg);
 
-            if is_insufficient_funds_error(&error_msg) && attempt < max_wallet_attempts {
-                tracing::warn!(
-                    "Wallet {attempt_address} appears out of gas (preflight simulation failed with \
-                     insufficient funds); excluding it and retrying with a different pool wallet"
-                );
-                excluded_wallets.insert(attempt_address);
-                drop(handle);
-                continue;
+            if is_insufficient_funds_error(&error_msg) {
+                // Process-wide cooldown, not just this request's exclusion set:
+                // without it a fully drained pool re-sweeps every wallet on
+                // every incoming update (the 2026-08-24..26 RPC burn storm).
+                state.wallets.manager.mark_drained(attempt_address);
+                if attempt < max_wallet_attempts {
+                    tracing::warn!(
+                        "Wallet {attempt_address} appears out of gas (preflight simulation failed with \
+                         insufficient funds); excluding it and retrying with a different pool wallet"
+                    );
+                    excluded_wallets.insert(attempt_address);
+                    drop(handle);
+                    continue;
+                }
             }
             return Err(error_msg);
         }
@@ -340,27 +433,40 @@ pub async fn update_beacon_with_ecdsa(
             "Sending update transaction to beacon with wallet {}",
             attempt_address
         );
-        handle.ensure_lock_held()?;
-        match beacon_write
-            .update(sig_bytes.clone(), inputs_bytes.clone())
-            .send()
-            .await
-        {
+        // Nonce errors are retried inside the helper; only non-nonce errors
+        // (e.g. a drained wallet) surface here for the rotation below.
+        let send_result = send_with_nonce_retry("ecdsa beacon update", || {
+            let handle = &handle;
+            let call = beacon_write.update(sig_bytes.clone(), inputs_bytes.clone());
+            Box::pin(async move {
+                handle.ensure_lock_held()?;
+                call.send()
+                    .await
+                    .map_err(|e| format!("Failed to send update transaction: {e}"))
+            })
+        })
+        .await;
+        match send_result {
             Ok(pt) => {
                 pending_tx = Some(pt);
                 wallet_handle = Some(handle);
                 break;
             }
-            Err(e) => {
-                let error_msg = format!("Failed to send update transaction: {e}");
-                if is_insufficient_funds_error(&error_msg) && attempt < max_wallet_attempts {
-                    tracing::warn!(
-                        "Wallet {attempt_address} appears out of gas (send failed with \
-                         insufficient funds); excluding it and retrying with a different pool wallet"
-                    );
-                    excluded_wallets.insert(attempt_address);
-                    drop(handle);
-                    continue;
+            Err(error_msg) => {
+                if is_insufficient_funds_error(&error_msg) {
+                    // Process-wide cooldown, not just this request's exclusion
+                    // set: without it a fully drained pool re-sweeps every
+                    // wallet on every incoming update (2026-08-24..26 storm).
+                    state.wallets.manager.mark_drained(attempt_address);
+                    if attempt < max_wallet_attempts {
+                        tracing::warn!(
+                            "Wallet {attempt_address} appears out of gas (send failed with \
+                             insufficient funds); excluding it and retrying with a different pool wallet"
+                        );
+                        excluded_wallets.insert(attempt_address);
+                        drop(handle);
+                        continue;
+                    }
                 }
                 return Err(error_msg);
             }
@@ -401,7 +507,8 @@ pub async fn update_beacon_with_ecdsa(
             tracing::error!(
                 "Failed to get receipt for sent update tx {tx_hash}: {e} - returning unconfirmed"
             );
-            return Ok(EcdsaUpdateOutcome {
+            super::dedupe::record_publish(state, &beacon_address).await;
+            return Ok(EcdsaUpdateOutcome::Published {
                 tx_hash,
                 confirmed: false,
                 beacon_address,
@@ -421,7 +528,8 @@ pub async fn update_beacon_with_ecdsa(
             tracing::warn!(
                 "Timeout waiting for transaction {tx_hash} receipt — returning unconfirmed"
             );
-            return Ok(EcdsaUpdateOutcome {
+            super::dedupe::record_publish(state, &beacon_address).await;
+            return Ok(EcdsaUpdateOutcome::Published {
                 tx_hash,
                 confirmed: false,
                 beacon_address,
@@ -451,11 +559,6 @@ pub async fn update_beacon_with_ecdsa(
             beacon_address,
             measurement_array.len()
         );
-        Ok(EcdsaUpdateOutcome {
-            tx_hash,
-            confirmed: true,
-            beacon_address,
-        })
     } else {
         // Transaction succeeded but event not found - still consider it a success
         // as the transaction was confirmed
@@ -464,12 +567,13 @@ pub async fn update_beacon_with_ecdsa(
              The update may have been applied but event parsing failed.",
             beacon_address
         );
-        Ok(EcdsaUpdateOutcome {
-            tx_hash,
-            confirmed: true,
-            beacon_address,
-        })
     }
+    super::dedupe::record_publish(state, &beacon_address).await;
+    Ok(EcdsaUpdateOutcome::Published {
+        tx_hash,
+        confirmed: true,
+        beacon_address,
+    })
 }
 
 #[cfg(test)]

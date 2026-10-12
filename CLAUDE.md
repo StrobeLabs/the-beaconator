@@ -91,7 +91,7 @@ See `ARCHITECTURE.md` for detailed guidelines on code organization and best prac
 **Critical:** Alloy uses complex nested generic types for providers. The project uses a concrete type definition (`AlloyProvider`) instead of trait objects because the `sol!` macro requires concrete types.
 
 Key patterns:
-- Provider setup in `src/lib.rs:50-90` using `ProviderBuilder::new().wallet(wallet).connect_http(url)`
+- Provider setup uses `ProviderBuilder::new().wallet(wallet).connect_client(rpc_client(url)?)` (`src/services/rpc_transport.rs`); never `connect_http` with the real RPC URL
 - Contract instantiation uses `&*state.provider` to dereference Arc
 - AppState stores wallet address separately for easy access
 
@@ -141,7 +141,8 @@ BEACONATOR_ACCESS_TOKEN=your_secret_token     # API authentication
 PRIVATE_KEY=...                               # EIP-712 measurement signer key (no 0x prefix); signs only, holds no funds
 WALLET_PRIVATE_KEYS=...                       # Comma-separated pool keys (gas + guest funding transfers; need ETH + testnet USDC)
 PERPCITY_REGISTRY_ADDRESS=0x...               # BeaconRegistry (beacons@v0.0.1)
-PERP_FACTORY_ADDRESS=0x...                    # PerpFactory (perpcity-contracts@v0.1.0)
+PERP_FACTORY_ADDRESS=0x...                    # PerpFactory new perps are created on (v0.2.2-upgradeable on mainnet)
+LEGACY_PERP_FACTORY_ADDRESSES=0x...,0x...     # Optional: earlier factories whose perps are still live; perps() gates accept them
 ECDSA_VERIFIER_FACTORY_ADDRESS=0x...          # ECDSAVerifierFactory (beacons@v0.0.1)
 USDC_ADDRESS=0x...                            # USDC ERC20 (network-specific)
 
@@ -189,10 +190,11 @@ MULTICALL3_ADDRESS=0xcA11bde05977b3631167028862bE2a173976CA11
 
 ### Modern Provider Pattern
 ```rust
-// CORRECT - Current Alloy v1.5+ pattern
+// CORRECT - build on rpc_client so RPC_URL (which carries the API key)
+// never appears in errors; reqwest errors otherwise print the full URL.
 let provider = ProviderBuilder::new()
     .wallet(wallet)
-    .connect_http(url);
+    .connect_client(services::rpc_transport::rpc_client(&url)?);
 
 // AVOID - Deprecated pattern
 let provider = ProviderBuilder::new()
@@ -245,7 +247,7 @@ Factory addresses are pre-seeded into Redis (not read from env vars at request t
 - `beaconator:beacon_recipe:{slug}` - recipe config JSON
 - `beaconator:beacon_recipes` - set of recipe slugs
 
-Seeding paths: direct Redis writes (local dev, Railway), or the optional
+Seeding paths: direct Redis writes (local dev), or the optional
 `COMPONENT_FACTORIES_JSON` env var — a `{"FactoryType": "0xaddr"}` map seeded at
 startup without overwriting existing entries. The AWS deployment uses the latter
 because its ElastiCache Redis is VPC-internal and cannot be seeded by hand.

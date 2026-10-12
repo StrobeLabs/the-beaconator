@@ -1,5 +1,5 @@
 {
-  "comment": "Deployed testnet (Arbitrum Sepolia) addresses for the Anvil fork test tier. Must track the release pinned in .contracts-versions (beacons@v0.0.1 + perpcity-contracts@v0.1.0, 2026-06 deployment). Mirrors perpcity-client infra/addresses.testnet.json; a post-audit redeploy updates this file alongside it.",
+  "comment": "Deployed testnet (Arbitrum Sepolia) addresses for the Anvil fork test tier (beacons@v0.0.1 + perpcity-contracts build 58b42b7, 2026-06 deployment). .contracts-versions pins v0.2.2-upgradeable, which has NO Sepolia deployment as of 2026-10-03, so this file stays on the live testnet factory; the fork tier exercises the legacy path. Mirrors perpcity-client infra/addresses.testnet.json; a redeploy updates this file alongside it.",
   "chain_id": 421614,
   "fork_block": 284798945,
   "perpcity_registry": "0xAA0B2AB577D75bC8ED5380752b612a04896d6f10",

@@ -1,6 +1,7 @@
 pub mod batch;
 pub mod component_registry;
 pub mod core;
+pub mod dedupe;
 pub mod ecdsa;
 pub mod ecdsa_deploy;
 pub mod factory;
