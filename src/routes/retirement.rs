@@ -3,11 +3,15 @@ use crate::{
     guards::ApiToken,
     models::{ApiResponse, AppState},
     routes::IBeaconRegistry,
-    services::{perp::perp_factory_of, safe::SafeTransactionService},
+    services::{
+        perp::perp_factory_of,
+        safe::{SafeCall, SafeOperation, SafeTransactionService},
+    },
 };
 use alloy::{
-    primitives::{Address, B256, Bytes, U256},
+    primitives::{Address, B256, Bytes, U256, address},
     providers::Provider,
+    rpc::types::state::StateOverridesBuilder,
     sol,
     sol_types::SolCall,
 };
@@ -24,6 +28,7 @@ sol! {
         function rates() external view returns (int88 fundingPerDay, uint64 longUtilFeePerDay, uint64 shortUtilFeePerDay, uint40 lastTouch);
         function executableAt(bytes data) external view returns (uint256);
         function abdicated(bytes4 selector) external view returns (bool);
+        function timelock() external view returns (uint256);
         function submit(bytes data) external;
         function setFundingModule(address newFunding) external;
         function touch() external;
@@ -33,7 +38,13 @@ sol! {
         function owner() external view returns (address);
         function nonce() external view returns (uint256);
     }
+    interface MultiSendCallOnly {
+        function multiSend(bytes transactions) external payable;
+    }
 }
+
+/// Canonical Safe v1.4.1 MultiSendCallOnly, the same address on Arbitrum One and Sepolia.
+pub const MULTI_SEND_CALL_ONLY: Address = address!("0x9641d764fc13c8B624c04430C7356C1C7C8102e2");
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -69,6 +80,9 @@ pub struct RetirementResponse {
     pub proposal_hash: Option<String>,
     pub safe_url: String,
     pub proposed: bool,
+    /// One Safe transaction covers every remaining funding step.
+    #[serde(default)]
+    pub batched: bool,
 }
 
 fn zero_module(chain: u64) -> Result<Address, Status> {
@@ -98,6 +112,22 @@ pub fn funding_step(installed: bool, rate_zero: bool, pending: U256, now: U256) 
     } else {
         "set_funding"
     }
+}
+
+/// Pack calls for MultiSendCallOnly: operation, to, value, data length, data.
+pub fn multi_send_data(calls: &[(Address, Vec<u8>)]) -> Vec<u8> {
+    let mut packed = Vec::new();
+    for (to, data) in calls {
+        packed.push(SafeOperation::Call as u8);
+        packed.extend_from_slice(to.as_slice());
+        packed.extend_from_slice(&U256::ZERO.to_be_bytes::<32>());
+        packed.extend_from_slice(&U256::from(data.len()).to_be_bytes::<32>());
+        packed.extend_from_slice(data);
+    }
+    MultiSendCallOnly::multiSendCall {
+        transactions: packed.into(),
+    }
+    .abi_encode()
 }
 
 /// Prepare an exact Safe proposal, or submit that same hash after the backend has persisted it.
@@ -226,7 +256,16 @@ pub async fn retire_perp(
         RetirementIntent::Beacon if registered => "unregister_beacon",
         RetirementIntent::Beacon => "beacon_stopped",
     };
-    let (target, data) = match step {
+    // With no timelock, submit, apply and refresh are all valid in one Safe execution.
+    // A perp that cannot report its timelock keeps the separate steps.
+    let timelock = contract.timelock().call().block(block_id).await.ok();
+    let multi_send = provider
+        .get_code_at(MULTI_SEND_CALL_ONLY)
+        .block_id(block_id)
+        .await
+        .map_err(|_| Status::BadGateway)?;
+    let touch = RetirementPerp::touchCall {}.abi_encode();
+    let calls: Vec<(Address, Vec<u8>)> = match step {
         "submit_funding" => {
             if contract
                 .abdicated(RetirementPerp::setFundingModuleCall::SELECTOR.into())
@@ -237,16 +276,19 @@ pub async fn retire_perp(
             {
                 return Err(Status::Conflict);
             }
-            (
-                perp,
-                RetirementPerp::submitCall {
-                    data: setter.into(),
-                }
-                .abi_encode(),
-            )
+            let submit = RetirementPerp::submitCall {
+                data: setter.clone().into(),
+            }
+            .abi_encode();
+            if timelock == Some(U256::ZERO) && !multi_send.is_empty() {
+                vec![(perp, submit), (perp, setter), (perp, touch)]
+            } else {
+                vec![(perp, submit)]
+            }
         }
-        "set_funding" => (perp, setter),
-        "refresh_rate" => (perp, RetirementPerp::touchCall {}.abi_encode()),
+        "set_funding" if !multi_send.is_empty() => vec![(perp, setter), (perp, touch)],
+        "set_funding" => vec![(perp, setter)],
+        "refresh_rate" => vec![(perp, touch)],
         "unregister_beacon" => {
             if RetirementOwner::new(state.contracts.perpcity_registry, provider)
                 .owner()
@@ -258,15 +300,29 @@ pub async fn retire_perp(
             {
                 return Err(Status::Conflict);
             }
-            (
+            vec![(
                 state.contracts.perpcity_registry,
                 IBeaconRegistry::unregisterBeaconCall {
                     beacon: modules.beacon,
                 }
                 .abi_encode(),
-            )
+            )]
         }
-        _ => (perp, Vec::new()),
+        _ => Vec::new(),
+    };
+    let batched = calls.len() > 1;
+    let (target, data, operation) = match calls.as_slice() {
+        [(to, data)] => (*to, data.clone(), SafeOperation::Call),
+        _ => (
+            MULTI_SEND_CALL_ONLY,
+            multi_send_data(&calls),
+            SafeOperation::DelegateCall,
+        ),
+    };
+    let safe_call = SafeCall {
+        to: target,
+        data: &data,
+        operation,
     };
     let prefix = match state.provider.chain_id {
         42161 => "arb1",
@@ -286,13 +342,14 @@ pub async fn retire_perp(
         safe_nonce,
         nonce: None,
         proposal_hash: None,
+        batched,
         safe_url: format!(
             "https://app.safe.global/transactions/queue?safe={prefix}:{}",
             safe.address
         ),
         proposed: false,
     };
-    if data.is_empty() {
+    if calls.is_empty() {
         return Ok(retirement_response(response));
     }
     let nonce = match request.nonce {
@@ -308,8 +365,7 @@ pub async fn retire_perp(
     let hash = SafeTransactionService::encode_safe_tx_hash(
         safe.address,
         state.provider.chain_id,
-        target,
-        &data,
+        safe_call,
         nonce,
     );
     response.nonce = Some(nonce);
@@ -325,15 +381,25 @@ pub async fn retire_perp(
             return Err(Status::Conflict);
         }
         // Strict simulation before any proposal, including permissionless setters and touch.
-        provider
-            .estimate_gas(
-                alloy::rpc::types::TransactionRequest::default()
-                    .from(safe.address)
-                    .to(target)
-                    .input(Bytes::from(data.clone()).into()),
-            )
-            .await
-            .map_err(|_| Status::Conflict)?;
+        // A batch runs MultiSend's code in the Safe's context, so every call sees the Safe as sender.
+        let request = alloy::rpc::types::TransactionRequest::default()
+            .input(Bytes::from(data.clone()).into());
+        match operation {
+            SafeOperation::Call => provider
+                .estimate_gas(request.from(safe.address).to(target))
+                .await
+                .map(|_| ()),
+            SafeOperation::DelegateCall => provider
+                .call(request.to(safe.address))
+                .overrides(
+                    StateOverridesBuilder::default()
+                        .with_code(safe.address, multi_send.clone())
+                        .build(),
+                )
+                .await
+                .map(|_| ()),
+        }
+        .map_err(|_| Status::Conflict)?;
         if !service
             .proposal_exists(hash)
             .await
@@ -343,8 +409,7 @@ pub async fn retire_perp(
                 .propose_transaction(
                     safe.address,
                     state.provider.chain_id,
-                    target,
-                    &data,
+                    safe_call,
                     nonce,
                     &state.wallets.signer,
                 )
@@ -372,6 +437,22 @@ fn retirement_response(response: RetirementResponse) -> Json<ApiResponse<Retirem
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Each packed call is operation, to, value, length and data, in that order.
+    #[test]
+    fn unit_tests_multi_send_packs_each_call() {
+        let to = Address::repeat_byte(0x11);
+        let encoded = multi_send_data(&[(to, vec![0xaa, 0xbb]), (to, Vec::new())]);
+        let decoded = MultiSendCallOnly::multiSendCall::abi_decode(&encoded).unwrap();
+        let packed = decoded.transactions.to_vec();
+        assert_eq!(packed.len(), 2 * 85 + 2);
+        assert_eq!(packed[0], 0);
+        assert_eq!(&packed[1..21], to.as_slice());
+        assert_eq!(U256::from_be_slice(&packed[53..85]), U256::from(2));
+        assert_eq!(&packed[85..87], &[0xaa, 0xbb]);
+        assert_eq!(packed[87], 0);
+    }
+
+    /// The funding step follows the module, rate and timelock state.
     #[test]
     fn unit_tests_retirement_requires_refresh_and_honors_timelock() {
         assert_eq!(
