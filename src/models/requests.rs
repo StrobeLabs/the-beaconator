@@ -256,6 +256,18 @@ pub struct FundBonusWalletRequest {
     pub usdc_amount: String,
 }
 
+/// Pay an off-chain refund in USDC.
+///
+/// Same shape as `FundBonusWalletRequest`; backs `/fund_refund_wallet`, whose
+/// per-request cap (`USDC_REFUND_LIMIT`) is separate from the bonus cap.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct FundRefundWalletRequest {
+    /// Smart-account address the refund is owed to
+    pub wallet_address: String,
+    /// USDC amount in 6 decimals (e.g., "929480000" for 929.48 USDC)
+    pub usdc_amount: String,
+}
+
 /// Top up pool wallets with testnet USDC (admin, testnet-only).
 ///
 /// The deployed testnet USDC has a permissionless `mint`, so the pool can

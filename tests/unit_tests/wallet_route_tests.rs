@@ -534,3 +534,136 @@ mod top_up_and_reserve {
         }
     }
 }
+
+// Bonus and refund payout routes share one send path; these cover the
+// validation that runs before any pool wallet is touched, and the per-route cap.
+
+use the_beaconator::models::{FundBonusWalletRequest, FundRefundWalletRequest};
+use the_beaconator::routes::wallet::{fund_bonus_wallet, fund_refund_wallet};
+
+const TEST_RECIPIENT: &str = "0x1234567890123456789012345678901234567890";
+
+fn bonus_request(wallet_address: &str, usdc_amount: &str) -> Json<FundBonusWalletRequest> {
+    Json(FundBonusWalletRequest {
+        wallet_address: wallet_address.to_string(),
+        usdc_amount: usdc_amount.to_string(),
+    })
+}
+
+fn refund_request(wallet_address: &str, usdc_amount: &str) -> Json<FundRefundWalletRequest> {
+    Json(FundRefundWalletRequest {
+        wallet_address: wallet_address.to_string(),
+        usdc_amount: usdc_amount.to_string(),
+    })
+}
+
+#[tokio::test]
+async fn test_refund_invalid_address() {
+    let test_state = create_test_state().await;
+    let result = fund_refund_wallet(
+        State::from(&test_state),
+        refund_request("invalid_address", "1000000"),
+        ApiToken("test_token".to_string()),
+    )
+    .await;
+    let (status, _) = result.unwrap_err();
+    assert_eq!(status, Status::BadRequest);
+}
+
+#[tokio::test]
+async fn test_refund_invalid_amount() {
+    let test_state = create_test_state().await;
+    for amount in ["not_a_number", "-1000000", ""] {
+        let result = fund_refund_wallet(
+            State::from(&test_state),
+            refund_request(TEST_RECIPIENT, amount),
+            ApiToken("test_token".to_string()),
+        )
+        .await;
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, Status::BadRequest, "amount {amount:?}");
+    }
+}
+
+#[tokio::test]
+async fn test_refund_zero_amount_rejected() {
+    let test_state = create_test_state().await;
+    let result = fund_refund_wallet(
+        State::from(&test_state),
+        refund_request(TEST_RECIPIENT, "0"),
+        ApiToken("test_token".to_string()),
+    )
+    .await;
+    let (status, body) = result.unwrap_err();
+    assert_eq!(status, Status::BadRequest);
+    assert!(body.message.contains("out of range"));
+}
+
+#[tokio::test]
+async fn test_refund_over_refund_cap_rejected() {
+    let test_state = create_test_state().await;
+    let over_cap = (test_state.wallets.usdc_refund_limit + 1).to_string();
+    let result = fund_refund_wallet(
+        State::from(&test_state),
+        refund_request(TEST_RECIPIENT, &over_cap),
+        ApiToken("test_token".to_string()),
+    )
+    .await;
+    let (status, body) = result.unwrap_err();
+    assert_eq!(status, Status::BadRequest);
+    assert!(
+        body.message.contains("Limit: 1000 USDC"),
+        "{}",
+        body.message
+    );
+    assert_eq!(body.data, None, "validation failures carry no marker");
+}
+
+#[tokio::test]
+async fn test_refund_cap_is_separate_from_bonus_cap() {
+    let test_state = create_test_state().await;
+    // 1,000.000001 USDC: above both caps, so neither route reaches the pool
+    // wallet, and each error names the cap it applied.
+    let amount = "1000000001";
+
+    let bonus = fund_bonus_wallet(
+        State::from(&test_state),
+        bonus_request(TEST_RECIPIENT, amount),
+        ApiToken("test_token".to_string()),
+    )
+    .await;
+    let (_, body) = bonus.unwrap_err();
+    assert!(body.message.contains("Limit: 50 USDC"), "{}", body.message);
+
+    let refund = fund_refund_wallet(
+        State::from(&test_state),
+        refund_request(TEST_RECIPIENT, amount),
+        ApiToken("test_token".to_string()),
+    )
+    .await;
+    let (_, body) = refund.unwrap_err();
+    assert!(
+        body.message.contains("Limit: 1000 USDC"),
+        "{}",
+        body.message
+    );
+}
+
+#[tokio::test]
+async fn test_bonus_validation_unchanged() {
+    let test_state = create_test_state().await;
+    for (address, amount) in [
+        ("invalid_address", "1000000"),
+        (TEST_RECIPIENT, "0"),
+        (TEST_RECIPIENT, "50000001"),
+    ] {
+        let result = fund_bonus_wallet(
+            State::from(&test_state),
+            bonus_request(address, amount),
+            ApiToken("test_token".to_string()),
+        )
+        .await;
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, Status::BadRequest, "{address} {amount}");
+    }
+}
