@@ -569,6 +569,7 @@ pub async fn create_test_app_state() -> AppState {
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
+            usdc_refund_limit: 1_000_000_000,   // 1,000 USDC
             faucet_reserve_eth_wei: 20_000_000_000_000_000, // 0.02 ETH
         },
         contracts: ContractAddresses {
@@ -641,6 +642,7 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
+            usdc_refund_limit: 1_000_000_000,   // 1,000 USDC
             faucet_reserve_eth_wei: 20_000_000_000_000_000, // 0.02 ETH
         },
         contracts: ContractAddresses {
@@ -738,6 +740,7 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
             usdc_transfer_limit: 1_000_000_000,
             eth_transfer_limit: 10_000_000_000_000_000,
             usdc_bonus_limit: 50_000_000,
+            usdc_refund_limit: 1_000_000_000, // 1,000 USDC
             faucet_reserve_eth_wei: 20_000_000_000_000_000, // 0.02 ETH
         },
         contracts: ContractAddresses {
@@ -807,6 +810,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
+            usdc_refund_limit: 1_000_000_000,   // 1,000 USDC
             faucet_reserve_eth_wei: 20_000_000_000_000_000, // 0.02 ETH
         },
         contracts: ContractAddresses {
@@ -926,6 +930,7 @@ pub async fn create_simple_test_app_state() -> AppState {
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
+            usdc_refund_limit: 1_000_000_000,   // 1,000 USDC
             faucet_reserve_eth_wei: 20_000_000_000_000_000, // 0.02 ETH
         },
         contracts: ContractAddresses {
@@ -995,6 +1000,7 @@ pub async fn create_test_app_state_with_provider(
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
+            usdc_refund_limit: 1_000_000_000,   // 1,000 USDC
             faucet_reserve_eth_wei: 20_000_000_000_000_000, // 0.02 ETH
         },
         contracts: ContractAddresses {
@@ -1294,6 +1300,7 @@ pub async fn create_fork_fixture() -> ForkFixture {
             usdc_transfer_limit: 1_000_000_000,
             eth_transfer_limit: 10_000_000_000_000_000,
             usdc_bonus_limit: 50_000_000,
+            usdc_refund_limit: 1_000_000_000, // 1,000 USDC
             faucet_reserve_eth_wei: 20_000_000_000_000_000,
         },
         contracts: ContractAddresses {

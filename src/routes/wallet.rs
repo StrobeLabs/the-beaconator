@@ -15,18 +15,20 @@ const FUNDING_RECEIPT_TIMEOUT: Duration = Duration::from_secs(120);
 use super::{IERC20, ITestnetUSDC};
 use crate::guards::{AdminToken, ApiToken};
 use crate::models::{
-    ApiResponse, AppState, FundBonusWalletRequest, FundGuestWalletRequest, TopUpPoolRequest,
+    ApiResponse, AppState, FundBonusWalletRequest, FundGuestWalletRequest, FundRefundWalletRequest,
+    TopUpPoolRequest,
 };
 
 /// Default per-wallet USDC balance target for `/top_up_pool`: 10,000 USDC.
 const DEFAULT_TOP_UP_USDC_TARGET: u128 = 10_000_000_000;
 
-/// Marker placed in `ApiResponse.data` on `/fund_bonus_wallet` error responses
-/// where no USDC moved: either the failure happened before the send, or a
-/// receipt proves the transfer reverted (a transaction reached the chain, but
-/// it moved no tokens). The backend releases the invite-code claim when it
-/// sees this marker; error responses without it must keep the claim, since a
-/// transfer may still land.
+/// Marker placed in `ApiResponse.data` on `/fund_bonus_wallet` and
+/// `/fund_refund_wallet` error responses where no USDC moved: either the
+/// failure happened before the send, or a receipt proves the transfer reverted
+/// (a transaction reached the chain, but it moved no tokens). The backend
+/// releases its claim (invite code or refund row) when it sees this marker;
+/// error responses without it must keep the claim, since a transfer may still
+/// land.
 pub const NO_FUNDS_MOVED_MARKER: &str = "no_funds_moved";
 
 fn no_funds_moved(status: Status, message: String) -> (Status, Json<ApiResponse<String>>) {
@@ -514,8 +516,87 @@ pub async fn fund_bonus_wallet(
     _token: ApiToken,
 ) -> Result<Json<ApiResponse<String>>, (Status, Json<ApiResponse<String>>)> {
     tracing::info!("Received request: POST /fund_bonus_wallet");
+    send_usdc_payout(
+        state,
+        PayoutKind::Bonus,
+        &request.wallet_address,
+        &request.usdc_amount,
+    )
+    .await
+}
 
-    let wallet_address = match Address::from_str(&request.wallet_address) {
+/// Pays an off-chain refund in USDC (mainnet-capable).
+///
+/// The sibling of `fund_bonus_wallet` for refunds the caller owes a trader,
+/// e.g. margin stranded on a retired perp that cannot close on-chain. Same
+/// send path and error contract as the bonus route; the only difference is
+/// the per-request cap, `usdc_refund_limit`, which is separate so a refund
+/// above the bonus cap does not widen what an invite code can pay out. The
+/// real-money safety lives in that cap, the bearer-token auth, and the
+/// caller's own atomic single-use claim of each refund row.
+#[openapi(tag = "Wallet")]
+#[post("/fund_refund_wallet", format = "json", data = "<request>")]
+pub async fn fund_refund_wallet(
+    state: &State<AppState>,
+    request: Json<FundRefundWalletRequest>,
+    _token: ApiToken,
+) -> Result<Json<ApiResponse<String>>, (Status, Json<ApiResponse<String>>)> {
+    tracing::info!("Received request: POST /fund_refund_wallet");
+    send_usdc_payout(
+        state,
+        PayoutKind::Refund,
+        &request.wallet_address,
+        &request.usdc_amount,
+    )
+    .await
+}
+
+/// A real-money USDC payout route. Each kind has its own per-request cap and
+/// its own log label, and shares the send path and the error contract.
+#[derive(Clone, Copy)]
+enum PayoutKind {
+    Bonus,
+    Refund,
+}
+
+impl PayoutKind {
+    fn limit(self, state: &AppState) -> u128 {
+        match self {
+            PayoutKind::Bonus => state.wallets.usdc_bonus_limit,
+            PayoutKind::Refund => state.wallets.usdc_refund_limit,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            PayoutKind::Bonus => "bonus",
+            PayoutKind::Refund => "refund",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            PayoutKind::Bonus => "Bonus",
+            PayoutKind::Refund => "Refund",
+        }
+    }
+}
+
+/// Validates and sends one USDC payout from a pool wallet.
+///
+/// Error contract: responses carrying `data = "no_funds_moved"` guarantee no
+/// USDC moved — the failure happened before the send, or a receipt proves the
+/// transfer reverted — so the caller may release its claim and let the user
+/// retry. Error responses WITHOUT the marker (broadcast failed, receipt
+/// unconfirmed) may still settle on-chain — the caller must keep the claim and
+/// reconcile before retrying. 400s are validation failures before any send.
+async fn send_usdc_payout(
+    state: &AppState,
+    kind: PayoutKind,
+    wallet_address: &str,
+    usdc_amount: &str,
+) -> Result<Json<ApiResponse<String>>, (Status, Json<ApiResponse<String>>)> {
+    let wallet_address = match Address::from_str(wallet_address) {
         Ok(addr) => addr,
         Err(e) => {
             return Err((
@@ -529,7 +610,7 @@ pub async fn fund_bonus_wallet(
         }
     };
 
-    let usdc_amount = match request.usdc_amount.parse::<u128>() {
+    let usdc_amount = match usdc_amount.parse::<u128>() {
         Ok(amount) => amount,
         Err(e) => {
             return Err((
@@ -543,8 +624,9 @@ pub async fn fund_bonus_wallet(
         }
     };
 
-    // Bound each payout by the dedicated bonus cap (real money — fail closed).
-    if usdc_amount == 0 || usdc_amount > state.wallets.usdc_bonus_limit {
+    // Bound each payout by the route's dedicated cap (real money — fail closed).
+    let limit = kind.limit(state);
+    if usdc_amount == 0 || usdc_amount > limit {
         return Err((
             Status::BadRequest,
             Json(ApiResponse {
@@ -553,14 +635,15 @@ pub async fn fund_bonus_wallet(
                 message: format!(
                     "USDC amount out of range. Requested: {} USDC, Limit: {} USDC",
                     usdc_amount / 1_000_000,
-                    state.wallets.usdc_bonus_limit / 1_000_000
+                    limit / 1_000_000
                 ),
             }),
         ));
     }
 
     tracing::info!(
-        "Funding bonus wallet: {} with {} USDC",
+        "Funding {} wallet: {} with {} USDC",
+        kind.label(),
         wallet_address,
         usdc_amount / 1_000_000
     );
@@ -741,7 +824,8 @@ pub async fn fund_bonus_wallet(
     };
 
     tracing::info!(
-        "Bonus USDC transfer hash: {:?}",
+        "{} USDC transfer hash: {:?}",
+        kind.title(),
         usdc_receipt.transaction_hash
     );
 

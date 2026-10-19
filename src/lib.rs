@@ -169,6 +169,7 @@ fn audit_environment() {
         "USDC_TRANSFER_LIMIT",
         "ETH_TRANSFER_LIMIT",
         "USDC_BONUS_LIMIT",
+        "USDC_REFUND_LIMIT",
         "BEACONATOR_INSTANCE_ID",
         "RUST_LOG",
         // JSON map of component factory addresses seeded into Redis at startup
@@ -487,6 +488,11 @@ pub async fn create_rocket() -> Rocket<Build> {
         .unwrap_or_else(|_| "50000000".to_string()) // Default 50 USDC
         .parse::<u128>()
         .expect("Failed to parse USDC_BONUS_LIMIT");
+
+    let usdc_refund_limit = env::var("USDC_REFUND_LIMIT")
+        .unwrap_or_else(|_| "1000000000".to_string()) // Default 1,000 USDC
+        .parse::<u128>()
+        .expect("Failed to parse USDC_REFUND_LIMIT");
 
     // Post-transfer ETH reserve for guest funding. Default 0.02 ETH — above
     // the 0.01 ETH BeaconatorWalletGasLow paging threshold, so the faucet
@@ -939,6 +945,7 @@ pub async fn create_rocket() -> Rocket<Build> {
             usdc_transfer_limit,
             eth_transfer_limit,
             usdc_bonus_limit,
+            usdc_refund_limit,
             faucet_reserve_eth_wei,
         },
         contracts: ContractAddresses {
@@ -991,6 +998,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::perp::deposit_liquidity_for_perp_endpoint,
         routes::wallet::fund_guest_wallet,
         routes::wallet::fund_bonus_wallet,
+        routes::wallet::fund_refund_wallet,
         routes::wallet::top_up_pool,
         routes::beacon_type::list_beacon_types,
         routes::beacon_type::get_beacon_type,

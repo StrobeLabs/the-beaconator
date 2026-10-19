@@ -216,6 +216,10 @@ pub struct WalletConfig {
     /// Per-request USDC cap for the mainnet bonus route (`/fund_bonus_wallet`).
     /// Tighter than `usdc_transfer_limit` because it bounds real-money payouts.
     pub usdc_bonus_limit: u128,
+    /// Per-request USDC cap for the refund route (`/fund_refund_wallet`).
+    /// Separate from `usdc_bonus_limit` so refunds above the bonus cap do not
+    /// widen what an invite code can pay out.
+    pub usdc_refund_limit: u128,
     /// ETH (wei) a pool wallet must retain AFTER a guest-funding transfer.
     /// Protects beacon-update gas from faucet drain: `fund_guest_wallet`
     /// skips wallets the transfer would drop below this. Keep it ABOVE the
