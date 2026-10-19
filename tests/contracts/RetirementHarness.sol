@@ -33,7 +33,7 @@ contract RetirementHarness {
     function executableAt(bytes calldata) external view returns (uint256) { return pending; }
     function abdicated(bytes4) external view returns (bool) { return disabled; }
     function isBeaconRegistered(address) external view returns (bool) { return registered; }
-    function unregisterBeacon(address) external { registered = false; }
+    function unregisterBeacon(address) external { require(msg.sender == owner); registered = false; }
     function submit(bytes calldata) external view { require(!disabled); }
     function setFundingModule(address module) external { funding = module; }
     function touch() external { require(!touchFails); rate = 0; }

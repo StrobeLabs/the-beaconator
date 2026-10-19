@@ -51,6 +51,8 @@ pub const MULTI_SEND_CALL_ONLY: Address = address!("0x9641d764fc13c8B624c04430C7
 pub enum RetirementIntent {
     Funding,
     Beacon,
+    /// Funding shutdown and, when asked, beacon removal in one Safe transaction.
+    Retire,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -62,6 +64,9 @@ pub struct RetirementRequest {
     pub propose: bool,
     pub nonce: Option<u64>,
     pub expected_hash: Option<String>,
+    /// With `retire`, also remove the beacon from the registry in the same transaction.
+    #[serde(default)]
+    pub unregister_beacon: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -83,6 +88,9 @@ pub struct RetirementResponse {
     /// One Safe transaction covers every remaining funding step.
     #[serde(default)]
     pub batched: bool,
+    /// The proposal also removes the beacon from the registry.
+    #[serde(default)]
+    pub includes_beacon: bool,
 }
 
 fn zero_module(chain: u64) -> Result<Address, Status> {
@@ -111,6 +119,28 @@ pub fn funding_step(installed: bool, rate_zero: bool, pending: U256, now: U256) 
         "timelock"
     } else {
         "set_funding"
+    }
+}
+
+/// Add beacon removal to the funding calls of a retirement.
+///
+/// The beacon call joins the funding calls only when they can run as one batch. Once
+/// funding is stopped, the beacon call is the whole proposal, and with nothing left the
+/// market is retired.
+pub fn retire_plan(
+    step: &'static str,
+    mut calls: Vec<(Address, Vec<u8>)>,
+    beacon: Option<(Address, Vec<u8>)>,
+    batchable: bool,
+) -> (&'static str, Vec<(Address, Vec<u8>)>, bool) {
+    match beacon {
+        Some(call) if step == "funding_stopped" => ("unregister_beacon", vec![call], true),
+        Some(call) if !calls.is_empty() && batchable => {
+            calls.push(call);
+            (step, calls, true)
+        }
+        None if step == "funding_stopped" => ("retired", calls, false),
+        _ => (step, calls, false),
     }
 }
 
@@ -246,7 +276,7 @@ pub async fn retire_perp(
         .map_err(|_| Status::BadGateway)?;
     let stopped = modules.funding == zero && rates.fundingPerDay.is_zero();
     let step = match request.intent {
-        RetirementIntent::Funding => funding_step(
+        RetirementIntent::Funding | RetirementIntent::Retire => funding_step(
             modules.funding == zero,
             rates.fundingPerDay.is_zero(),
             pending,
@@ -265,6 +295,26 @@ pub async fn retire_perp(
         .await
         .map_err(|_| Status::BadGateway)?;
     let touch = RetirementPerp::touchCall {}.abi_encode();
+    // Only the Safe can remove a beacon, so a registry it does not own is a conflict.
+    let unregister = || async {
+        if RetirementOwner::new(state.contracts.perpcity_registry, provider)
+            .owner()
+            .call()
+            .block(block_id)
+            .await
+            .map_err(|_| Status::BadGateway)?
+            != safe.address
+        {
+            return Err(Status::Conflict);
+        }
+        Ok((
+            state.contracts.perpcity_registry,
+            IBeaconRegistry::unregisterBeaconCall {
+                beacon: modules.beacon,
+            }
+            .abi_encode(),
+        ))
+    };
     let calls: Vec<(Address, Vec<u8>)> = match step {
         "submit_funding" => {
             if contract
@@ -289,26 +339,23 @@ pub async fn retire_perp(
         "set_funding" if !multi_send.is_empty() => vec![(perp, setter), (perp, touch)],
         "set_funding" => vec![(perp, setter)],
         "refresh_rate" => vec![(perp, touch)],
-        "unregister_beacon" => {
-            if RetirementOwner::new(state.contracts.perpcity_registry, provider)
-                .owner()
-                .call()
-                .block(block_id)
-                .await
-                .map_err(|_| Status::BadGateway)?
-                != safe.address
-            {
-                return Err(Status::Conflict);
-            }
-            vec![(
-                state.contracts.perpcity_registry,
-                IBeaconRegistry::unregisterBeaconCall {
-                    beacon: modules.beacon,
-                }
-                .abi_encode(),
-            )]
-        }
+        "unregister_beacon" => vec![unregister().await?],
         _ => Vec::new(),
+    };
+    let (step, calls, includes_beacon) = match request.intent {
+        RetirementIntent::Retire => {
+            let beacon = if request.unregister_beacon && registered {
+                Some(unregister().await?)
+            } else {
+                None
+            };
+            // The beacon joins only a batch that ends funding, whatever the perp's timelock.
+            let stops_funding = calls.last().is_some_and(|(to, data)| {
+                *to == perp && data.starts_with(&RetirementPerp::touchCall::SELECTOR)
+            });
+            retire_plan(step, calls, beacon, stops_funding && !multi_send.is_empty())
+        }
+        _ => (step, calls, step == "unregister_beacon"),
     };
     let batched = calls.len() > 1;
     let (target, data, operation) = match calls.as_slice() {
@@ -343,6 +390,7 @@ pub async fn retire_perp(
         nonce: None,
         proposal_hash: None,
         batched,
+        includes_beacon,
         safe_url: format!(
             "https://app.safe.global/transactions/queue?safe={prefix}:{}",
             safe.address
@@ -450,6 +498,52 @@ mod tests {
         assert_eq!(U256::from_be_slice(&packed[53..85]), U256::from(2));
         assert_eq!(&packed[85..87], &[0xaa, 0xbb]);
         assert_eq!(packed[87], 0);
+    }
+
+    /// Beacon removal joins a batchable funding shutdown, stands alone once funding is
+    /// stopped, and never joins calls that must run one by one.
+    #[test]
+    fn unit_tests_retire_plan_adds_beacon_removal() {
+        let perp = Address::repeat_byte(0x11);
+        let registry = Address::repeat_byte(0x22);
+        let set = (perp, vec![0x01]);
+        let touch = (perp, vec![0x02]);
+        let beacon = (registry, vec![0x03]);
+        let funding = || vec![set.clone(), touch.clone()];
+
+        assert_eq!(
+            retire_plan("set_funding", funding(), Some(beacon.clone()), true),
+            (
+                "set_funding",
+                vec![set.clone(), touch.clone(), beacon.clone()],
+                true
+            )
+        );
+        assert_eq!(
+            retire_plan("set_funding", funding(), None, true),
+            ("set_funding", funding(), false)
+        );
+        assert_eq!(
+            retire_plan(
+                "submit_funding",
+                vec![set.clone()],
+                Some(beacon.clone()),
+                false
+            ),
+            ("submit_funding", vec![set.clone()], false)
+        );
+        assert_eq!(
+            retire_plan("funding_stopped", Vec::new(), Some(beacon.clone()), false),
+            ("unregister_beacon", vec![beacon.clone()], true)
+        );
+        assert_eq!(
+            retire_plan("funding_stopped", Vec::new(), None, true),
+            ("retired", Vec::new(), false)
+        );
+        assert_eq!(
+            retire_plan("timelock", Vec::new(), Some(beacon), true),
+            ("timelock", Vec::new(), false)
+        );
     }
 
     /// The funding step follows the module, rate and timelock state.
