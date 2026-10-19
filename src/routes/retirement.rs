@@ -349,12 +349,11 @@ pub async fn retire_perp(
             } else {
                 None
             };
-            retire_plan(
-                step,
-                calls,
-                beacon,
-                timelock == Some(U256::ZERO) && !multi_send.is_empty(),
-            )
+            // The beacon joins only a batch that ends funding, whatever the perp's timelock.
+            let stops_funding = calls.last().is_some_and(|(to, data)| {
+                *to == perp && data.starts_with(&RetirementPerp::touchCall::SELECTOR)
+            });
+            retire_plan(step, calls, beacon, stops_funding && !multi_send.is_empty())
         }
         _ => (step, calls, step == "unregister_beacon"),
     };

@@ -418,6 +418,33 @@ async fn retire_is_one_safe_batch_with_beacon_removal() {
     );
     assert_eq!(plan.proposal_hash, Some(format!("{hash:#x}")));
 
+    // A timelock only delays the setter; once it is executable the beacon still joins the batch.
+    harness
+        .setTimelock(U256::from(60))
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let timelocked = retire_perp(retire(true), token(), state)
+        .await
+        .unwrap()
+        .into_inner()
+        .data
+        .unwrap();
+    assert_eq!(timelocked.step, "set_funding");
+    assert!(timelocked.includes_beacon);
+    assert_eq!(timelocked.proposal_hash, plan.proposal_hash);
+    harness
+        .setTimelock(U256::ZERO)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
     let funding_only = retire_perp(retire(false), token(), state)
         .await
         .unwrap()
