@@ -254,6 +254,8 @@ pub struct ContractAddresses {
 pub struct SafeConfig {
     pub address: Address,
     pub tx_service_url: Option<String>,
+    /// Bearer token for the Safe Transaction Service (SAFE_API_KEY).
+    pub api_key: Option<String>,
 }
 
 #[derive(Clone)]

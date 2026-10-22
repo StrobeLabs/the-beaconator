@@ -84,6 +84,7 @@ async fn retirement_enforces_chain_state_and_binds_exact_proposals() {
     app.contracts.safe = Some(SafeConfig {
         address: perp,
         tx_service_url: Some("http://127.0.0.1:1".into()),
+        api_key: None,
     });
     let harness = Harness::new(perp, &provider);
     harness
@@ -240,6 +241,7 @@ async fn zero_timelock_funding_shutdown_is_one_simulated_safe_batch() {
     app.contracts.safe = Some(SafeConfig {
         address: safe,
         tx_service_url: Some("http://127.0.0.1:1".into()),
+        api_key: None,
     });
     let harness = Harness::new(perp, &provider);
     harness
@@ -358,6 +360,7 @@ async fn retire_is_one_safe_batch_with_beacon_removal() {
     app.contracts.safe = Some(SafeConfig {
         address: safe,
         tx_service_url: Some("http://127.0.0.1:1".into()),
+        api_key: None,
     });
     let harness = Harness::new(perp, &provider);
     harness
@@ -528,6 +531,7 @@ async fn retire_after_funding_stop_proposes_only_beacon_removal() {
     app.contracts.safe = Some(SafeConfig {
         address: safe,
         tx_service_url: Some("http://127.0.0.1:1".into()),
+        api_key: None,
     });
     let harness = Harness::new(perp, &provider);
     harness

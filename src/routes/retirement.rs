@@ -186,6 +186,7 @@ pub async fn retire_perp(
         safe.tx_service_url
             .as_deref()
             .ok_or(Status::ServiceUnavailable)?,
+        safe.api_key.as_deref(),
     );
     let block = provider
         .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
