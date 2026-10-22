@@ -42,6 +42,7 @@ fn request(perp: Address, intent: RetirementIntent) -> Json<RetirementRequest> {
         nonce: Some(7),
         expected_hash: None,
         unregister_beacon: false,
+        status_only: false,
     })
 }
 
@@ -109,6 +110,36 @@ async fn retirement_enforces_chain_state_and_binds_exact_proposals() {
         .unwrap();
     assert_eq!(first.step, "submit_funding");
     assert!(!first.funding_stopped);
+    // Allocating a nonce needs the Safe service, which is unreachable here...
+    let mut fresh = request(perp, RetirementIntent::Funding);
+    fresh.nonce = None;
+    assert_eq!(
+        retire_perp(fresh, token(), state).await.unwrap_err(),
+        Status::BadGateway
+    );
+    // ...but a status check never asks it, so polling spends no Safe quota.
+    let mut observe = request(perp, RetirementIntent::Funding);
+    observe.nonce = None;
+    observe.status_only = true;
+    let observed = retire_perp(observe, token(), state)
+        .await
+        .unwrap()
+        .into_inner()
+        .data
+        .unwrap();
+    assert_eq!(observed.step, "submit_funding");
+    assert_eq!(observed.safe_nonce, first.safe_nonce);
+    assert!(observed.nonce.is_none() && observed.proposal_hash.is_none());
+    let mut contradictory = request(perp, RetirementIntent::Funding);
+    contradictory.status_only = true;
+    contradictory.propose = true;
+    contradictory.expected_hash = first.proposal_hash.clone();
+    assert_eq!(
+        retire_perp(contradictory, token(), state)
+            .await
+            .unwrap_err(),
+        Status::BadRequest
+    );
     let repeated = retire_perp(request(perp, RetirementIntent::Funding), token(), state)
         .await
         .unwrap()
