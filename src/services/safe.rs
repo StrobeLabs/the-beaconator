@@ -101,23 +101,38 @@ struct ProposeTransactionRequest {
 
 impl SafeTransactionService {
     pub fn new(base_url: &str, api_key: Option<&str>) -> Self {
+        let base_url = base_url.trim_end_matches('/').to_string();
+        let mut api_key = api_key
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(str::to_string);
+        // The key is a credential: never send it in cleartext, and never let a
+        // redirect carry an authenticated request somewhere else. reqwest drops
+        // `Authorization` on a cross-host redirect, so a legacy
+        // `safe-transaction-<chain>.safe.global` base URL would silently turn into
+        // unauthenticated traffic; with a key, a redirect fails loudly instead.
+        if api_key.is_some() && !base_url.starts_with("https://") {
+            tracing::warn!("SAFE_API_KEY ignored: SAFE_TX_SERVICE_URL is not https");
+            api_key = None;
+        }
+        let redirects = if api_key.is_some() {
+            reqwest::redirect::Policy::none()
+        } else {
+            reqwest::redirect::Policy::default()
+        };
         let client = reqwest::Client::builder()
             .timeout(DEFAULT_TIMEOUT)
+            .redirect(redirects)
             .build()
             .expect("Failed to build reqwest client");
         Self {
             client,
-            base_url: base_url.trim_end_matches('/').to_string(),
-            api_key: api_key
-                .map(str::trim)
-                .filter(|key| !key.is_empty())
-                .map(str::to_string),
+            base_url,
+            api_key,
         }
     }
 
-    /// Attach the API key. reqwest drops `Authorization` on a cross-host redirect,
-    /// so `base_url` must be the canonical `api.safe.global` host, never a legacy
-    /// `safe-transaction-<chain>.safe.global` host that redirects there.
+    /// Attach the API key to a request bound for `base_url` (https, no redirects).
     fn authorize(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         match &self.api_key {
             Some(key) => request.bearer_auth(key),
@@ -384,6 +399,19 @@ mod tests {
             "Bearer key-1"
         );
         assert_eq!(service.base_url, "https://api.safe.global/tx-service/arb1");
+    }
+
+    /// A cleartext base URL never carries the key.
+    #[test]
+    fn api_key_is_never_sent_over_http() {
+        let service = SafeTransactionService::new("http://127.0.0.1:1", Some("key-1"));
+        assert!(service.api_key.is_none());
+        assert!(
+            built_request(&service)
+                .headers()
+                .get("authorization")
+                .is_none()
+        );
     }
 
     /// A blank SAFE_API_KEY is the same as none: no empty bearer header.

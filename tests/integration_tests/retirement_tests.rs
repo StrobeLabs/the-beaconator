@@ -192,6 +192,16 @@ async fn retirement_enforces_chain_state_and_binds_exact_proposals() {
         .unwrap();
     assert!(ready.funding_stopped);
     assert!(ready.proposal_hash.is_none());
+    // Contradictory flags are rejected even when there is nothing left to propose.
+    let mut contradictory = request(perp, RetirementIntent::Funding);
+    contradictory.status_only = true;
+    contradictory.propose = true;
+    assert_eq!(
+        retire_perp(contradictory, token(), state)
+            .await
+            .unwrap_err(),
+        Status::BadRequest
+    );
     assert_eq!(
         retire_perp(request(perp, RetirementIntent::Beacon), token(), state)
             .await

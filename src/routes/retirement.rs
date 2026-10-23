@@ -69,7 +69,7 @@ pub struct RetirementRequest {
     pub unregister_beacon: bool,
     /// Report chain state only: never ask the Safe Transaction Service for a nonce,
     /// so a polled status page spends none of its request quota. `nonce` and
-    /// `proposal_hash` are omitted unless the caller supplies the nonce itself.
+    /// `proposal_hash` are null unless the caller supplies the nonce itself.
     #[serde(default)]
     pub status_only: bool,
 }
@@ -403,11 +403,11 @@ pub async fn retire_perp(
         ),
         proposed: false,
     };
-    if calls.is_empty() {
-        return Ok(retirement_response(response));
-    }
     if request.status_only && request.propose {
         return Err(Status::BadRequest);
+    }
+    if calls.is_empty() {
+        return Ok(retirement_response(response));
     }
     // The Safe service is consulted only to allocate a nonce for a new proposal.
     let nonce = match request.nonce {
