@@ -251,7 +251,7 @@ pub async fn register_beacon_with_registry(
             }
         }
 
-        let safe_service = SafeTransactionService::new(safe_url);
+        let safe_service = SafeTransactionService::new(safe_url, safe.api_key.as_deref());
         let nonce = safe_service.get_nonce(safe.address).await?;
 
         let safe_tx_hash = safe_service
@@ -579,7 +579,7 @@ pub async fn unregister_beacon_with_registry(
             }
         }
 
-        let safe_service = SafeTransactionService::new(safe_url);
+        let safe_service = SafeTransactionService::new(safe_url, safe.api_key.as_deref());
         let nonce = safe_service.get_nonce(safe.address).await?;
 
         let safe_tx_hash = safe_service

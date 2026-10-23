@@ -57,6 +57,10 @@ impl<'a> SafeCall<'a> {
 pub struct SafeTransactionService {
     client: reqwest::Client,
     base_url: String,
+    /// Safe API key (a JWT from developer.safe.global). Unauthenticated access is
+    /// capped at 2 RPS and 5,000 requests per month per source IP, which one NAT
+    /// gateway exhausts in hours; every request then fails with 429.
+    api_key: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -96,25 +100,53 @@ struct ProposeTransactionRequest {
 }
 
 impl SafeTransactionService {
-    pub fn new(base_url: &str) -> Self {
+    pub fn new(base_url: &str, api_key: Option<&str>) -> Self {
+        let base_url = base_url.trim_end_matches('/').to_string();
+        let mut api_key = api_key
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(str::to_string);
+        // The key is a credential: never send it in cleartext, and never let a
+        // redirect carry an authenticated request somewhere else. reqwest drops
+        // `Authorization` on a cross-host redirect, so a legacy
+        // `safe-transaction-<chain>.safe.global` base URL would silently turn into
+        // unauthenticated traffic; with a key, a redirect fails loudly instead.
+        if api_key.is_some() && !base_url.starts_with("https://") {
+            tracing::warn!("SAFE_API_KEY ignored: SAFE_TX_SERVICE_URL is not https");
+            api_key = None;
+        }
+        let redirects = if api_key.is_some() {
+            reqwest::redirect::Policy::none()
+        } else {
+            reqwest::redirect::Policy::default()
+        };
         let client = reqwest::Client::builder()
             .timeout(DEFAULT_TIMEOUT)
+            .redirect(redirects)
             .build()
             .expect("Failed to build reqwest client");
         Self {
             client,
-            base_url: base_url.trim_end_matches('/').to_string(),
+            base_url,
+            api_key,
+        }
+    }
+
+    /// Attach the API key to a request bound for `base_url` (https, no redirects).
+    fn authorize(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.api_key {
+            Some(key) => request.bearer_auth(key),
+            None => request,
         }
     }
 
     /// Retrying a persisted proposal uses its exact hash, never a fresh nonce.
     pub async fn proposal_exists(&self, hash: B256) -> Result<bool, String> {
         let response = self
-            .client
-            .get(format!(
+            .authorize(self.client.get(format!(
                 "{}/api/v1/multisig-transactions/{hash:#x}/",
                 self.base_url
-            ))
+            )))
             .send()
             .await
             .map_err(|_| "Safe lookup failed".to_string())?;
@@ -165,8 +197,7 @@ impl SafeTransactionService {
     /// Fetch JSON from a URL with error handling.
     async fn fetch_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T, String> {
         let resp = self
-            .client
-            .get(url)
+            .authorize(self.client.get(url))
             .send()
             .await
             .map_err(|e| format!("Safe TX Service request failed: {e}"))?;
@@ -307,8 +338,7 @@ impl SafeTransactionService {
         );
 
         let resp = self
-            .client
-            .post(&url)
+            .authorize(self.client.post(&url))
             .json(&request_body)
             .send()
             .await
@@ -326,11 +356,15 @@ impl SafeTransactionService {
     }
 
     /// Returns the default Safe Transaction Service URL for a given chain ID.
-    /// The service supports Arbitrum One and Arbitrum Sepolia — the only chains
-    /// the-beaconator is configured to deploy against.
+    ///
+    /// Arbitrum One is the canonical `api.safe.global` host; the legacy
+    /// `safe-transaction-arbitrum.safe.global` host now 308-redirects there, and a
+    /// redirect would drop the API key. Safe's config service no longer lists
+    /// Arbitrum Sepolia at all (checked 2026-10-22), so the testnet entry is kept
+    /// only until SAFE_TX_SERVICE_URL points somewhere that answers.
     pub fn default_url_for_chain(chain_id: u64) -> Option<String> {
         match chain_id {
-            42161 => Some("https://safe-transaction-arbitrum.safe.global".to_string()),
+            42161 => Some("https://api.safe.global/tx-service/arb1".to_string()),
             421614 => Some("https://safe-transaction-arbitrum-sepolia.safe.global".to_string()),
             _ => None,
         }
@@ -340,6 +374,69 @@ impl SafeTransactionService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn built_request(service: &SafeTransactionService) -> reqwest::Request {
+        service
+            .authorize(
+                service
+                    .client
+                    .get("https://api.safe.global/tx-service/arb1/api/v1/about/"),
+            )
+            .build()
+            .unwrap()
+    }
+
+    /// Every Safe API request carries the key as a bearer token when one is configured.
+    #[test]
+    fn api_key_is_sent_as_bearer_token() {
+        let service = SafeTransactionService::new(
+            "https://api.safe.global/tx-service/arb1/",
+            Some(" key-1 "),
+        );
+        let request = built_request(&service);
+        assert_eq!(
+            request.headers().get("authorization").unwrap(),
+            "Bearer key-1"
+        );
+        assert_eq!(service.base_url, "https://api.safe.global/tx-service/arb1");
+    }
+
+    /// A cleartext base URL never carries the key.
+    #[test]
+    fn api_key_is_never_sent_over_http() {
+        let service = SafeTransactionService::new("http://127.0.0.1:1", Some("key-1"));
+        assert!(service.api_key.is_none());
+        assert!(
+            built_request(&service)
+                .headers()
+                .get("authorization")
+                .is_none()
+        );
+    }
+
+    /// A blank SAFE_API_KEY is the same as none: no empty bearer header.
+    #[test]
+    fn missing_or_blank_api_key_sends_no_authorization() {
+        for key in [None, Some(""), Some("   ")] {
+            let service =
+                SafeTransactionService::new("https://api.safe.global/tx-service/arb1", key);
+            assert!(
+                built_request(&service)
+                    .headers()
+                    .get("authorization")
+                    .is_none()
+            );
+        }
+    }
+
+    /// Production must talk to the canonical host; the legacy host redirects and drops auth.
+    #[test]
+    fn arbitrum_one_default_is_the_canonical_host() {
+        assert_eq!(
+            SafeTransactionService::default_url_for_chain(42161).as_deref(),
+            Some("https://api.safe.global/tx-service/arb1")
+        );
+    }
 
     /// Our EIP-712 hash for a DelegateCall must equal the hash the prod Safe signed.
     #[test]

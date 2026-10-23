@@ -42,6 +42,7 @@ fn request(perp: Address, intent: RetirementIntent) -> Json<RetirementRequest> {
         nonce: Some(7),
         expected_hash: None,
         unregister_beacon: false,
+        status_only: false,
     })
 }
 
@@ -84,6 +85,7 @@ async fn retirement_enforces_chain_state_and_binds_exact_proposals() {
     app.contracts.safe = Some(SafeConfig {
         address: perp,
         tx_service_url: Some("http://127.0.0.1:1".into()),
+        api_key: None,
     });
     let harness = Harness::new(perp, &provider);
     harness
@@ -108,6 +110,36 @@ async fn retirement_enforces_chain_state_and_binds_exact_proposals() {
         .unwrap();
     assert_eq!(first.step, "submit_funding");
     assert!(!first.funding_stopped);
+    // Allocating a nonce needs the Safe service, which is unreachable here...
+    let mut fresh = request(perp, RetirementIntent::Funding);
+    fresh.nonce = None;
+    assert_eq!(
+        retire_perp(fresh, token(), state).await.unwrap_err(),
+        Status::BadGateway
+    );
+    // ...but a status check never asks it, so polling spends no Safe quota.
+    let mut observe = request(perp, RetirementIntent::Funding);
+    observe.nonce = None;
+    observe.status_only = true;
+    let observed = retire_perp(observe, token(), state)
+        .await
+        .unwrap()
+        .into_inner()
+        .data
+        .unwrap();
+    assert_eq!(observed.step, "submit_funding");
+    assert_eq!(observed.safe_nonce, first.safe_nonce);
+    assert!(observed.nonce.is_none() && observed.proposal_hash.is_none());
+    let mut contradictory = request(perp, RetirementIntent::Funding);
+    contradictory.status_only = true;
+    contradictory.propose = true;
+    contradictory.expected_hash = first.proposal_hash.clone();
+    assert_eq!(
+        retire_perp(contradictory, token(), state)
+            .await
+            .unwrap_err(),
+        Status::BadRequest
+    );
     let repeated = retire_perp(request(perp, RetirementIntent::Funding), token(), state)
         .await
         .unwrap()
@@ -160,6 +192,16 @@ async fn retirement_enforces_chain_state_and_binds_exact_proposals() {
         .unwrap();
     assert!(ready.funding_stopped);
     assert!(ready.proposal_hash.is_none());
+    // Contradictory flags are rejected even when there is nothing left to propose.
+    let mut contradictory = request(perp, RetirementIntent::Funding);
+    contradictory.status_only = true;
+    contradictory.propose = true;
+    assert_eq!(
+        retire_perp(contradictory, token(), state)
+            .await
+            .unwrap_err(),
+        Status::BadRequest
+    );
     assert_eq!(
         retire_perp(request(perp, RetirementIntent::Beacon), token(), state)
             .await
@@ -240,6 +282,7 @@ async fn zero_timelock_funding_shutdown_is_one_simulated_safe_batch() {
     app.contracts.safe = Some(SafeConfig {
         address: safe,
         tx_service_url: Some("http://127.0.0.1:1".into()),
+        api_key: None,
     });
     let harness = Harness::new(perp, &provider);
     harness
@@ -358,6 +401,7 @@ async fn retire_is_one_safe_batch_with_beacon_removal() {
     app.contracts.safe = Some(SafeConfig {
         address: safe,
         tx_service_url: Some("http://127.0.0.1:1".into()),
+        api_key: None,
     });
     let harness = Harness::new(perp, &provider);
     harness
@@ -528,6 +572,7 @@ async fn retire_after_funding_stop_proposes_only_beacon_removal() {
     app.contracts.safe = Some(SafeConfig {
         address: safe,
         tx_service_url: Some("http://127.0.0.1:1".into()),
+        api_key: None,
     });
     let harness = Harness::new(perp, &provider);
     harness

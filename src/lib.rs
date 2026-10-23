@@ -908,14 +908,28 @@ pub async fn create_rocket() -> Rocket<Build> {
         let tx_service_url = env::var("SAFE_TX_SERVICE_URL")
             .ok()
             .or_else(|| services::safe::SafeTransactionService::default_url_for_chain(chain_id));
+        // Unauthenticated Safe API access is 5,000 requests/month per IP; without a
+        // key every proposal and retirement check fails with 429 once that is spent.
+        let api_key = env::var("SAFE_API_KEY")
+            .ok()
+            .map(|key| key.trim().to_string())
+            .filter(|key| !key.is_empty());
         if let Some(ref url) = tx_service_url {
             tracing::info!("Safe multisig configured:");
             tracing::info!("  - Safe address: {:?}", address);
             tracing::info!("  - TX Service URL: {}", url);
+            if api_key.is_some() {
+                tracing::info!("  - API key: configured");
+            } else {
+                tracing::warn!(
+                    "  - API key: none (SAFE_API_KEY unset); unauthenticated Safe API quota is 5,000 requests/month"
+                );
+            }
         }
         Some(SafeConfig {
             address,
             tx_service_url,
+            api_key,
         })
     });
 

@@ -67,6 +67,11 @@ pub struct RetirementRequest {
     /// With `retire`, also remove the beacon from the registry in the same transaction.
     #[serde(default)]
     pub unregister_beacon: bool,
+    /// Report chain state only: never ask the Safe Transaction Service for a nonce,
+    /// so a polled status page spends none of its request quota. `nonce` and
+    /// `proposal_hash` are null unless the caller supplies the nonce itself.
+    #[serde(default)]
+    pub status_only: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -186,6 +191,7 @@ pub async fn retire_perp(
         safe.tx_service_url
             .as_deref()
             .ok_or(Status::ServiceUnavailable)?,
+        safe.api_key.as_deref(),
     );
     let block = provider
         .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
@@ -397,11 +403,16 @@ pub async fn retire_perp(
         ),
         proposed: false,
     };
+    if request.status_only && request.propose {
+        return Err(Status::BadRequest);
+    }
     if calls.is_empty() {
         return Ok(retirement_response(response));
     }
+    // The Safe service is consulted only to allocate a nonce for a new proposal.
     let nonce = match request.nonce {
         Some(n) => n,
+        None if request.status_only => return Ok(retirement_response(response)),
         None => service
             .get_nonce(safe.address)
             .await
