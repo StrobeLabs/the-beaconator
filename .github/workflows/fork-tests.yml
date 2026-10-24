@@ -43,7 +43,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Require FORK_RPC_URL secret
         env:
@@ -64,7 +64,7 @@ jobs:
           save-if: true
 
       - name: Cache Foundry
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.foundry
           key: foundry-${{ runner.os }}-v1.7.1
