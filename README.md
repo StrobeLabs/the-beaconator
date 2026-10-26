@@ -118,11 +118,17 @@ FAUCET_RESERVE_ETH_WEI=20000000000000000
 # pure gas burn, so set this to the slowest cadence the market can tolerate.
 BEACON_MIN_PUBLISH_INTERVAL_SECONDS=0
 
-# Per-beacon overrides for the above, as `address=seconds` pairs. Use it to
-# hold rarely-consumed beacons to a slower cadence than the fleet default
-# without redeploying their updater. Malformed entries are skipped with a
-# warning; the rest of the map still applies.
+# Per-beacon overrides for the above, as `address=seconds` pairs. A manual
+# escape hatch that beats the automatic tier — prefer BEACON_TIER_INTERVALS,
+# which follows real usage and needs no maintenance. Malformed entries are
+# skipped with a warning; the rest of the map still applies.
 BEACON_MIN_PUBLISH_INTERVAL_OVERRIDES=0xabc...=3600,0xdef...=3600
+
+# Publish cadence by how much a beacon's markets are actually used. Preferred
+# over the flat floor above: a market nobody can trade does not need a fresh
+# index, and new experimental markets slow down automatically until someone
+# provides liquidity.
+BEACON_TIER_INTERVALS=active=280,idle=900,dormant=3600
 ```
 
 ### Publish gating and gas
@@ -131,9 +137,35 @@ Three settings decide how much gas the pool actually spends:
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `BEACON_MIN_PUBLISH_INTERVAL_SECONDS` | `0` (off) | Floor on time between publishes per beacon, regardless of value change |
+| `BEACON_TIER_INTERVALS` | unset | Per-usage-tier intervals, e.g. `active=280,idle=900,dormant=3600` |
+| `BEACON_MIN_PUBLISH_INTERVAL_SECONDS` | `0` (off) | Fallback floor for beacons with no tier interval |
+| `BEACON_MIN_PUBLISH_INTERVAL_OVERRIDES` | unset | Manual per-beacon pins, `addr=seconds`; always wins |
 | `BEACON_UPDATE_HEARTBEAT_SECONDS` | `840` | Skips a publish when the value is UNCHANGED and the last one was this recent |
 | `TOUCH_FLUSH_INTERVAL_MS` | `1000` | How long the touch worker coalesces perps before sending one `Multicall3` batch |
+
+Interval precedence is **explicit override > tier > global floor > no limit**.
+
+**Usage tiers.** The touch resolver already fetches each beacon's markets from
+bot-api and caches them; the same response carries open interest and LP
+capacity, so it classifies the beacon on the way past at no extra cost:
+
+| Tier | Meaning |
+| --- | --- |
+| `active` | Some market has open interest — a real position depends on this index |
+| `idle` | LP capacity present but nobody is in it |
+| `dormant` | No liquidity and no positions; nothing can trade against it |
+
+The highest tier any one market reaches wins, and a market whose usage fields
+cannot be read counts as `active`: staling an index a trader's funding depends
+on is far worse than a little extra gas. The tier read on the publish path is
+**cache-only** — a cold cache or `TOUCH_ON_UPDATE_ENABLED=false` falls through
+to the global floor rather than blocking on bot-api under the beacon lock.
+
+**Set any interval BELOW the updater's cadence, never equal to it.** The
+last-publish record is whole-second, so a floor of exactly N against an N-second
+cadence skips on the ticks that round to N-1 and stretches that beacon to two
+cycles at random. This is why `DEFAULT_HEARTBEAT` is 840s against a 900s
+cadence, and why the deployed `active` tier is 280s against ~301s.
 
 The heartbeat only catches identical values, so it does nothing for a
 continuously varying feed — the rate limit is what bounds those. The touch
