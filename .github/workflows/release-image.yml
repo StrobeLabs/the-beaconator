@@ -1,17 +1,16 @@
 # Release the beaconator image on every merge to main:
-#   build arm64 -> push to ECR (perpcity-dev) -> write the SSM image parameter
-#   -> dispatch a testnet deploy in perpcity-client.
+#   build arm64 -> push to ECR (perpcity-dev) -> write the SSM image parameter.
 #
 # This repo ships the image only; deployment lives in the perpcity SST app
-# (perpcity-client/sst.config.ts), which resolves the image from the
-# /perpcity/testnet/beaconator-image SSM parameter this workflow writes.
-# Production promotion is deliberately manual: copy the image to the prod
-# account's ECR and put /perpcity/production/beaconator-image there.
+# (perpcity-client/sst.config.ts). Testnet resolves the image from the
+# /perpcity/testnet/beaconator-image SSM parameter this workflow writes, and
+# perpcity-client's sync-testnet-images workflow deploys testnet within ten
+# minutes of that parameter moving. Production runs the digest pinned in
+# perpcity-client infra/production-images.json; propose-images.yml opens the pin
+# PR once the image has baked on testnet, and promote-mainnet.yml copies it.
 #
 # Auth: GitHub OIDC -> perpcity-gha-producer-push role (created by
-# perpcity-client/sst/scripts/gha-oidc-bootstrap.sh). The dispatch hop needs
-# the PERPCITY_DISPATCH_TOKEN secret (PAT with write access to
-# StrobeLabs/perpcity-client).
+# perpcity-client/sst/scripts/gha-oidc-bootstrap.sh).
 name: Release image
 
 on:
@@ -71,14 +70,3 @@ jobs:
           URI="${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}@${{ steps.build.outputs.digest }}"
           aws ssm put-parameter --name "$SSM_PARAM" --type String --overwrite --value "$URI"
           echo "wrote $SSM_PARAM = $URI"
-
-      - name: Trigger testnet deploy
-        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3
-        with:
-          token: ${{ secrets.PERPCITY_DISPATCH_TOKEN }}
-          repository: StrobeLabs/perpcity-client
-          event-type: producer-image-updated
-          client-payload: >-
-            {"image": "${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}@${{ steps.build.outputs.digest }}",
-             "repo": "${{ github.repository }}",
-             "sha": "${{ github.sha }}"}
