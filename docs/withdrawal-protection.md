@@ -35,8 +35,10 @@ flow, not a change to the existing wallet-pool signer.
 
 Use `/admin/markets` Protection, select the affected markets or fleet, prepare
 pause files, review each Safe batch, collect signatures and execute. `prepare`
-requires the normal service access token (same boundary as existing retirement
-preparation); the backend adds admin authentication. It never signs, broadcasts,
+currently requires `BEACONATOR_ADMIN_TOKEN`. The backend/CLI credential wiring
+is blocked on the explicit authentication decision tracked in PR #109; their
+existing access token cannot authorize preparation yet. The backend also adds
+admin authentication. It never signs, broadcasts,
 allocates a future nonce or proposes to the Safe service. No signer permissions
 are added. All targets must validate; any failure produces no partial batch. Requests
 accept up to 64 saved targets and up to 128 controllers after rotation expansion.
