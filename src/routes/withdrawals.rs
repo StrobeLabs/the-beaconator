@@ -430,9 +430,10 @@ pub async fn prepare_withdrawals(
     // A saved registry can predate a rotation. Include the live current
     // controller as well as all explicitly selected historical escrow.
     for snapshot in &initial {
-        if initial
-            .iter()
-            .any(|s| s.controller == snapshot.current_controller)
+        if snapshot.current_controller == Address::ZERO.to_string()
+            || initial
+                .iter()
+                .any(|s| s.controller == snapshot.current_controller)
         {
             continue;
         }
