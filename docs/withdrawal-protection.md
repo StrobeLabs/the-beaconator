@@ -38,12 +38,15 @@ pause files, review each Safe batch, collect signatures and execute. `prepare`
 requires the normal service access token (same boundary as existing retirement
 preparation); the backend adds admin authentication. It never signs, broadcasts,
 allocates a future nonce or proposes to the Safe service. No signer permissions
-are added. All targets must validate; any failure produces no partial batch.
+are added. All targets must validate; any failure produces no partial batch. Requests
+accept up to 64 saved targets and up to 128 controllers after rotation expansion.
 
 Check the **current on-chain Safe nonce** and pending transactions in Safe before
 signing. If that nonce is occupied, explicitly replace/reject the conflict through
 the Safe process; don't queue an emergency pause behind unrelated proposals.
-After execution, refresh status and verify every selected controller is paused.
+After execution, refresh status and verify every selected controller and live
+replacement is paused. Both status and preparation expand the saved registry
+to include replacements; a rotation during verification fails closed.
 If execution is partial across Safes, retry only the remaining authorities.
 Already-paused controllers are skipped. Rotations automatically include the live
 current controller as well as selected historical escrow. Zero/disabled current

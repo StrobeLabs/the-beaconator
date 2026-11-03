@@ -174,7 +174,7 @@ async fn read_targets(
     state: &AppState,
     targets: &[ControllerTarget],
 ) -> Result<Vec<ControllerStatus>, Status> {
-    if targets.is_empty() || targets.len() > 64 {
+    if targets.is_empty() || targets.len() > 128 {
         return Err(Status::BadRequest);
     }
     let provider = &state.provider.read_provider;
@@ -355,6 +355,69 @@ async fn read_targets(
     Ok(out)
 }
 
+fn expanded_targets(
+    requested: &[ControllerTarget],
+    initial: &[ControllerStatus],
+) -> Vec<ControllerTarget> {
+    let mut targets = requested.to_vec();
+    // A saved registry can predate a rotation. Include the live current
+    // controller as well as all explicitly selected historical escrow.
+    for snapshot in initial {
+        if snapshot.current_controller == Address::ZERO.to_string()
+            || initial
+                .iter()
+                .any(|s| s.controller == snapshot.current_controller)
+        {
+            continue;
+        }
+        if let Some(proof) = requested
+            .iter()
+            .find(|t| t.perp.eq_ignore_ascii_case(&snapshot.perp))
+        {
+            let mut current = proof.clone();
+            current.controller = None;
+            current.attachment_transaction = None;
+            if !targets
+                .iter()
+                .any(|t| t.perp.eq_ignore_ascii_case(&current.perp) && t.controller.is_none())
+            {
+                targets.push(current);
+            }
+        }
+    }
+    targets
+}
+
+fn current_controllers_covered(states: &[ControllerStatus]) -> bool {
+    states.iter().all(|snapshot| {
+        snapshot.current_controller == Address::ZERO.to_string()
+            || states.iter().any(|other| {
+                other.perp == snapshot.perp && other.controller == snapshot.current_controller
+            })
+    })
+}
+
+async fn read_fleet(
+    state: &AppState,
+    requested: &[ControllerTarget],
+) -> Result<Vec<ControllerStatus>, Status> {
+    if requested.is_empty() || requested.len() > 64 {
+        return Err(Status::BadRequest);
+    }
+    let initial = read_targets(state, requested).await?;
+    if current_controllers_covered(&initial) {
+        return Ok(initial);
+    }
+    let targets = expanded_targets(requested, &initial);
+    // Pin the final set to one fresh block, including all replacements.
+    let states = read_targets(state, &targets).await?;
+    if !current_controllers_covered(&states) {
+        // A second rotation between reads requires a fresh request, never a partial batch.
+        return Err(Status::Conflict);
+    }
+    Ok(states)
+}
+
 #[openapi(tag = "Withdrawal protection")]
 #[post("/withdrawals/status", data = "<request>")]
 pub async fn withdrawal_status(
@@ -362,7 +425,7 @@ pub async fn withdrawal_status(
     _token: ApiToken,
     state: &State<AppState>,
 ) -> Result<Json<Vec<ControllerStatus>>, Status> {
-    Ok(Json(read_targets(state, &request.targets).await?))
+    Ok(Json(read_fleet(state, &request.targets).await?))
 }
 
 pub fn action_call(
@@ -425,36 +488,7 @@ pub async fn prepare_withdrawals(
     _admin: AdminToken,
     state: &State<AppState>,
 ) -> Result<Json<PreparedActions>, Status> {
-    let mut targets = request.targets.clone();
-    let initial = read_targets(state, &targets).await?;
-    // A saved registry can predate a rotation. Include the live current
-    // controller as well as all explicitly selected historical escrow.
-    for snapshot in &initial {
-        if snapshot.current_controller == Address::ZERO.to_string()
-            || initial
-                .iter()
-                .any(|s| s.controller == snapshot.current_controller)
-        {
-            continue;
-        }
-        if let Some(proof) = request
-            .targets
-            .iter()
-            .find(|t| t.perp.eq_ignore_ascii_case(&snapshot.perp))
-        {
-            let mut current = proof.clone();
-            current.controller = None;
-            current.attachment_transaction = None;
-            if !targets
-                .iter()
-                .any(|t| t.perp.eq_ignore_ascii_case(&current.perp) && t.controller.is_none())
-            {
-                targets.push(current);
-            }
-        }
-    }
-    // Read the final set again at one block; never return a partial fleet batch.
-    let states = read_targets(state, &targets).await?;
+    let states = read_fleet(state, &request.targets).await?;
     let mut grouped: BTreeMap<Address, Vec<BuilderTransaction>> = BTreeMap::new();
     for snapshot in &states {
         if let Some((authority, call)) = action_call(snapshot, &request.action)? {
@@ -596,6 +630,53 @@ mod tests {
             serde_json::json!({"targets": [target], "operation": {"action":"pause", "sign":true}});
         assert!(serde_json::from_value::<PrepareRequest>(invalid).is_err());
     }
+    #[test]
+    fn unit_tests_fleet_expands_all_64_rotated_targets_without_losing_proofs() {
+        let mut states = Vec::new();
+        let mut targets = Vec::new();
+        for n in 1..=64 {
+            let mut s = snapshot();
+            s.perp = Address::repeat_byte(n).to_string();
+            s.controller = Address::repeat_byte(n + 64).to_string();
+            s.current_controller = Address::repeat_byte(n + 128).to_string();
+            targets.push(ControllerTarget {
+                perp: s.perp.clone(),
+                deployment_transaction: "creation".into(),
+                controller: Some(s.controller.clone()),
+                attachment_transaction: Some("attachment".into()),
+            });
+            states.push(s);
+        }
+        let expanded = expanded_targets(&targets, &states);
+        assert_eq!(expanded.len(), 128);
+        assert_eq!(
+            expanded[0].attachment_transaction.as_deref(),
+            Some("attachment")
+        );
+        assert!(expanded[64..].iter().all(|t| t.controller.is_none()
+            && t.attachment_transaction.is_none()
+            && t.deployment_transaction == "creation"));
+        assert!(!current_controllers_covered(&states));
+    }
+
+    #[test]
+    fn unit_tests_status_requires_current_controller_and_detects_a_second_rotation() {
+        let mut historical = snapshot();
+        historical.current_controller = Address::repeat_byte(5).to_string();
+        historical.releases_paused = true;
+        let mut current = snapshot();
+        current.controller = historical.current_controller.clone();
+        current.current_controller = current.controller.clone();
+        let mut states = vec![historical, current];
+        assert!(current_controllers_covered(&states));
+        assert!(!states[1].releases_paused);
+        states[0].current_controller = Address::repeat_byte(6).to_string();
+        assert!(!current_controllers_covered(&states));
+        states[0].current_controller = Address::ZERO.to_string();
+        states[1].current_controller = Address::ZERO.to_string();
+        assert!(current_controllers_covered(&states));
+    }
+
     #[test]
     fn unit_tests_capacity_saturates_without_overflow() {
         assert_eq!(available_capacity(100, 10, u128::MAX, 0, u64::MAX), 100);
