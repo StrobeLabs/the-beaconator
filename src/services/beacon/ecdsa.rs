@@ -144,17 +144,25 @@ pub enum EcdsaUpdateOutcome {
     },
 }
 
+/// Margin below the heartbeat age for the v1 rate-limit cap. The publish
+/// record is written when the receipt arrives, a few seconds after the block
+/// that set `updatedAt`, so a cap of exactly 900 s could skip a changed value
+/// that arrives just after a heartbeat once.
+const V1_RATE_LIMIT_MARGIN_SECS: u64 = 60;
+
 /// The rate-limit interval for a beacon kind. For v1 it is at most the
-/// heartbeat age (900 s): a heartbeat refreshes `updatedAt` but does not
-/// record a publish, so with a longer interval (for example the 3600 s
-/// dormant tier) a changed value that arrives just after a heartbeat would be
-/// skipped again and again while the heartbeat keeps the beacon young. With
-/// the cap, a changed value reaches the chain at most 900 s after the last
-/// real publish, in either request order.
+/// heartbeat age minus a margin (840 s): a heartbeat refreshes `updatedAt`
+/// but does not record a publish, so with a longer interval (for example the
+/// 3600 s dormant tier) a changed value that arrives just after a heartbeat
+/// would be skipped again and again while the heartbeat keeps the beacon
+/// young. A heartbeat publishes only at an age of 900 s or more, so with the
+/// cap a changed value right after it always passes, in either request order.
 fn rate_limit_interval(kind: VerifierKind, interval: Duration) -> Duration {
     match kind {
         VerifierKind::Legacy => interval,
-        VerifierKind::V1 => interval.min(Duration::from_secs(v1::HEARTBEAT_MIN_AGE_SECS)),
+        VerifierKind::V1 => interval.min(Duration::from_secs(
+            v1::HEARTBEAT_MIN_AGE_SECS - V1_RATE_LIMIT_MARGIN_SECS,
+        )),
     }
 }
 
@@ -791,12 +799,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_v1_rate_limit_is_capped_at_the_heartbeat_age() {
+    fn the_v1_rate_limit_is_capped_below_the_heartbeat_age() {
         let dormant = Duration::from_secs(3600);
         let short = Duration::from_secs(300);
         assert_eq!(
             rate_limit_interval(VerifierKind::V1, dormant),
-            Duration::from_secs(v1::HEARTBEAT_MIN_AGE_SECS)
+            Duration::from_secs(840)
         );
         assert_eq!(rate_limit_interval(VerifierKind::V1, short), short);
         assert_eq!(rate_limit_interval(VerifierKind::Legacy, dormant), dormant);
