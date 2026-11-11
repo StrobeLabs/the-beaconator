@@ -224,3 +224,36 @@ pub struct CreateModularBeaconResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub safe_proposal_hash: Option<String>,
 }
+
+/// Response from `/create_v1_identity_beacon`.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CreateV1IdentityBeaconResponse {
+    pub beacon_address: String,
+    pub verifier_address: String,
+    /// `verifier.bind(beacon)` transaction.
+    pub bind_transaction_hash: String,
+    /// First update (nonce 1). `None` when it failed; the beacon then needs a manual update.
+    pub warm_up_transaction_hash: Option<String>,
+    /// True when the first update is confirmed on chain.
+    pub warmed_up: bool,
+    /// Whether the beacon is registered with the beacon registry.
+    pub registered: bool,
+    /// Safe multisig tx hash if registration was proposed (not yet executed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub safe_proposal_hash: Option<String>,
+}
+
+/// Response from `/deploy_v1_perp_for_beacon`.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct DeployV1PerpForBeaconResponse {
+    pub perp_address: String,
+    pub pool_id: String,
+    pub perp_factory_address: String,
+    pub initial_index: String,
+    pub ema_window: u32,
+    pub latency: u32,
+    pub sqrt_price_x96: String,
+    pub tick: i32,
+    pub salt: String,
+    pub transaction_hash: String,
+}

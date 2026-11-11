@@ -67,6 +67,17 @@ impl ContractErrorDecoder {
     // `SafeCastOverflowedUintToInt(uint256)` selector, which the contracts never emit).
     const SAFECAST_OVERFLOW: &'static str = "0x35278d12";
 
+    // v1.0.0 (0df4208) createPerp beacon read (SafeBeaconIndex) and withdrawal config.
+    const BEACON_INDEX_UNREADABLE: &'static str = "0x6c776dda";
+    const STALE_BEACON_INDEX: &'static str = "0x61200552";
+    const PRICE_OUTSIDE_RANGE: &'static str = "0xe10dffe6";
+    const ZERO_WINDOW: &'static str = "0x4acbbb65";
+    // beacons@f762da1 ECDSAVerifier and CallerBound.
+    const INVALID_NONCE: &'static str = "0x756688fe";
+    const INVALID_SIGNER: &'static str = "0x815e1d64";
+    const ALREADY_BOUND: &'static str = "0x682a9065";
+    const UNAUTHORIZED_BINDER: &'static str = "0xfef019bb";
+
     pub fn decode_error_data(error_data: &str) -> Option<String> {
         if error_data.len() < 10 {
             return None;
@@ -202,6 +213,33 @@ impl ContractErrorDecoder {
             Self::SAFECAST_OVERFLOW => {
                 Some("Overflow: a SafeCastLib conversion overflowed".to_string())
             }
+            Self::BEACON_INDEX_UNREADABLE => Some(
+                "BeaconIndexUnreadable: the beacon index() call failed or is not a v1 beacon"
+                    .to_string(),
+            ),
+            Self::STALE_BEACON_INDEX => Some(
+                "StaleBeaconIndex: the beacon is older than the perp latency; push an update"
+                    .to_string(),
+            ),
+            Self::PRICE_OUTSIDE_RANGE => {
+                Some("PriceOutsideRange: the beacon index is outside the index domain".to_string())
+            }
+            Self::ZERO_WINDOW => {
+                Some("ZeroWindow: the withdrawal challenge window must be non-zero".to_string())
+            }
+            Self::INVALID_NONCE => Some(
+                "InvalidNonce: the v1 verifier requires nonce lastNonce + 1".to_string(),
+            ),
+            Self::INVALID_SIGNER => {
+                Some("InvalidSigner: the signature is not from the verifier SIGNER".to_string())
+            }
+            Self::ALREADY_BOUND => {
+                Some("AlreadyBound: the verifier or base function is already bound".to_string())
+            }
+            Self::UNAUTHORIZED_BINDER => Some(
+                "UnauthorizedBinder: only the account that created the component can bind it"
+                    .to_string(),
+            ),
             _ => Some(format!("Unknown contract error: {selector}")),
         }
     }

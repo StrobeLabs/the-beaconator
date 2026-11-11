@@ -11,6 +11,8 @@ use crate::models::{
     ApiResponse, AppState, DeployPerpForBeaconRequest, DeployPerpForBeaconResponse,
     DepositLiquidityForPerpRequest, DepositLiquidityForPerpResponse,
 };
+use crate::models::{DeployV1PerpForBeaconRequest, DeployV1PerpForBeaconResponse};
+use crate::services::perp::v1::{DeployV1PerpParams, deploy_v1_perp_for_beacon};
 use crate::services::perp::{deploy_perp_for_beacon, deposit_liquidity_for_perp, perp_factory_of};
 
 /// Derive a deterministic 32-byte salt from the deploy request. Reusing this salt on retry
@@ -143,6 +145,113 @@ pub async fn deploy_perp_for_beacon_endpoint(
     }
 }
 
+fn parse_address(field: &str, raw: &str) -> Result<Address, Status> {
+    Address::from_str(raw).map_err(|e| {
+        tracing::error!("Invalid {field} '{raw}': {e}");
+        Status::BadRequest
+    })
+}
+
+fn parse_u128(field: &str, raw: &str) -> Result<u128, Status> {
+    raw.trim().parse::<u128>().map_err(|e| {
+        tracing::error!("Invalid {field} '{raw}': {e} (expected a uint128 decimal string)");
+        Status::BadRequest
+    })
+}
+
+/// Deploys a v1 perp (perpcity-contracts v1.0.0) for a v1 beacon.
+///
+/// Calls `PerpFactory.createPerp(owner, governor, modules, emaWindow, latency, salt,
+/// withdrawalConfig)` on the v1 factory with the v1 modules from the `V1_*` env vars. The
+/// factory reads the beacon with `latency`, so this route first checks that the beacon is
+/// younger than `latency` minus 120 s. `/deploy_perp_for_beacon` stays the old-factory path.
+#[openapi(tag = "Perpetual")]
+#[post("/deploy_v1_perp_for_beacon", data = "<request>")]
+pub async fn deploy_v1_perp_for_beacon_endpoint(
+    request: Json<DeployV1PerpForBeaconRequest>,
+    _token: ApiToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<DeployV1PerpForBeaconResponse>>, Status> {
+    tracing::info!(
+        "Received request: POST /deploy_v1_perp_for_beacon (beacon {})",
+        request.beacon_address
+    );
+    let beacon = parse_address("beacon_address", &request.beacon_address)?;
+    let owner = parse_address("owner", &request.owner)?;
+    let governor = parse_address("governor", &request.governor)?;
+    let withdrawal_capacity = parse_u128("withdrawal_capacity", &request.withdrawal_capacity)?;
+    let withdrawal_refill_per_second = parse_u128(
+        "withdrawal_refill_per_second",
+        &request.withdrawal_refill_per_second,
+    )?;
+    let salt = match request.salt.as_deref() {
+        Some(s) => FixedBytes::<32>::from_str(s).map_err(|e| {
+            tracing::error!("Invalid salt '{s}': {e} (expected 32-byte hex)");
+            Status::BadRequest
+        })?,
+        // Same idempotency rule as the old route: a retry with the same payload reuses the
+        // salt, so createPerp reverts instead of creating a second market.
+        None => keccak256(
+            (
+                beacon,
+                owner,
+                governor,
+                request.ema_window,
+                request.latency,
+                withdrawal_capacity,
+                withdrawal_refill_per_second,
+                request.withdrawal_challenge_window,
+            )
+                .abi_encode(),
+        ),
+    };
+    let params = DeployV1PerpParams {
+        beacon,
+        owner,
+        governor,
+        ema_window: request.ema_window,
+        latency: request.latency,
+        salt,
+        withdrawal_capacity,
+        withdrawal_refill_per_second,
+        withdrawal_challenge_window: request.withdrawal_challenge_window,
+    };
+    if let Err(e) = crate::services::perp::v1::validate_params(&params) {
+        tracing::error!("Invalid v1 perp request: {e}");
+        return Err(Status::BadRequest);
+    }
+
+    match deploy_v1_perp_for_beacon(state.inner(), params).await {
+        Ok(perp) => {
+            tracing::info!("v1 perp {} deployed (tx {})", perp.perp, perp.tx_hash);
+            Ok(Json(ApiResponse {
+                success: true,
+                data: Some(DeployV1PerpForBeaconResponse {
+                    perp_address: format!("{:#x}", perp.perp),
+                    pool_id: format!("{:#x}", perp.pool_id),
+                    perp_factory_address: format!("{:#x}", perp.perp_factory),
+                    initial_index: perp.initial_index.to_string(),
+                    ema_window: request.ema_window,
+                    latency: request.latency,
+                    sqrt_price_x96: perp.sqrt_price_x96.to_string(),
+                    tick: perp.tick,
+                    salt: format!("{salt:#x}"),
+                    transaction_hash: format!("{:#x}", perp.tx_hash),
+                }),
+                message: "v1 perp deployed".to_string(),
+            }))
+        }
+        Err(e) => {
+            tracing::error!("v1 perp deploy for beacon {beacon} failed: {e}");
+            Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: format!("v1 perp deploy failed: {e}"),
+            }))
+        }
+    }
+}
+
 /// Deposits liquidity (opens a maker position) on a per-market `Perp` contract.
 ///
 /// Approves USDC spending against the per-Perp contract address and calls
@@ -203,6 +312,14 @@ pub async fn deposit_liquidity_for_perp_endpoint(
     )
     .await
     {
+        Ok(Some(factory)) if state.contracts.is_v1_factory(factory) => {
+            // openMaker here uses the old OpenMakerParams ABI. v1 markets are seeded by
+            // Legion with the v1 ABI.
+            tracing::error!(
+                "perp_address {perp_address} is a v1 perp; this route only opens makers on old perps"
+            );
+            return Err(Status::BadRequest);
+        }
         Ok(Some(factory)) => {
             tracing::info!("perp_address {perp_address} is registered with PerpFactory {factory}");
         }

@@ -8,13 +8,15 @@ pub mod factory;
 pub mod modular;
 pub mod recipe_registry;
 pub mod registry;
+pub mod v1;
+pub mod v1_deploy;
 pub mod verifiable;
 
 pub use batch::*;
 pub use component_registry::ComponentFactoryRegistry;
 pub use core::*;
 pub use ecdsa::*;
-pub use ecdsa_deploy::create_ecdsa_verifier;
+pub use ecdsa_deploy::{create_ecdsa_verifier, create_ecdsa_verifier_at};
 pub use factory::*;
 pub use recipe_registry::RecipeRegistry;
 pub use registry::BeaconTypeRegistry;

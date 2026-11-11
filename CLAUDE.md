@@ -157,7 +157,34 @@ PRICING_MODULE_ADDRESS=0x...                  # NEW in v0.1.0
 PROTOCOL_FEE_MANAGER_ADDRESS=0x...
 MODULE_REGISTRY_ADDRESS=0x...
 MULTICALL3_ADDRESS=0xcA11bde05977b3631167028862bE2a173976CA11
+
+# Optional v1 deployment (perpcity-contracts v1.0.0, beacons f762da1): all eight or none
+V1_PERP_FACTORY_ADDRESS=0x...
+V1_ECDSA_VERIFIER_FACTORY_ADDRESS=0x...
+V1_IDENTITY_BEACON_FACTORY_ADDRESS=0x...
+V1_FEES_MODULE_ADDRESS=0x...                  # and V1_FUNDING_ / V1_MARGIN_RATIOS_ /
+                                              # V1_PRICE_IMPACT_ / V1_PRICING_MODULE_ADDRESS
 ```
+
+## v1 beacon kind (cutover plan row 2c)
+
+Old and v1 beacons run side by side until the outside OI on old perps is 0. The update
+path selects the kind per beacon from the `index()` reply length (32 bytes = old, 64 bytes
+= v1 `(index, updatedAt)`), never from a flag. See `src/services/beacon/v1.rs`.
+
+- v1 nonce: `lastNonce + 1`, read under the per-beacon update lock (old kind: timestamp).
+- v1 age gate: a heartbeat request (`heartbeat: true`) is skipped when the beacon is younger
+  than 900 s; any request on a v1 beacon of 900 s or more publishes and skips the rate
+  limit and value dedupe (a stale v1 beacon stops its market).
+- No receipt: re-read `lastNonce`. Our nonce accepted = confirmed. Otherwise the publish is
+  not recorded and the beacon lock is held until the receipt.
+- `POST /create_v1_identity_beacon`: verifier and IdentityBeacon from the v1 factories,
+  `bind` from the same wallet, first update (nonce 1), registration.
+- `POST /deploy_v1_perp_for_beacon`: v1 `createPerp(owner, governor, modules, emaWindow,
+  latency, salt, withdrawalConfig)` after a freshness check. `/deploy_perp_for_beacon` is
+  the old path.
+- `perp_factory_of` also checks the v1 factory (`PerpGuardHook.perps(poolId) == perp`) and
+  does not stop at a failed factory read.
 
 ## Implementation Details
 

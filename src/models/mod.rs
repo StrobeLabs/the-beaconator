@@ -8,7 +8,7 @@ pub mod wallet;
 
 pub use app_state::{
     ApiEndpoints, ApiSummary, AppState, AuthConfig, ContractAddresses, EndpointInfo,
-    EndpointStatus, ProviderConfig, Registries, SafeConfig, WalletConfig,
+    EndpointStatus, ProviderConfig, Registries, SafeConfig, V1Contracts, WalletConfig,
 };
 pub use beacon_type::{BeaconTypeConfig, FactoryType, SeedResult};
 pub use component_factory::{ComponentFactoryConfig, ComponentFactoryType};
@@ -23,10 +23,12 @@ pub use requests::{
     UpdateBeaconWithEcdsaRequest,
 };
 pub use requests::{CreateModularBeaconRequest, ModularBeaconParams};
+pub use requests::{CreateV1IdentityBeaconRequest, DeployV1PerpForBeaconRequest};
 pub use responses::{
     ApiResponse, BatchUpdateBeaconResponse, BeaconComponentAddresses, BeaconTypeListResponse,
     BeaconUpdateResult, CreateBeaconResponse, CreateBeaconWithEcdsaResponse,
     CreateModularBeaconResponse, DeployPerpForBeaconResponse, DepositLiquidityForPerpResponse,
     EcdsaUpdateResponse,
 };
+pub use responses::{CreateV1IdentityBeaconResponse, DeployV1PerpForBeaconResponse};
 pub use wallet::{RedisKeys, WalletInfo, WalletManagerConfig, WalletStatus};

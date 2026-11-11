@@ -107,6 +107,7 @@ jobs:
           # it does not run in the plain unit path.
           cargo test touch_integration_tests -- --ignored --nocapture
           cargo test retirement_tests -- --ignored --nocapture
+          cargo test v1_beacon_integration_tests -- --ignored --nocapture
           ./scripts/anvil-cleanup.sh
 
   # Wallet/Redis tests - parallel, needs Redis service
