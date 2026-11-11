@@ -189,8 +189,10 @@ pub async fn deploy_v1_perp_for_beacon_endpoint(
             tracing::error!("Invalid salt '{s}': {e} (expected 32-byte hex)");
             Status::BadRequest
         })?,
-        // Same idempotency rule as the old route: a retry with the same payload reuses the
-        // salt, so createPerp reverts instead of creating a second market.
+        // Same derivation as the old route. The v1 factory namespaces the salt with
+        // msg.sender (keccak256(msg.sender, salt)) and this route sends from any pool wallet,
+        // so a retry from another wallet does NOT revert: it creates a second market. Pass an
+        // explicit salt and check the first result before a retry.
         None => keccak256(
             (
                 beacon,

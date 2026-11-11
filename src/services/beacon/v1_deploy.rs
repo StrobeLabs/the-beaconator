@@ -18,7 +18,7 @@ use tokio::time::timeout;
 use super::ecdsa_deploy::create_ecdsa_verifier_at;
 use super::v1::bind_to_beacon;
 use crate::models::AppState;
-use crate::routes::IIdentityBeaconFactory;
+use crate::routes::{IBeaconV1, IIdentityBeaconFactory};
 use crate::services::transaction::execution::send_with_nonce_retry;
 
 pub struct V1IdentityBeacon {
@@ -79,6 +79,22 @@ pub async fn create_v1_identity_beacon(
         return Err(format!("createBeacon transaction {tx_hash} reverted"));
     }
     super::verify_deployed(&provider, beacon, "v1 IdentityBeacon").await?;
+
+    // The address above comes from a simulation. The factory is public, uses CREATE and
+    // emits no event, so another createBeacon can land first and take that address. `bind`
+    // is permanent: check that the beacon at the address uses our verifier before binding.
+    let beacon_verifier_raw = IBeaconV1::new(beacon, &provider)
+        .verifier()
+        .call()
+        .await
+        .map_err(|e| format!("Failed to read verifier() of v1 beacon {beacon}: {e}"))?;
+    let beacon_verifier = Address::from(beacon_verifier_raw.0);
+    if beacon_verifier != verifier {
+        return Err(format!(
+            "createBeacon race: the beacon at {beacon} uses verifier {beacon_verifier}, not {verifier} \
+             (tx {tx_hash}); verifier {verifier} is not bound"
+        ));
+    }
 
     let bind_tx = bind_to_beacon(&provider, verifier, beacon, "ECDSAVerifier", || {
         handle.ensure_lock_held()

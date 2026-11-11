@@ -87,29 +87,6 @@ fn health() -> (rocket::http::ContentType, &'static str) {
     (rocket::http::ContentType::JSON, r#"{"status":"ok"}"#)
 }
 
-/// Creates and configures the Rocket application.
-///
-/// Initializes the application state, loads configuration from environment variables,
-/// sets up providers and wallets, and mounts all routes.
-/// Pre-flight audit of every env var the-beaconator reads at startup.
-///
-/// Validates each variable WITHOUT logging its value. The only log output is a single
-/// summary line at the end and one ERROR line per problem detected. This gives the
-/// operator a list of things to fix on a fresh boot without echoing any config
-/// (sensitive or otherwise) to the logs.
-///
-/// Detection rules:
-/// - Required var missing → ERROR `<KEY> is required but not set`.
-/// - Value contains leading/trailing space → ERROR with `raw_len` and `trimmed_len` only.
-/// - Address-typed var fails `Address::from_str` → ERROR with the alloy error class only,
-///   never the offending characters.
-/// - `PRIVATE_KEY` length not 64 / 66 → ERROR with the observed length only.
-/// - `WALLET_PRIVATE_KEYS` entry length not 64 / 66 → ERROR with index and observed
-///   length only.
-///
-/// Anything that passes is silent. Lengths and integer error metadata are emitted because
-/// they're necessary to fix the bug; raw values, addresses, URLs, and any portion of a
-/// secret are NEVER emitted.
 /// Env var names of the v1 deployment, in `V1Contracts` field order.
 const V1_ADDRESS_VARS: [&str; 8] = [
     "V1_PERP_FACTORY_ADDRESS",
@@ -162,6 +139,29 @@ fn load_v1_contracts() -> Option<models::V1Contracts> {
     Some(v1)
 }
 
+/// Creates and configures the Rocket application.
+///
+/// Initializes the application state, loads configuration from environment variables,
+/// sets up providers and wallets, and mounts all routes.
+/// Pre-flight audit of every env var the-beaconator reads at startup.
+///
+/// Validates each variable WITHOUT logging its value. The only log output is a single
+/// summary line at the end and one ERROR line per problem detected. This gives the
+/// operator a list of things to fix on a fresh boot without echoing any config
+/// (sensitive or otherwise) to the logs.
+///
+/// Detection rules:
+/// - Required var missing → ERROR `<KEY> is required but not set`.
+/// - Value contains leading/trailing space → ERROR with `raw_len` and `trimmed_len` only.
+/// - Address-typed var fails `Address::from_str` → ERROR with the alloy error class only,
+///   never the offending characters.
+/// - `PRIVATE_KEY` length not 64 / 66 → ERROR with the observed length only.
+/// - `WALLET_PRIVATE_KEYS` entry length not 64 / 66 → ERROR with index and observed
+///   length only.
+///
+/// Anything that passes is silent. Lengths and integer error metadata are emitted because
+/// they're necessary to fix the bug; raw values, addresses, URLs, and any portion of a
+/// secret are NEVER emitted.
 fn audit_environment() {
     use std::env;
     use std::str::FromStr;

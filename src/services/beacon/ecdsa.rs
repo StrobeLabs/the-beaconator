@@ -28,11 +28,16 @@ const PENDING_TX_POLL_TIMEOUT: Duration = Duration::from_secs(10);
 /// unresolved, so a second update cannot race it on the verifier nonce. The
 /// lock is released (guard drop) as soon as the tx gets a receipt, or when the
 /// grace window ends; if this instance dies, the lock's Redis TTL expires it.
+///
+/// `v1_nonce` is `(verifier, nonce)` for a v1 update: a late successful
+/// receipt records it as confirmed, so the next update does not depend on a
+/// replica that may still return the old `lastNonce`.
 fn hold_beacon_lock_until_receipt(
     lock: (LockHeartbeat, WalletLockGuard),
     provider: Arc<ReadOnlyProvider>,
     tx_hash: B256,
     beacon_address: Address,
+    v1_nonce: Option<(Address, U256)>,
 ) {
     tokio::spawn(async move {
         // Tuple order matches the manager's return: heartbeat drops before the
@@ -46,7 +51,12 @@ fn hold_beacon_lock_until_receipt(
             )
             .await
             {
-                Ok(Ok(Some(_))) => {
+                Ok(Ok(Some(receipt))) => {
+                    if let Some((verifier, nonce)) = v1_nonce
+                        && receipt.status()
+                    {
+                        v1::record_confirmed_nonce(verifier, nonce);
+                    }
                     tracing::info!(
                         "Pending update tx {tx_hash} for beacon {beacon_address} resolved; releasing beacon update lock"
                     );
@@ -68,6 +78,15 @@ fn hold_beacon_lock_until_receipt(
             "Releasing beacon {beacon_address} update lock: tx {tx_hash} still unresolved after {PENDING_TX_LOCK_GRACE:?} grace window"
         );
     });
+}
+
+/// Whether a publish feeds the rate limit and the value dedupe. A v1
+/// heartbeat does not: it only refreshes `updatedAt`, and recording it would
+/// let the rate limit skip a changed value that arrives just after it, so the
+/// old value would stay on chain. The v1 age gate reads `updatedAt` on chain,
+/// not this record.
+fn records_publish(kind: VerifierKind, heartbeat: bool) -> bool {
+    !(heartbeat && kind == VerifierKind::V1)
 }
 
 /// Why an update produced no transaction. Logging detail only.
@@ -617,6 +636,7 @@ pub async fn update_beacon_with_ecdsa(
             return Ok(handle_unconfirmed(
                 state,
                 kind,
+                request.heartbeat,
                 verifier_address,
                 nonce,
                 beacon_update_lock,
@@ -662,7 +682,9 @@ pub async fn update_beacon_with_ecdsa(
     if kind == VerifierKind::V1 {
         v1::record_confirmed_nonce(verifier_address, nonce);
     }
-    super::dedupe::record_publish(state, &beacon_address).await;
+    if records_publish(kind, request.heartbeat) {
+        super::dedupe::record_publish(state, &beacon_address).await;
+    }
     Ok(EcdsaUpdateOutcome::Published {
         tx_hash,
         confirmed: true,
@@ -685,6 +707,7 @@ pub async fn update_beacon_with_ecdsa(
 async fn handle_unconfirmed(
     state: &AppState,
     kind: VerifierKind,
+    heartbeat: bool,
     verifier_address: Address,
     nonce: U256,
     beacon_update_lock: (LockHeartbeat, WalletLockGuard),
@@ -699,7 +722,9 @@ async fn handle_unconfirmed(
                     "Update tx {tx_hash} for v1 beacon {beacon_address}: {why}, but lastNonce {last} >= {nonce}; it is on chain"
                 );
                 v1::record_confirmed_nonce(verifier_address, nonce);
-                super::dedupe::record_publish(state, &beacon_address).await;
+                if records_publish(kind, heartbeat) {
+                    super::dedupe::record_publish(state, &beacon_address).await;
+                }
                 drop(beacon_update_lock);
                 return EcdsaUpdateOutcome::Published {
                     tx_hash,
@@ -725,6 +750,7 @@ async fn handle_unconfirmed(
         state.provider.read_provider.clone(),
         tx_hash,
         beacon_address,
+        (kind == VerifierKind::V1).then_some((verifier_address, nonce)),
     );
     EcdsaUpdateOutcome::Published {
         tx_hash,
@@ -736,6 +762,14 @@ async fn handle_unconfirmed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_v1_heartbeat_does_not_feed_the_rate_limit() {
+        assert!(!records_publish(VerifierKind::V1, true));
+        assert!(records_publish(VerifierKind::V1, false));
+        assert!(records_publish(VerifierKind::Legacy, true));
+        assert!(records_publish(VerifierKind::Legacy, false));
+    }
 
     #[test]
     fn test_abi_encode_inputs() {
