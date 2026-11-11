@@ -144,15 +144,33 @@ pub enum EcdsaUpdateOutcome {
     },
 }
 
+/// The rate-limit interval for a beacon kind. For v1 it is at most the
+/// heartbeat age (900 s): a heartbeat refreshes `updatedAt` but does not
+/// record a publish, so with a longer interval (for example the 3600 s
+/// dormant tier) a changed value that arrives just after a heartbeat would be
+/// skipped again and again while the heartbeat keeps the beacon young. With
+/// the cap, a changed value reaches the chain at most 900 s after the last
+/// real publish, in either request order.
+fn rate_limit_interval(kind: VerifierKind, interval: Duration) -> Duration {
+    match kind {
+        VerifierKind::Legacy => interval,
+        VerifierKind::V1 => interval.min(Duration::from_secs(v1::HEARTBEAT_MIN_AGE_SECS)),
+    }
+}
+
 /// The publish rate limit (step 4a / 4a-bis of [`update_beacon_with_ecdsa`]):
 /// `Some(Skipped)` when the last publish of this beacon is newer than its
 /// interval. A missing record (no Redis, first publish, expired key) is `None`.
 async fn rate_limit_skip(
     state: &AppState,
     beacon_address: Address,
+    kind: VerifierKind,
     tier: Option<Tier>,
 ) -> Option<EcdsaUpdateOutcome> {
-    let interval = super::dedupe::publish_interval(&beacon_address, tier)?;
+    let interval = rate_limit_interval(
+        kind,
+        super::dedupe::publish_interval(&beacon_address, tier)?,
+    );
     let elapsed = super::dedupe::seconds_since_last_publish(state, &beacon_address).await?;
     if elapsed >= interval.as_secs() {
         return None;
@@ -270,7 +288,8 @@ pub async fn update_beacon_with_ecdsa(
     let cached_kind = v1::known_kind(beacon_address);
     let tier = state.touch.cached_tier(beacon_address).await;
     if cached_kind == Some(VerifierKind::Legacy)
-        && let Some(skipped) = rate_limit_skip(state, beacon_address, tier).await
+        && let Some(skipped) =
+            rate_limit_skip(state, beacon_address, VerifierKind::Legacy, tier).await
     {
         return Ok(skipped);
     }
@@ -343,7 +362,7 @@ pub async fn update_beacon_with_ecdsa(
     // default, never a bot-api round trip under the beacon lock.
     if !publish_now
         && cached_kind != Some(VerifierKind::Legacy)
-        && let Some(skipped) = rate_limit_skip(state, beacon_address, tier).await
+        && let Some(skipped) = rate_limit_skip(state, beacon_address, kind, tier).await
     {
         return Ok(skipped);
     }
@@ -498,17 +517,25 @@ pub async fn update_beacon_with_ecdsa(
             let error_msg = if e.as_revert_data().is_some() {
                 let diag_timeout = Duration::from_secs(5);
 
-                let verify_detail = match timeout(
-                    diag_timeout,
-                    verifier
-                        .verify(sig_bytes.clone(), inputs_bytes.clone())
-                        .call(),
-                )
-                .await
-                {
-                    Ok(Ok(_)) => "verify() succeeded".to_string(),
-                    Ok(Err(ve)) => format!("verify() also reverted: {ve}"),
-                    Err(_) => "verify() diagnostic timed out".to_string(),
+                // A v1 verifier accepts verify() only from its bound beacon
+                // (CallerBound), so a direct call always reverts and says nothing.
+                let verify_detail = match kind {
+                    VerifierKind::Legacy => match timeout(
+                        diag_timeout,
+                        verifier
+                            .verify(sig_bytes.clone(), inputs_bytes.clone())
+                            .call(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(_)) => "verify() succeeded".to_string(),
+                        Ok(Err(ve)) => format!("verify() also reverted: {ve}"),
+                        Err(_) => "verify() diagnostic timed out".to_string(),
+                    },
+                    VerifierKind::V1 => {
+                        "verify() not called (v1 verifier accepts only its bound beacon)"
+                            .to_string()
+                    }
                 };
 
                 let used_detail = match kind {
@@ -762,6 +789,18 @@ async fn handle_unconfirmed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_v1_rate_limit_is_capped_at_the_heartbeat_age() {
+        let dormant = Duration::from_secs(3600);
+        let short = Duration::from_secs(300);
+        assert_eq!(
+            rate_limit_interval(VerifierKind::V1, dormant),
+            Duration::from_secs(v1::HEARTBEAT_MIN_AGE_SECS)
+        );
+        assert_eq!(rate_limit_interval(VerifierKind::V1, short), short);
+        assert_eq!(rate_limit_interval(VerifierKind::Legacy, dormant), dormant);
+    }
 
     #[test]
     fn a_v1_heartbeat_does_not_feed_the_rate_limit() {
