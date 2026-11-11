@@ -227,9 +227,9 @@ impl ContractErrorDecoder {
             Self::ZERO_WINDOW => {
                 Some("ZeroWindow: the withdrawal challenge window must be non-zero".to_string())
             }
-            Self::INVALID_NONCE => Some(
-                "InvalidNonce: the v1 verifier requires nonce lastNonce + 1".to_string(),
-            ),
+            Self::INVALID_NONCE => {
+                Some("InvalidNonce: the v1 verifier requires nonce lastNonce + 1".to_string())
+            }
             Self::INVALID_SIGNER => {
                 Some("InvalidSigner: the signature is not from the verifier SIGNER".to_string())
             }

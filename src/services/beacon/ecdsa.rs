@@ -455,18 +455,15 @@ pub async fn update_beacon_with_ecdsa(
                 };
 
                 let used_detail = match kind {
-                    VerifierKind::Legacy => match timeout(
-                        diag_timeout,
-                        verifier.usedProofs(proof_hash).call(),
-                    )
-                    .await
-                    {
-                        Ok(Ok(val)) => {
-                            format!("usedProofs({proof_hash:#x})={val:?}")
+                    VerifierKind::Legacy => {
+                        match timeout(diag_timeout, verifier.usedProofs(proof_hash).call()).await {
+                            Ok(Ok(val)) => {
+                                format!("usedProofs({proof_hash:#x})={val:?}")
+                            }
+                            Ok(Err(ue)) => format!("usedProofs check failed: {ue}"),
+                            Err(_) => "usedProofs diagnostic timed out".to_string(),
                         }
-                        Ok(Err(ue)) => format!("usedProofs check failed: {ue}"),
-                        Err(_) => "usedProofs diagnostic timed out".to_string(),
-                    },
+                    }
                     VerifierKind::V1 => match timeout(
                         diag_timeout,
                         v1::read_last_nonce(&*state.provider.read_provider, verifier_address),
@@ -675,9 +672,9 @@ async fn handle_unconfirmed(
             Ok(last) => tracing::warn!(
                 "Update tx {tx_hash} for v1 beacon {beacon_address}: {why}; lastNonce {last} < {nonce}, not on chain yet"
             ),
-            Err(e) => tracing::warn!(
-                "Update tx {tx_hash} for v1 beacon {beacon_address}: {why}; {e}"
-            ),
+            Err(e) => {
+                tracing::warn!("Update tx {tx_hash} for v1 beacon {beacon_address}: {why}; {e}")
+            }
         }
     } else {
         tracing::warn!(

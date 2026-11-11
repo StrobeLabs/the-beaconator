@@ -270,7 +270,9 @@ pub struct ContractAddresses {
 impl ContractAddresses {
     /// True when `factory` is the configured v1 PerpFactory.
     pub fn is_v1_factory(&self, factory: Address) -> bool {
-        self.v1.as_ref().is_some_and(|v1| v1.perp_factory == factory)
+        self.v1
+            .as_ref()
+            .is_some_and(|v1| v1.perp_factory == factory)
     }
 }
 

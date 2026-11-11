@@ -200,11 +200,10 @@ pub async fn create_v1_identity_beacon(
     _token: ApiToken,
     state: &State<AppState>,
 ) -> Result<Json<ApiResponse<CreateV1IdentityBeaconResponse>>, Status> {
-    let initial_index =
-        alloy::primitives::U256::from_str(&request.initial_index).map_err(|e| {
-            tracing::error!("Invalid initial_index '{}': {e}", request.initial_index);
-            Status::BadRequest
-        })?;
+    let initial_index = alloy::primitives::U256::from_str(&request.initial_index).map_err(|e| {
+        tracing::error!("Invalid initial_index '{}': {e}", request.initial_index);
+        Status::BadRequest
+    })?;
     tracing::info!(
         "Received request: POST /create_v1_identity_beacon (initial_index={initial_index})"
     );
@@ -248,18 +247,21 @@ pub async fn create_v1_identity_beacon(
     };
 
     let registry_address = state.contracts.perpcity_registry;
-    let (registered, safe_proposal_hash) =
-        match register_beacon_with_registry(state.inner(), beacon_address, registry_address)
-            .await
-        {
-            Ok(RegistrationOutcome::OnChainConfirmed(_))
-            | Ok(RegistrationOutcome::AlreadyRegistered) => (true, None),
-            Ok(RegistrationOutcome::SafeProposed(hash)) => (false, Some(format!("{hash:#x}"))),
-            Err(e) => {
-                tracing::warn!("v1 beacon {beacon_address} created but registration failed: {e}");
-                (false, None)
-            }
-        };
+    let (registered, safe_proposal_hash) = match register_beacon_with_registry(
+        state.inner(),
+        beacon_address,
+        registry_address,
+    )
+    .await
+    {
+        Ok(RegistrationOutcome::OnChainConfirmed(_))
+        | Ok(RegistrationOutcome::AlreadyRegistered) => (true, None),
+        Ok(RegistrationOutcome::SafeProposed(hash)) => (false, Some(format!("{hash:#x}"))),
+        Err(e) => {
+            tracing::warn!("v1 beacon {beacon_address} created but registration failed: {e}");
+            (false, None)
+        }
+    };
 
     let message = if warmed_up {
         "v1 identity beacon created, bound and warmed up".to_string()

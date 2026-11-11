@@ -9,8 +9,8 @@ use the_beaconator::services::beacon::v1::{
 };
 use the_beaconator::services::perp::ContractErrorDecoder;
 use the_beaconator::services::perp::v1::{
-    CREATE_FRESHNESS_MARGIN_SECS, DeployV1PerpParams, MIN_V1_LATENCY_SECS,
-    check_fresh_for_create, validate_params,
+    CREATE_FRESHNESS_MARGIN_SECS, DeployV1PerpParams, MIN_V1_LATENCY_SECS, check_fresh_for_create,
+    validate_params,
 };
 
 fn word(v: u64) -> [u8; 32] {
