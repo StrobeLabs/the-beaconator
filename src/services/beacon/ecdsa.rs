@@ -263,22 +263,26 @@ pub async fn update_beacon_with_ecdsa(
     // restart (empty kind cache) never stops pushes to the old beacons. A v1
     // beacon not yet in the cache then fails on its verifier nonce, which is
     // the same result as stopping here.
-    let reading: Option<IndexReading> =
-        match v1::read_index(&*state.provider.read_provider, beacon_address).await {
-            Ok(r) => {
-                v1::remember_kind(beacon_address, r.kind);
-                Some(r)
-            }
-            Err(e) if cached_kind == Some(VerifierKind::V1) => {
-                return Err(format!("Cannot read the v1 beacon {beacon_address}: {e}"));
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "{e} — publishing beacon {beacon_address} as the old kind, without the value dedupe"
-                );
-                None
-            }
-        };
+    let reading: Option<IndexReading> = match v1::read_index(
+        &*state.provider.read_provider,
+        beacon_address,
+    )
+    .await
+    {
+        Ok(r) => {
+            v1::remember_kind(beacon_address, r.kind);
+            Some(r)
+        }
+        Err(e) if cached_kind == Some(VerifierKind::V1) => {
+            return Err(format!("Cannot read the v1 beacon {beacon_address}: {e}"));
+        }
+        Err(e) => {
+            tracing::warn!(
+                "{e} — publishing beacon {beacon_address} as the old kind, without the value dedupe"
+            );
+            None
+        }
+    };
     let kind = reading.map_or(VerifierKind::Legacy, |r| r.kind);
 
     // 4a-v1. Age gate for v1 beacons. The heartbeat runs here, under the
