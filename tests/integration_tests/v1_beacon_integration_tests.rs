@@ -57,7 +57,6 @@ async fn signed_update(
 
 #[tokio::test]
 #[serial]
-#[ignore = "requires Anvil (run in the integration CI job)"]
 async fn v1_bind_nonce_sequence_and_unconfirmed_reread() {
     let anvil = AnvilManager::new().await;
     let deployer = anvil.deployer_signer();
