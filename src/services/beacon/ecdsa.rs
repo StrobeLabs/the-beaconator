@@ -12,6 +12,7 @@ use super::v1::{self, IndexReading, V1Gate, VerifierKind};
 use crate::ReadOnlyProvider;
 use crate::models::{AppState, UpdateBeaconWithEcdsaRequest};
 use crate::routes::{IBeacon, IEcdsaVerifier};
+use crate::services::touch::Tier;
 use crate::services::transaction::execution::{is_insufficient_funds_error, send_with_nonce_retry};
 use crate::services::wallet::{LockHeartbeat, WalletHandle, WalletLockGuard};
 
@@ -124,6 +125,33 @@ pub enum EcdsaUpdateOutcome {
     },
 }
 
+/// The publish rate limit (step 4a / 4a-bis of [`update_beacon_with_ecdsa`]):
+/// `Some(Skipped)` when the last publish of this beacon is newer than its
+/// interval. A missing record (no Redis, first publish, expired key) is `None`.
+async fn rate_limit_skip(
+    state: &AppState,
+    beacon_address: Address,
+    tier: Option<Tier>,
+) -> Option<EcdsaUpdateOutcome> {
+    let interval = super::dedupe::publish_interval(&beacon_address, tier)?;
+    let elapsed = super::dedupe::seconds_since_last_publish(state, &beacon_address).await?;
+    if elapsed >= interval.as_secs() {
+        return None;
+    }
+    let reason = SkipReason::RateLimited {
+        elapsed,
+        interval: interval.as_secs(),
+    };
+    tracing::info!(
+        tier = tier.map(|t| t.as_str()).unwrap_or("unknown"),
+        "Skipping update for beacon {beacon_address}: {reason}"
+    );
+    Some(EcdsaUpdateOutcome::Skipped {
+        beacon_address,
+        reason,
+    })
+}
+
 /// Updates a beacon using ECDSA signature from the PRIVATE_KEY wallet.
 ///
 /// This function:
@@ -216,20 +244,40 @@ pub async fn update_beacon_with_ecdsa(
         .acquire_beacon_update_lock(beacon_address)
         .await?;
 
+    // 4a. Publish rate limit for a beacon already known to be old: checked
+    // before the index() read, as before v1, so a rate-limited update of an
+    // old beacon costs no RPC call. Other beacons are checked in 4a-bis, after
+    // the read tells their kind.
+    let cached_kind = v1::known_kind(beacon_address);
+    let tier = state.touch.cached_tier(beacon_address).await;
+    if cached_kind == Some(VerifierKind::Legacy)
+        && let Some(skipped) = rate_limit_skip(state, beacon_address, tier).await
+    {
+        return Ok(skipped);
+    }
+
     // 4a. Read index() once, under the lock. The reply length is the beacon kind
-    // (see services/beacon/v1.rs). An old beacon whose read fails still
-    // publishes, as before v1; a v1 beacon needs the read for its age.
+    // (see services/beacon/v1.rs). A v1 beacon needs the read for its age.
+    // When the read fails, only a beacon known to be v1 stops here. Any other
+    // beacon publishes as the old kind, as before v1, so an RPC error after a
+    // restart (empty kind cache) never stops pushes to the old beacons. A v1
+    // beacon not yet in the cache then fails on its verifier nonce, which is
+    // the same result as stopping here.
     let reading: Option<IndexReading> =
         match v1::read_index(&*state.provider.read_provider, beacon_address).await {
             Ok(r) => {
                 v1::remember_kind(beacon_address, r.kind);
                 Some(r)
             }
-            Err(e) if v1::known_kind(beacon_address) == Some(VerifierKind::Legacy) => {
-                tracing::warn!("{e} — old beacon, publishing without the value dedupe");
+            Err(e) if cached_kind == Some(VerifierKind::V1) => {
+                return Err(format!("Cannot read the v1 beacon {beacon_address}: {e}"));
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "{e} — publishing beacon {beacon_address} as the old kind, without the value dedupe"
+                );
                 None
             }
-            Err(e) => return Err(format!("Cannot choose the beacon kind: {e}")),
         };
     let kind = reading.map_or(VerifierKind::Legacy, |r| r.kind);
 
@@ -270,25 +318,11 @@ pub async fn update_beacon_with_ecdsa(
     // The tier read is cache-only (see TouchDispatcher::cached_tier): a cold
     // cache or disabled touch yields None and falls through to the configured
     // default, never a bot-api round trip under the beacon lock.
-    let tier = state.touch.cached_tier(beacon_address).await;
     if !publish_now
-        && let Some(interval) = super::dedupe::publish_interval(&beacon_address, tier)
-        && let Some(elapsed) =
-            super::dedupe::seconds_since_last_publish(state, &beacon_address).await
-        && elapsed < interval.as_secs()
+        && cached_kind != Some(VerifierKind::Legacy)
+        && let Some(skipped) = rate_limit_skip(state, beacon_address, tier).await
     {
-        let reason = SkipReason::RateLimited {
-            elapsed,
-            interval: interval.as_secs(),
-        };
-        tracing::info!(
-            tier = tier.map(|t| t.as_str()).unwrap_or("unknown"),
-            "Skipping update for beacon {beacon_address}: {reason}"
-        );
-        return Ok(EcdsaUpdateOutcome::Skipped {
-            beacon_address,
-            reason,
-        });
+        return Ok(skipped);
     }
 
     // 4b. Value dedupe: when the on-chain index already equals the requested
