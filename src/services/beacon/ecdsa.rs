@@ -8,9 +8,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tracing;
 
+use super::v1::{self, IndexReading, V1Gate, VerifierKind};
 use crate::ReadOnlyProvider;
 use crate::models::{AppState, UpdateBeaconWithEcdsaRequest};
 use crate::routes::{IBeacon, IEcdsaVerifier};
+use crate::services::touch::Tier;
 use crate::services::transaction::execution::{is_insufficient_funds_error, send_with_nonce_retry};
 use crate::services::wallet::{LockHeartbeat, WalletHandle, WalletLockGuard};
 
@@ -26,11 +28,16 @@ const PENDING_TX_POLL_TIMEOUT: Duration = Duration::from_secs(10);
 /// unresolved, so a second update cannot race it on the verifier nonce. The
 /// lock is released (guard drop) as soon as the tx gets a receipt, or when the
 /// grace window ends; if this instance dies, the lock's Redis TTL expires it.
+///
+/// `v1_nonce` is `(verifier, nonce)` for a v1 update: a late successful
+/// receipt records it as confirmed, so the next update does not depend on a
+/// replica that may still return the old `lastNonce`.
 fn hold_beacon_lock_until_receipt(
     lock: (LockHeartbeat, WalletLockGuard),
     provider: Arc<ReadOnlyProvider>,
     tx_hash: B256,
     beacon_address: Address,
+    v1_nonce: Option<(Address, U256)>,
 ) {
     tokio::spawn(async move {
         // Tuple order matches the manager's return: heartbeat drops before the
@@ -44,7 +51,12 @@ fn hold_beacon_lock_until_receipt(
             )
             .await
             {
-                Ok(Ok(Some(_))) => {
+                Ok(Ok(Some(receipt))) => {
+                    if let Some((verifier, nonce)) = v1_nonce
+                        && receipt.status()
+                    {
+                        v1::record_confirmed_nonce(verifier, nonce);
+                    }
                     tracing::info!(
                         "Pending update tx {tx_hash} for beacon {beacon_address} resolved; releasing beacon update lock"
                     );
@@ -68,6 +80,15 @@ fn hold_beacon_lock_until_receipt(
     });
 }
 
+/// Whether a publish feeds the rate limit and the value dedupe. A v1
+/// heartbeat does not: it only refreshes `updatedAt`, and recording it would
+/// let the rate limit skip a changed value that arrives just after it, so the
+/// old value would stay on chain. The v1 age gate reads `updatedAt` on chain,
+/// not this record.
+fn records_publish(kind: VerifierKind, heartbeat: bool) -> bool {
+    !(heartbeat && kind == VerifierKind::V1)
+}
+
 /// Why an update produced no transaction. Logging detail only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkipReason {
@@ -77,6 +98,9 @@ pub enum SkipReason {
     /// The on-chain value already equals the measurement and the heartbeat has
     /// not elapsed.
     ValueUnchanged,
+    /// A heartbeat request on a v1 beacon younger than
+    /// [`v1::HEARTBEAT_MIN_AGE_SECS`].
+    HeartbeatNotDue { age_secs: u64 },
 }
 
 impl std::fmt::Display for SkipReason {
@@ -87,6 +111,11 @@ impl std::fmt::Display for SkipReason {
                 "rate limited: last publish {elapsed}s ago, minimum interval {interval}s"
             ),
             Self::ValueUnchanged => write!(f, "on-chain value already equals the measurement"),
+            Self::HeartbeatNotDue { age_secs } => write!(
+                f,
+                "heartbeat not due: v1 beacon is {age_secs}s old, minimum {}s",
+                v1::HEARTBEAT_MIN_AGE_SECS
+            ),
         }
     }
 }
@@ -115,15 +144,69 @@ pub enum EcdsaUpdateOutcome {
     },
 }
 
+/// Margin below the heartbeat age for the v1 rate-limit cap. The publish
+/// record is written when the receipt arrives, a few seconds after the block
+/// that set `updatedAt`, so a cap of exactly 900 s could skip a changed value
+/// that arrives just after a heartbeat once.
+const V1_RATE_LIMIT_MARGIN_SECS: u64 = 60;
+
+/// The rate-limit interval for a beacon kind. For v1 it is at most the
+/// heartbeat age minus a margin (840 s): a heartbeat refreshes `updatedAt`
+/// but does not record a publish, so with a longer interval (for example the
+/// 3600 s dormant tier) a changed value that arrives just after a heartbeat
+/// would be skipped again and again while the heartbeat keeps the beacon
+/// young. A heartbeat publishes only at an age of 900 s or more, so with the
+/// cap a changed value right after it always passes, in either request order.
+fn rate_limit_interval(kind: VerifierKind, interval: Duration) -> Duration {
+    match kind {
+        VerifierKind::Legacy => interval,
+        VerifierKind::V1 => interval.min(Duration::from_secs(
+            v1::HEARTBEAT_MIN_AGE_SECS - V1_RATE_LIMIT_MARGIN_SECS,
+        )),
+    }
+}
+
+/// The publish rate limit (step 4a / 4a-bis of [`update_beacon_with_ecdsa`]):
+/// `Some(Skipped)` when the last publish of this beacon is newer than its
+/// interval. A missing record (no Redis, first publish, expired key) is `None`.
+async fn rate_limit_skip(
+    state: &AppState,
+    beacon_address: Address,
+    kind: VerifierKind,
+    tier: Option<Tier>,
+) -> Option<EcdsaUpdateOutcome> {
+    let interval = rate_limit_interval(
+        kind,
+        super::dedupe::publish_interval(&beacon_address, tier)?,
+    );
+    let elapsed = super::dedupe::seconds_since_last_publish(state, &beacon_address).await?;
+    if elapsed >= interval.as_secs() {
+        return None;
+    }
+    let reason = SkipReason::RateLimited {
+        elapsed,
+        interval: interval.as_secs(),
+    };
+    tracing::info!(
+        tier = tier.map(|t| t.as_str()).unwrap_or("unknown"),
+        "Skipping update for beacon {beacon_address}: {reason}"
+    );
+    Some(EcdsaUpdateOutcome::Skipped {
+        beacon_address,
+        reason,
+    })
+}
+
 /// Updates a beacon using ECDSA signature from the PRIVATE_KEY wallet.
 ///
 /// This function:
 /// 1. Gets the verifier address from the beacon via `verifier()`
 /// 2. Gets the designated signer from the ECDSAVerifier via `SIGNER()`
 /// 3. Verifies PRIVATE_KEY signer matches designated signer
-/// 4. Acquires the per-beacon update lock (serializes verifier-nonce use)
-/// 5. Acquires any available wallet from pool for transaction sending
-/// 6. Generates a nonce from the current timestamp
+/// 4. Acquires the per-beacon update lock (serializes verifier-nonce use), reads
+///    `index()` once to learn the beacon kind (old or v1) and, for v1, its age
+/// 5. Applies the v1 age gate, the rate limit and the value dedupe
+/// 6. Builds the nonce: a timestamp (old kind) or `lastNonce + 1` (v1)
 /// 7. Gets the EIP-712 digest from the verifier via `digest(uint256[], uint256)`
 /// 8. Signs the digest with PRIVATE_KEY signer
 /// 9. Packs the signature as r || s || v (65 bytes)
@@ -206,65 +289,114 @@ pub async fn update_beacon_with_ecdsa(
         .acquire_beacon_update_lock(beacon_address)
         .await?;
 
-    // 4a-bis. Publish rate limit: a floor on time between publishes, applied
-    // whether or not the value changed. This runs before the dedupe's index()
-    // read so a rate-limited update costs no RPC call at all, and before any
-    // wallet is acquired so it never parks a pool wallet. A missing record
-    // (no Redis, first publish, expired key) falls through and publishes.
-    // The tier read is cache-only (see TouchDispatcher::cached_tier): a cold
-    // cache or disabled touch yields None and falls through to the configured
-    // default, never a bot-api round trip under the beacon lock.
+    // 4a. Publish rate limit for a beacon already known to be old: checked
+    // before the index() read, as before v1, so a rate-limited update of an
+    // old beacon costs no RPC call. Other beacons are checked in 4a-bis, after
+    // the read tells their kind.
+    let cached_kind = v1::known_kind(beacon_address);
     let tier = state.touch.cached_tier(beacon_address).await;
-    if let Some(interval) = super::dedupe::publish_interval(&beacon_address, tier)
-        && let Some(elapsed) =
-            super::dedupe::seconds_since_last_publish(state, &beacon_address).await
-        && elapsed < interval.as_secs()
+    if cached_kind == Some(VerifierKind::Legacy)
+        && let Some(skipped) =
+            rate_limit_skip(state, beacon_address, VerifierKind::Legacy, tier).await
     {
-        let reason = SkipReason::RateLimited {
-            elapsed,
-            interval: interval.as_secs(),
-        };
-        tracing::info!(
-            tier = tier.map(|t| t.as_str()).unwrap_or("unknown"),
-            "Skipping update for beacon {beacon_address}: {reason}"
-        );
+        return Ok(skipped);
+    }
+
+    // 4a. Read index() once, under the lock. The reply length is the beacon kind
+    // (see services/beacon/v1.rs). A v1 beacon needs the read for its age.
+    // When the read fails, only a beacon known to be v1 stops here. Any other
+    // beacon publishes as the old kind, as before v1, so an RPC error after a
+    // restart (empty kind cache) never stops pushes to the old beacons. A v1
+    // beacon not yet in the cache then fails on its verifier nonce, which is
+    // the same result as stopping here.
+    let reading: Option<IndexReading> = match v1::read_index(
+        &*state.provider.read_provider,
+        beacon_address,
+    )
+    .await
+    {
+        Ok(r) => {
+            v1::remember_kind(beacon_address, r.kind);
+            Some(r)
+        }
+        Err(e) if cached_kind == Some(VerifierKind::V1) => {
+            return Err(format!("Cannot read the v1 beacon {beacon_address}: {e}"));
+        }
+        Err(e) => {
+            tracing::warn!(
+                "{e} — publishing beacon {beacon_address} as the old kind, without the value dedupe"
+            );
+            None
+        }
+    };
+    let kind = reading.map_or(VerifierKind::Legacy, |r| r.kind);
+
+    // 4a-v1. Age gate for v1 beacons. The heartbeat runs here, under the
+    // per-beacon update lock, so it is ordered with real updates: a heartbeat
+    // that queues behind a real update reads the new age and skips.
+    let v1_gate = match reading {
+        Some(IndexReading {
+            updated_at: Some(updated_at),
+            ..
+        }) => Some(v1::gate(
+            request.heartbeat,
+            v1::age_secs(updated_at, v1::unix_now_secs()?),
+        )),
+        _ => None,
+    };
+    if let Some(V1Gate::SkipHeartbeat { age_secs }) = v1_gate {
+        let reason = SkipReason::HeartbeatNotDue { age_secs };
+        tracing::info!("Skipping update for beacon {beacon_address}: {reason}");
         return Ok(EcdsaUpdateOutcome::Skipped {
             beacon_address,
             reason,
         });
     }
+    let publish_now = matches!(v1_gate, Some(V1Gate::PublishNow { .. }));
+    if let Some(V1Gate::PublishNow { age_secs }) = v1_gate {
+        tracing::info!(
+            "v1 beacon {beacon_address} is {age_secs}s old: publishing without the rate limit and value dedupe"
+        );
+    }
+
+    // 4a-bis. Publish rate limit: a floor on time between publishes, applied
+    // whether or not the value changed. It costs only the 4a index() read
+    // (needed to know the kind), and it runs before any wallet is acquired so
+    // it never parks a pool wallet. A v1 beacon of 900 s or more skips this
+    // gate (`publish_now`): a stale v1 beacon stops its market. A missing record
+    // (no Redis, first publish, expired key) falls through and publishes.
+    // The tier read is cache-only (see TouchDispatcher::cached_tier): a cold
+    // cache or disabled touch yields None and falls through to the configured
+    // default, never a bot-api round trip under the beacon lock.
+    if !publish_now
+        && cached_kind != Some(VerifierKind::Legacy)
+        && let Some(skipped) = rate_limit_skip(state, beacon_address, kind, tier).await
+    {
+        return Ok(skipped);
+    }
 
     // 4b. Value dedupe: when the on-chain index already equals the requested
-    // measurement, skip the tx unless the heartbeat window has elapsed. The
-    // read happens under the beacon update lock, so it reflects the previous
-    // update. Every failure here falls through to a normal publish.
-    if let Some(window) = super::dedupe::heartbeat_window()
+    // measurement, skip the tx unless the heartbeat window has elapsed. It uses
+    // the 4a read, taken under the beacon update lock, so it reflects the
+    // previous update. Every failure here falls through to a normal publish.
+    if !publish_now
+        && let Some(window) = super::dedupe::heartbeat_window()
         && measurement_array.len() == 1
+        && let Some(current) = reading.map(|r| r.index)
+        && current == measurement_array[0]
+        && let Some(elapsed) =
+            super::dedupe::seconds_since_last_publish(state, &beacon_address).await
+        && elapsed < window.as_secs()
     {
-        match beacon_read.index().call().await {
-            Ok(current) if current == measurement_array[0] => {
-                if let Some(elapsed) =
-                    super::dedupe::seconds_since_last_publish(state, &beacon_address).await
-                    && elapsed < window.as_secs()
-                {
-                    tracing::info!(
-                        "Skipping update for beacon {beacon_address}: on-chain index \
-                         already {current}, last publish {elapsed}s ago (heartbeat {}s)",
-                        window.as_secs()
-                    );
-                    return Ok(EcdsaUpdateOutcome::Skipped {
-                        beacon_address,
-                        reason: SkipReason::ValueUnchanged,
-                    });
-                }
-            }
-            Ok(_) => {}
-            Err(e) => {
-                tracing::warn!(
-                    "Dedupe index() read for beacon {beacon_address} failed: {e} — publishing"
-                );
-            }
-        }
+        tracing::info!(
+            "Skipping update for beacon {beacon_address}: on-chain index \
+             already {current}, last publish {elapsed}s ago (heartbeat {}s)",
+            window.as_secs()
+        );
+        return Ok(EcdsaUpdateOutcome::Skipped {
+            beacon_address,
+            reason: SkipReason::ValueUnchanged,
+        });
     }
 
     // 5. Bounded retry budget for wallet acquisition: one attempt per pool
@@ -276,15 +408,24 @@ pub async fn update_beacon_with_ecdsa(
     let max_wallet_attempts = state.wallets.manager.signer_addresses().len().max(1);
     let mut excluded_wallets: std::collections::HashSet<Address> = std::collections::HashSet::new();
 
-    // 6. Generate nonce from high-resolution timestamp (nanoseconds) to avoid collisions
-    let nonce = U256::from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| format!("Failed to get system time: {e}"))?
-            .as_nanos(),
-    );
+    // 6. Nonce. Old kind: a high-resolution timestamp (any unused proof is
+    // accepted). v1: exactly lastNonce + 1, read under the beacon update lock
+    // so no other update of this beacon can take the same nonce.
+    let nonce = match kind {
+        VerifierKind::Legacy => U256::from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| format!("Failed to get system time: {e}"))?
+                .as_nanos(),
+        ),
+        VerifierKind::V1 => {
+            let last =
+                v1::read_last_nonce(&*state.provider.read_provider, verifier_address).await?;
+            v1::nonce_for_update(verifier_address, last)?
+        }
+    };
 
-    tracing::info!("Using nonce (timestamp_nanos): {}", nonce);
+    tracing::info!("Using nonce ({kind:?} kind): {}", nonce);
 
     // 7. Get EIP-712 digest from verifier (measurement is uint256[])
     let digest_raw = verifier
@@ -384,27 +525,48 @@ pub async fn update_beacon_with_ecdsa(
             let error_msg = if e.as_revert_data().is_some() {
                 let diag_timeout = Duration::from_secs(5);
 
-                let verify_detail = match timeout(
-                    diag_timeout,
-                    verifier
-                        .verify(sig_bytes.clone(), inputs_bytes.clone())
-                        .call(),
-                )
-                .await
-                {
-                    Ok(Ok(_)) => "verify() succeeded".to_string(),
-                    Ok(Err(ve)) => format!("verify() also reverted: {ve}"),
-                    Err(_) => "verify() diagnostic timed out".to_string(),
+                // A v1 verifier accepts verify() only from its bound beacon
+                // (CallerBound), so a direct call always reverts and says nothing.
+                let verify_detail = match kind {
+                    VerifierKind::Legacy => match timeout(
+                        diag_timeout,
+                        verifier
+                            .verify(sig_bytes.clone(), inputs_bytes.clone())
+                            .call(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(_)) => "verify() succeeded".to_string(),
+                        Ok(Err(ve)) => format!("verify() also reverted: {ve}"),
+                        Err(_) => "verify() diagnostic timed out".to_string(),
+                    },
+                    VerifierKind::V1 => {
+                        "verify() not called (v1 verifier accepts only its bound beacon)"
+                            .to_string()
+                    }
                 };
 
-                let used_detail =
-                    match timeout(diag_timeout, verifier.usedProofs(proof_hash).call()).await {
-                        Ok(Ok(val)) => {
-                            format!("usedProofs({proof_hash:#x})={val:?}")
+                let used_detail = match kind {
+                    VerifierKind::Legacy => {
+                        match timeout(diag_timeout, verifier.usedProofs(proof_hash).call()).await {
+                            Ok(Ok(val)) => {
+                                format!("usedProofs({proof_hash:#x})={val:?}")
+                            }
+                            Ok(Err(ue)) => format!("usedProofs check failed: {ue}"),
+                            Err(_) => "usedProofs diagnostic timed out".to_string(),
                         }
-                        Ok(Err(ue)) => format!("usedProofs check failed: {ue}"),
-                        Err(_) => "usedProofs diagnostic timed out".to_string(),
-                    };
+                    }
+                    VerifierKind::V1 => match timeout(
+                        diag_timeout,
+                        v1::read_last_nonce(&*state.provider.read_provider, verifier_address),
+                    )
+                    .await
+                    {
+                        Ok(Ok(last)) => format!("lastNonce()={last}, signed nonce {nonce}"),
+                        Ok(Err(ne)) => ne,
+                        Err(_) => "lastNonce diagnostic timed out".to_string(),
+                    },
+                };
 
                 format!(
                     "Preflight simulation of beacon.update() reverted: {e}. \
@@ -494,53 +656,30 @@ pub async fn update_beacon_with_ecdsa(
     let tx_hash = *pending_tx.tx_hash();
     tracing::info!("Transaction hash: {:?}", tx_hash);
 
-    // 13. Wait for confirmation with timeout
+    // 13. Wait for confirmation with timeout. The tx WAS sent either way; on no
+    // receipt it may still land, so the caller gets the hash as unconfirmed.
     let receipt = match timeout(Duration::from_secs(60), pending_tx.get_receipt()).await {
         Ok(Ok(receipt)) => {
             tracing::info!("Transaction confirmed via get_receipt()");
             receipt
         }
-        Ok(Err(e)) => {
-            // The tx WAS sent; the receipt fetch failed but it may still land.
-            // Keep the beacon lock alive in the background so no second update
-            // races the pending one on the verifier nonce, and return the hash
-            // as sent-but-unconfirmed so the caller polls instead of re-sending.
-            hold_beacon_lock_until_receipt(
+        not_confirmed => {
+            let why = match not_confirmed {
+                Ok(Err(e)) => format!("receipt fetch failed: {e}"),
+                _ => "timeout waiting for the receipt".to_string(),
+            };
+            return Ok(handle_unconfirmed(
+                state,
+                kind,
+                request.heartbeat,
+                verifier_address,
+                nonce,
                 beacon_update_lock,
-                state.provider.read_provider.clone(),
                 tx_hash,
                 beacon_address,
-            );
-            tracing::error!(
-                "Failed to get receipt for sent update tx {tx_hash}: {e} - returning unconfirmed"
-            );
-            super::dedupe::record_publish(state, &beacon_address).await;
-            return Ok(EcdsaUpdateOutcome::Published {
-                tx_hash,
-                confirmed: false,
-                beacon_address,
-            });
-        }
-        Err(_) => {
-            // The transaction WAS sent; it may still confirm. Report it as
-            // sent-but-unconfirmed so the caller can poll instead of re-sending,
-            // and keep the beacon lock alive until the tx resolves so a retry
-            // cannot race it on the verifier nonce.
-            hold_beacon_lock_until_receipt(
-                beacon_update_lock,
-                state.provider.read_provider.clone(),
-                tx_hash,
-                beacon_address,
-            );
-            tracing::warn!(
-                "Timeout waiting for transaction {tx_hash} receipt — returning unconfirmed"
-            );
-            super::dedupe::record_publish(state, &beacon_address).await;
-            return Ok(EcdsaUpdateOutcome::Published {
-                tx_hash,
-                confirmed: false,
-                beacon_address,
-            });
+                &why,
+            )
+            .await);
         }
     };
 
@@ -575,7 +714,12 @@ pub async fn update_beacon_with_ecdsa(
             beacon_address
         );
     }
-    super::dedupe::record_publish(state, &beacon_address).await;
+    if kind == VerifierKind::V1 {
+        v1::record_confirmed_nonce(verifier_address, nonce);
+    }
+    if records_publish(kind, request.heartbeat) {
+        super::dedupe::record_publish(state, &beacon_address).await;
+    }
     Ok(EcdsaUpdateOutcome::Published {
         tx_hash,
         confirmed: true,
@@ -583,9 +727,96 @@ pub async fn update_beacon_with_ecdsa(
     })
 }
 
+/// A sent update has no receipt yet.
+///
+/// Old kind (unchanged): keep the beacon lock until the receipt, record the
+/// publish, report unconfirmed.
+///
+/// v1: never record an unconfirmed publish as done. Re-read `lastNonce`: if
+/// the verifier has accepted our nonce, the update is on chain, so report it
+/// as confirmed. If not, keep the beacon lock until the receipt (so no second
+/// update takes the same nonce) and do not record the publish, so the next
+/// request is not deduped or rate limited against an update that may never
+/// land.
+#[allow(clippy::too_many_arguments)]
+async fn handle_unconfirmed(
+    state: &AppState,
+    kind: VerifierKind,
+    heartbeat: bool,
+    verifier_address: Address,
+    nonce: U256,
+    beacon_update_lock: (LockHeartbeat, WalletLockGuard),
+    tx_hash: B256,
+    beacon_address: Address,
+    why: &str,
+) -> EcdsaUpdateOutcome {
+    if kind == VerifierKind::V1 {
+        match v1::read_last_nonce(&*state.provider.read_provider, verifier_address).await {
+            Ok(last) if v1::landed(last, nonce) => {
+                tracing::info!(
+                    "Update tx {tx_hash} for v1 beacon {beacon_address}: {why}, but lastNonce {last} >= {nonce}; it is on chain"
+                );
+                v1::record_confirmed_nonce(verifier_address, nonce);
+                if records_publish(kind, heartbeat) {
+                    super::dedupe::record_publish(state, &beacon_address).await;
+                }
+                drop(beacon_update_lock);
+                return EcdsaUpdateOutcome::Published {
+                    tx_hash,
+                    confirmed: true,
+                    beacon_address,
+                };
+            }
+            Ok(last) => tracing::warn!(
+                "Update tx {tx_hash} for v1 beacon {beacon_address}: {why}; lastNonce {last} < {nonce}, not on chain yet"
+            ),
+            Err(e) => {
+                tracing::warn!("Update tx {tx_hash} for v1 beacon {beacon_address}: {why}; {e}")
+            }
+        }
+    } else {
+        tracing::warn!(
+            "Update tx {tx_hash} for beacon {beacon_address}: {why} - returning unconfirmed"
+        );
+        super::dedupe::record_publish(state, &beacon_address).await;
+    }
+    hold_beacon_lock_until_receipt(
+        beacon_update_lock,
+        state.provider.read_provider.clone(),
+        tx_hash,
+        beacon_address,
+        (kind == VerifierKind::V1).then_some((verifier_address, nonce)),
+    );
+    EcdsaUpdateOutcome::Published {
+        tx_hash,
+        confirmed: false,
+        beacon_address,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_v1_rate_limit_is_capped_below_the_heartbeat_age() {
+        let dormant = Duration::from_secs(3600);
+        let short = Duration::from_secs(300);
+        assert_eq!(
+            rate_limit_interval(VerifierKind::V1, dormant),
+            Duration::from_secs(840)
+        );
+        assert_eq!(rate_limit_interval(VerifierKind::V1, short), short);
+        assert_eq!(rate_limit_interval(VerifierKind::Legacy, dormant), dormant);
+    }
+
+    #[test]
+    fn a_v1_heartbeat_does_not_feed_the_rate_limit() {
+        assert!(!records_publish(VerifierKind::V1, true));
+        assert!(records_publish(VerifierKind::V1, false));
+        assert!(records_publish(VerifierKind::Legacy, true));
+        assert!(records_publish(VerifierKind::Legacy, false));
+    }
 
     #[test]
     fn test_abi_encode_inputs() {

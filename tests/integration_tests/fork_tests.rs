@@ -137,6 +137,7 @@ mod tests {
             UpdateBeaconWithEcdsaRequest {
                 beacon_address: beacon.to_string(),
                 measurement: vec![new_index_q96.to_string()],
+                heartbeat: false,
             },
         )
         .await
@@ -155,6 +156,7 @@ mod tests {
             UpdateBeaconWithEcdsaRequest {
                 beacon_address: beacon.to_string(),
                 measurement: vec![new_index_q96.to_string()],
+                heartbeat: false,
             },
         )
         .await
@@ -176,6 +178,7 @@ mod tests {
             UpdateBeaconWithEcdsaRequest {
                 beacon_address: beacon.to_string(),
                 measurement: vec![third_index_q96.to_string()],
+                heartbeat: false,
             },
         )
         .await

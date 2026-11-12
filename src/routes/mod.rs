@@ -34,6 +34,41 @@ mod root_sol_interfaces {
         event IndexUpdated(uint256 index);
     }
 
+    // v1 beacon kind (beacons@f762da1, shipped with perpcity-contracts v1.0.0). `index()`
+    // also returns the observation time; a v1 perp reverts when it is older than the perp
+    // latency. See services/beacon/v1.rs.
+    #[sol(rpc)]
+    interface IBeaconV1 {
+        function index() external view returns (uint256 index, uint256 updatedAt);
+        function update(bytes calldata proof, bytes calldata inputs) external;
+        function verifier() external view returns (address);
+        event IndexUpdated(uint256 index);
+    }
+
+    // v1 ECDSAVerifier: accepts only nonce `lastNonce + 1`.
+    #[sol(rpc)]
+    interface IEcdsaVerifierV1 {
+        function digest(uint256[] calldata measurement, uint256 nonce) external view returns (bytes32);
+        function SIGNER() external view returns (address);
+        function lastNonce() external view returns (uint256);
+        error InvalidSigner();
+        error InvalidNonce();
+    }
+
+    // v1 CallerBound (ECDSAVerifier and the standalone base functions). Only `binder` (the
+    // account that called the factory) can bind, and only once.
+    #[sol(rpc)]
+    interface ICallerBound {
+        function bind(address caller) external;
+        function authorizedCaller() external view returns (address);
+        function binder() external view returns (address);
+        error UnauthorizedCaller();
+        error AlreadyBound();
+        error InvalidAuthorizedCaller();
+        error UnauthorizedBinder();
+        error InvalidBinder();
+    }
+
     #[sol(rpc)]
     interface ICompositeBeacon {
         function index() external view returns (uint256);
@@ -172,6 +207,73 @@ mod root_sol_interfaces {
         error NotProtocolOwner();
     }
 
+    // PerpFactory at perpcity-contracts v1.0.0 (0df4208). No ERC721 metadata, a governor, a
+    // beacon latency and a withdrawal config. It has no `perps(address)` mapping: membership
+    // is `PerpGuardHook.perps(poolId) == perp`.
+    #[sol(rpc)]
+    interface IPerpFactoryV1 {
+        struct Modules {
+            address beacon;
+            address fees;
+            address funding;
+            address marginRatios;
+            address priceImpact;
+            address pricing;
+        }
+
+        struct WithdrawalConfig {
+            uint128 capacity;
+            uint128 refillPerSecond;
+            uint48 challengeWindow;
+        }
+
+        function createPerp(
+            address owner,
+            address governor,
+            Modules memory modules,
+            uint24 emaWindow,
+            uint32 latency,
+            bytes32 salt,
+            WithdrawalConfig memory withdrawalConfig
+        ) external returns (address perp);
+
+        function PERP_GUARD_HOOK() external view returns (address);
+
+        event PerpCreated(
+            address perp,
+            bytes32 poolId,
+            Modules modules,
+            uint256 initialIndex,
+            uint24 emaWindow,
+            uint32 latency,
+            uint256 protocolFee,
+            uint160 sqrtPriceX96,
+            int24 tick,
+            address owner
+        );
+
+        error InvalidPerpImplementation();
+        error NotAContract();
+        error NotPoolManager();
+        error NotProtocolOwner();
+        error EmaWindowTooLow();
+        error BeaconIndexUnreadable();
+        error StaleBeaconIndex();
+        error PriceOutsideRange();
+        error ZeroAddress();
+        error ZeroWindow();
+    }
+
+    #[sol(rpc)]
+    interface IPerpGuardHookV1 {
+        function perps(bytes32 poolId) external view returns (address perp);
+    }
+
+    #[sol(rpc)]
+    interface IPerpV1 {
+        function poolId() external view returns (bytes32);
+    }
+
     // Perp: per-market contract created by PerpFactory.createPerp. Each market has its own
     // Perp instance with its own ERC721 position NFTs and Uniswap V4 pool.
     #[sol(rpc)]
@@ -235,8 +337,9 @@ mod root_sol_interfaces {
     }
 }
 pub use root_sol_interfaces::{
-    IBeacon, IBeaconRegistry, ICompositeBeacon, IERC20, IEcdsaVerifier, IEcdsaVerifierFactory,
-    IIdentityFactory, IMulticall3, IPerp, IPerpFactory, ITestnetUSDC, IWeightedSumCompositeFactory,
+    IBeacon, IBeaconRegistry, IBeaconV1, ICallerBound, ICompositeBeacon, IERC20, IEcdsaVerifier,
+    IEcdsaVerifierFactory, IEcdsaVerifierV1, IIdentityFactory, IMulticall3, IPerp, IPerpFactory,
+    IPerpFactoryV1, IPerpGuardHookV1, IPerpV1, ITestnetUSDC, IWeightedSumCompositeFactory,
 };
 
 // Separate module for LBCGBMFactory to allow clippy::too_many_arguments on generated code

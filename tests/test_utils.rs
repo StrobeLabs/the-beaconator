@@ -595,6 +595,7 @@ pub async fn create_test_app_state() -> AppState {
                 .unwrap(),
             protocol_fee_manager: None,
             module_registry: None,
+            v1: None,
         },
         auth: AuthConfig {
             access_token: "test_token".to_string(),
@@ -668,6 +669,7 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
                 .unwrap(),
             protocol_fee_manager: None,
             module_registry: None,
+            v1: None,
         },
         auth: AuthConfig {
             access_token: "test_token".to_string(),
@@ -766,6 +768,7 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
                 .unwrap(),
             protocol_fee_manager: None,
             module_registry: None,
+            v1: None,
         },
         auth: AuthConfig {
             access_token: "test_token".to_string(),
@@ -836,6 +839,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
                 .unwrap(),
             protocol_fee_manager: None,
             module_registry: None,
+            v1: None,
         },
         auth: AuthConfig {
             access_token: "test_token".to_string(),
@@ -957,6 +961,7 @@ pub async fn create_simple_test_app_state() -> AppState {
                 .unwrap(),
             protocol_fee_manager: None,
             module_registry: None,
+            v1: None,
         },
         auth: AuthConfig {
             access_token: "test_token".to_string(),
@@ -1027,6 +1032,7 @@ pub async fn create_test_app_state_with_provider(
                 .unwrap(),
             protocol_fee_manager: None,
             module_registry: None,
+            v1: None,
         },
         auth: AuthConfig {
             access_token: "test_token".to_string(),
@@ -1319,6 +1325,7 @@ pub async fn create_fork_fixture() -> ForkFixture {
             pricing_module: addresses.pricing_module,
             protocol_fee_manager: None,
             module_registry: None,
+            v1: None,
         },
         auth: AuthConfig {
             access_token: "test_token".to_string(),

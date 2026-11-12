@@ -73,6 +73,20 @@ impl ApiEndpoints {
             },
             EndpointInfo {
                 method: "POST".to_string(),
+                path: "/create_v1_identity_beacon".to_string(),
+                description: "Create, bind and warm up a v1 identity beacon".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
+                path: "/deploy_v1_perp_for_beacon".to_string(),
+                description: "Deploy a v1 perp for a fresh v1 beacon".to_string(),
+                requires_auth: true,
+                status: EndpointStatus::Working,
+            },
+            EndpointInfo {
+                method: "POST".to_string(),
                 path: "/deposit_liquidity_for_perp".to_string(),
                 description: "Deposit liquidity for a specific perpetual (min: 10 USDC due to wide tick range)".to_string(),
                 requires_auth: true,
@@ -248,6 +262,32 @@ pub struct ContractAddresses {
     pub pricing_module: Address,
     pub protocol_fee_manager: Option<Address>,
     pub module_registry: Option<Address>,
+    /// perpcity-contracts v1.0.0 + beacons f762da1 deployment. `None` when the `V1_*`
+    /// env vars are not set; the v1 routes then refuse with a clear error.
+    pub v1: Option<V1Contracts>,
+}
+
+impl ContractAddresses {
+    /// True when `factory` is the configured v1 PerpFactory.
+    pub fn is_v1_factory(&self, factory: Address) -> bool {
+        self.v1
+            .as_ref()
+            .is_some_and(|v1| v1.perp_factory == factory)
+    }
+}
+
+/// Addresses of the v1 deployment (perpcity-deployments README, "v1.0.0" tables). The old
+/// kind keeps its own addresses above: old perps run until their outside OI is 0.
+#[derive(Clone, Debug)]
+pub struct V1Contracts {
+    pub perp_factory: Address,
+    pub ecdsa_verifier_factory: Address,
+    pub identity_beacon_factory: Address,
+    pub fees_module: Address,
+    pub funding_module: Address,
+    pub margin_ratios_module: Address,
+    pub price_impact_module: Address,
+    pub pricing_module: Address,
 }
 
 #[derive(Clone)]

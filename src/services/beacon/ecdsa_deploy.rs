@@ -23,6 +23,17 @@ pub async fn create_ecdsa_verifier(
     state: &AppState,
     wallet_handle: &WalletHandle,
 ) -> Result<Address, String> {
+    create_ecdsa_verifier_at(state, wallet_handle, state.contracts.ecdsa_verifier_factory).await
+}
+
+/// [`create_ecdsa_verifier`] on a given factory. The v1 factory has the same
+/// `createVerifier(address)` ABI, but its verifier records the caller (this wallet) as the
+/// binder: only this wallet can later `bind` it to the beacon.
+pub async fn create_ecdsa_verifier_at(
+    state: &AppState,
+    wallet_handle: &WalletHandle,
+    factory_address: Address,
+) -> Result<Address, String> {
     let signer_address = state.wallets.signer.address();
     tracing::info!(
         "Creating ECDSAVerifier via factory with signer={}",
@@ -34,7 +45,7 @@ pub async fn create_ecdsa_verifier(
         .build_provider(&state.provider.rpc_url)
         .map_err(|e| format!("Failed to build provider for verifier creation: {e}"))?;
 
-    let factory = IEcdsaVerifierFactory::new(state.contracts.ecdsa_verifier_factory, &provider);
+    let factory = IEcdsaVerifierFactory::new(factory_address, &provider);
 
     // Simulate the call first to get the return address (deterministic via CREATE opcode)
     let simulated = factory

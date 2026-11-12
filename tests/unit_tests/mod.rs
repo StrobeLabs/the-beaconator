@@ -18,4 +18,5 @@ pub mod modular_beacon_tests;
 pub mod touch_tests;
 pub mod transaction_events_tests;
 pub mod transaction_execution_tests;
+pub mod v1_beacon_tests;
 pub mod wallet_route_tests;

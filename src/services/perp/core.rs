@@ -438,7 +438,7 @@ pub async fn deposit_liquidity_for_perp(
 }
 
 /// Poll the read provider for a transaction receipt with progressive backoff.
-async fn wait_for_receipt(
+pub(crate) async fn wait_for_receipt(
     state: &AppState,
     tx_hash: alloy::primitives::FixedBytes<32>,
     label: &str,
@@ -482,14 +482,20 @@ async fn wait_for_receipt(
 }
 
 /// Which factory, if any, created `perp`: the primary `PERP_FACTORY_ADDRESS` first, then
-/// each `LEGACY_PERP_FACTORY_ADDRESSES` entry in order. `PerpFactory.perps(address)` is the
-/// membership mapping every factory release exposes. Pass `block` to pin the reads.
+/// each `LEGACY_PERP_FACTORY_ADDRESSES` entry in order (`PerpFactory.perps(address)`), then
+/// the v1 factory when configured (`PerpGuardHook.perps(poolId) == perp`, see
+/// [`super::v1::is_v1_perp`]). Pass `block` to pin the reads.
+///
+/// A failed read does not stop the search: a v1 factory has no `perps(address)` and reverts
+/// on it, and one bad RPC answer must not hide a match on a later factory. The first error
+/// is returned only when no factory matched.
 pub async fn perp_factory_of<P: alloy::providers::Provider + Clone>(
     contracts: &crate::models::ContractAddresses,
     provider: P,
     perp: Address,
     block: Option<BlockId>,
 ) -> Result<Option<Address>, alloy::contract::Error> {
+    let mut first_error: Option<alloy::contract::Error> = None;
     for factory_address in
         std::iter::once(&contracts.perp_factory).chain(contracts.legacy_perp_factories.iter())
     {
@@ -498,9 +504,27 @@ pub async fn perp_factory_of<P: alloy::providers::Provider + Clone>(
         if let Some(block) = block {
             call = call.block(block);
         }
-        if call.call().await? {
-            return Ok(Some(*factory_address));
+        match call.call().await {
+            Ok(true) => return Ok(Some(*factory_address)),
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!("perps({perp}) on factory {factory_address} failed: {e}");
+                first_error.get_or_insert(e);
+            }
         }
     }
-    Ok(None)
+    if let Some(v1) = &contracts.v1 {
+        match super::v1::is_v1_perp(v1.perp_factory, provider, perp, block).await {
+            Ok(true) => return Ok(Some(v1.perp_factory)),
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!("v1 membership check for {perp} failed: {e}");
+                first_error.get_or_insert(e);
+            }
+        }
+    }
+    match first_error {
+        Some(e) => Err(e),
+        None => Ok(None),
+    }
 }

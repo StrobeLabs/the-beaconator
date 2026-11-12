@@ -87,6 +87,58 @@ fn health() -> (rocket::http::ContentType, &'static str) {
     (rocket::http::ContentType::JSON, r#"{"status":"ok"}"#)
 }
 
+/// Env var names of the v1 deployment, in `V1Contracts` field order.
+const V1_ADDRESS_VARS: [&str; 8] = [
+    "V1_PERP_FACTORY_ADDRESS",
+    "V1_ECDSA_VERIFIER_FACTORY_ADDRESS",
+    "V1_IDENTITY_BEACON_FACTORY_ADDRESS",
+    "V1_FEES_MODULE_ADDRESS",
+    "V1_FUNDING_MODULE_ADDRESS",
+    "V1_MARGIN_RATIOS_MODULE_ADDRESS",
+    "V1_PRICE_IMPACT_MODULE_ADDRESS",
+    "V1_PRICING_MODULE_ADDRESS",
+];
+
+/// Load the v1 addresses. None set: v1 is off (`None`). All set: `Some`. Some set: startup
+/// fails, because a half-configured v1 could create a perp with a wrong module.
+fn load_v1_contracts() -> Option<models::V1Contracts> {
+    let values: Vec<Option<String>> = V1_ADDRESS_VARS
+        .iter()
+        .map(|key| std::env::var(key).ok().filter(|v| !v.trim().is_empty()))
+        .collect();
+    if values.iter().all(Option::is_none) {
+        tracing::info!("V1_* addresses not set: v1 beacon and perp routes are disabled");
+        return None;
+    }
+    let missing: Vec<&str> = V1_ADDRESS_VARS
+        .iter()
+        .zip(&values)
+        .filter(|(_, v)| v.is_none())
+        .map(|(k, _)| *k)
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "v1 is partly configured; set all V1_* addresses or none. Missing: {missing:?}"
+    );
+    let addr = |i: usize| -> Address {
+        let raw = values[i].as_deref().unwrap_or_default().trim();
+        Address::from_str(raw)
+            .unwrap_or_else(|e| panic!("Failed to parse {}: {e}", V1_ADDRESS_VARS[i]))
+    };
+    let v1 = models::V1Contracts {
+        perp_factory: addr(0),
+        ecdsa_verifier_factory: addr(1),
+        identity_beacon_factory: addr(2),
+        fees_module: addr(3),
+        funding_module: addr(4),
+        margin_ratios_module: addr(5),
+        price_impact_module: addr(6),
+        pricing_module: addr(7),
+    };
+    tracing::info!("v1 deployment configured: {:?}", v1);
+    Some(v1)
+}
+
 /// Creates and configures the Rocket application.
 ///
 /// Initializes the application state, loads configuration from environment variables,
@@ -135,6 +187,16 @@ fn audit_environment() {
     // Comma-separated address lists; each entry must parse as an Address.
     const ADDRESS_LIST_VARS_OPTIONAL: &[&str] = &["LEGACY_PERP_FACTORY_ADDRESSES"];
     const ADDRESS_VARS_OPTIONAL: &[&str] = &[
+        // v1 deployment (perpcity-contracts v1.0.0, beacons f762da1); all or none, see
+        // `load_v1_contracts`.
+        "V1_PERP_FACTORY_ADDRESS",
+        "V1_ECDSA_VERIFIER_FACTORY_ADDRESS",
+        "V1_IDENTITY_BEACON_FACTORY_ADDRESS",
+        "V1_FEES_MODULE_ADDRESS",
+        "V1_FUNDING_MODULE_ADDRESS",
+        "V1_MARGIN_RATIOS_MODULE_ADDRESS",
+        "V1_PRICE_IMPACT_MODULE_ADDRESS",
+        "V1_PRICING_MODULE_ADDRESS",
         "MULTICALL3_ADDRESS",
         "LBCGBM_FACTORY_ADDRESS",
         "WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS",
@@ -411,6 +473,8 @@ pub async fn create_rocket() -> Rocket<Build> {
     };
     let protocol_fee_manager_address = parse_optional_addr("PROTOCOL_FEE_MANAGER_ADDRESS");
     let module_registry_address = parse_optional_addr("MODULE_REGISTRY_ADDRESS");
+
+    let v1_contracts = load_v1_contracts();
 
     let usdc_address = Address::from_str(
         &env::var("USDC_ADDRESS").expect("USDC_ADDRESS environment variable not set"),
@@ -978,6 +1042,7 @@ pub async fn create_rocket() -> Rocket<Build> {
             pricing_module: pricing_module_address,
             protocol_fee_manager: protocol_fee_manager_address,
             module_registry: module_registry_address,
+            v1: v1_contracts,
         },
         auth: AuthConfig {
             access_token,
@@ -1000,6 +1065,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::info::index,
         routes::beacon::create_beacon,
         routes::beacon::create_beacon_with_ecdsa,
+        routes::beacon::create_v1_identity_beacon,
         routes::beacon::register_beacon,
         routes::beacon::unregister_beacon,
         routes::retirement::retire_perp,
@@ -1009,6 +1075,7 @@ pub async fn create_rocket() -> Rocket<Build> {
         routes::beacon::create_lbcgbm_beacon_endpoint,
         routes::beacon::create_weighted_sum_composite_beacon_endpoint,
         routes::perp::deploy_perp_for_beacon_endpoint,
+        routes::perp::deploy_v1_perp_for_beacon_endpoint,
         routes::perp::deposit_liquidity_for_perp_endpoint,
         routes::wallet::fund_guest_wallet,
         routes::wallet::fund_bonus_wallet,

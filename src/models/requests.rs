@@ -297,6 +297,11 @@ pub struct UpdateBeaconWithEcdsaRequest {
     #[serde(deserialize_with = "deserialize_measurement")]
     #[schemars(with = "MeasurementInput")]
     pub measurement: Vec<String>,
+    /// Heartbeat request (default false). On a v1 beacon it publishes only when the beacon is
+    /// 900 s old or more, and is skipped otherwise. Send the latest measurement, so an
+    /// identity beacon keeps its index. On an old beacon it is a normal update.
+    #[serde(default)]
+    pub heartbeat: bool,
 }
 
 /// Schema type for the measurement field: accepts a single string or an array of strings.
@@ -413,4 +418,37 @@ pub struct ModularBeaconParams {
     /// Initial slow EMA for RelativeDominance
     #[schemars(with = "Option<Vec<String>>")]
     pub initial_m_slow: Option<Vec<u128>>,
+}
+
+/// Create a v1 identity beacon (beacons@f762da1): verifier, beacon, `bind`, first update
+/// (nonce 1) and registration.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CreateV1IdentityBeaconRequest {
+    /// Initial index, Q96 (2^96 = 1.0), as a uint256 decimal string. The first update
+    /// publishes this value, so the verifier's `lastNonce` is 1 when the call returns.
+    pub initial_index: String,
+}
+
+/// Deploy a v1 perp (perpcity-contracts v1.0.0) for a v1 beacon.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct DeployV1PerpForBeaconRequest {
+    /// v1 beacon address. It must be fresh: younger than `latency` minus 120 s.
+    pub beacon_address: String,
+    /// Initial owner of the perp.
+    pub owner: String,
+    /// Delayed market authority (withdrawal limits, controller rotation). Plan D5: the Safe.
+    pub governor: String,
+    /// EMA window in seconds (uint24, non-zero).
+    pub ema_window: u32,
+    /// Maximum beacon age in seconds (uint32). At least 2820 (plan D1).
+    pub latency: u32,
+    /// Optional 32-byte salt (hex). Derived from the request fields when omitted.
+    pub salt: Option<String>,
+    /// Instant-withdrawal bucket size, USDC 6 decimals, uint128 decimal string. "0" queues
+    /// every payout.
+    pub withdrawal_capacity: String,
+    /// Bucket refill per second, USDC 6 decimals, uint128 decimal string.
+    pub withdrawal_refill_per_second: String,
+    /// Challenge window in seconds (uint48, non-zero).
+    pub withdrawal_challenge_window: u64,
 }

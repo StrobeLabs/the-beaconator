@@ -213,6 +213,10 @@ pub async fn retire_perp(
         .await
         .map_err(|_| Status::BadGateway)?
     {
+        // Retirement drives the v0.2.2 ABI; a v1 perp is out of scope.
+        Some(factory) if state.contracts.is_v1_factory(factory) => {
+            return Err(Status::BadRequest);
+        }
         Some(factory) => {
             tracing::info!("retire_perp: {perp} registered with PerpFactory {factory}")
         }

@@ -20,7 +20,9 @@ use crate::models::{
     CreateWeightedSumCompositeBeaconRequest, EcdsaUpdateResponse, RegisterBeaconRequest,
     UnregisterBeaconRequest, UpdateBeaconRequest, UpdateBeaconWithEcdsaRequest,
 };
+use crate::models::{CreateV1IdentityBeaconRequest, CreateV1IdentityBeaconResponse};
 use crate::services::beacon::modular::create_modular_beacon as service_create_modular_beacon;
+use crate::services::beacon::v1_deploy;
 use crate::services::beacon::{
     EcdsaUpdateOutcome, RegistrationOutcome, UnregistrationOutcome,
     batch_update_beacon as service_batch_update_beacon, create_and_register_beacon_by_type,
@@ -182,6 +184,104 @@ pub async fn create_beacon_with_ecdsa(
         success: true,
         data: Some(response),
         message: "Beacon created with ECDSA verifier successfully".to_string(),
+    }))
+}
+
+/// Creates a v1 identity beacon (beacons@f762da1) and makes it ready for a v1 perp.
+///
+/// Steps: ECDSA verifier from the v1 factory, IdentityBeacon from the v1 factory,
+/// `verifier.bind(beacon)` from the same pool wallet (the binder), then the first update
+/// (nonce 1, value `initial_index`), then registration with the beacon registry (a Safe
+/// proposal when a Safe is configured). Requires the `V1_*` addresses.
+#[openapi(tag = "Beacon")]
+#[post("/create_v1_identity_beacon", data = "<request>")]
+pub async fn create_v1_identity_beacon(
+    request: Json<CreateV1IdentityBeaconRequest>,
+    _token: ApiToken,
+    state: &State<AppState>,
+) -> Result<Json<ApiResponse<CreateV1IdentityBeaconResponse>>, Status> {
+    let initial_index = alloy::primitives::U256::from_str(&request.initial_index).map_err(|e| {
+        tracing::error!("Invalid initial_index '{}': {e}", request.initial_index);
+        Status::BadRequest
+    })?;
+    tracing::info!(
+        "Received request: POST /create_v1_identity_beacon (initial_index={initial_index})"
+    );
+
+    let created = match v1_deploy::create_v1_identity_beacon(state.inner(), initial_index).await {
+        Ok(created) => created,
+        Err(e) => {
+            tracing::error!("v1 identity beacon creation failed: {e}");
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: format!("v1 identity beacon creation failed: {e}"),
+            }));
+        }
+    };
+    let beacon_address = created.beacon;
+
+    // First update: moves lastNonce from 0 to 1 and emits the first IndexUpdated (plan
+    // Level 2 step 1 gate). It runs after the creation wallet is released.
+    let warm_up = service_update_beacon_with_ecdsa(
+        state.inner(),
+        UpdateBeaconWithEcdsaRequest {
+            beacon_address: format!("{beacon_address:#x}"),
+            measurement: vec![initial_index.to_string()],
+            heartbeat: false,
+        },
+    )
+    .await;
+    let (warm_up_transaction_hash, warmed_up) = match warm_up {
+        Ok(EcdsaUpdateOutcome::Published {
+            tx_hash, confirmed, ..
+        }) => (Some(format!("{tx_hash:#x}")), confirmed),
+        Ok(EcdsaUpdateOutcome::Skipped { reason, .. }) => {
+            tracing::warn!("v1 beacon {beacon_address} first update skipped: {reason}");
+            (None, false)
+        }
+        Err(e) => {
+            tracing::warn!("v1 beacon {beacon_address} first update failed: {e}");
+            (None, false)
+        }
+    };
+
+    let registry_address = state.contracts.perpcity_registry;
+    let (registered, safe_proposal_hash) = match register_beacon_with_registry(
+        state.inner(),
+        beacon_address,
+        registry_address,
+    )
+    .await
+    {
+        Ok(RegistrationOutcome::OnChainConfirmed(_))
+        | Ok(RegistrationOutcome::AlreadyRegistered) => (true, None),
+        Ok(RegistrationOutcome::SafeProposed(hash)) => (false, Some(format!("{hash:#x}"))),
+        Err(e) => {
+            tracing::warn!("v1 beacon {beacon_address} created but registration failed: {e}");
+            (false, None)
+        }
+    };
+
+    let message = if warmed_up {
+        "v1 identity beacon created, bound and warmed up".to_string()
+    } else {
+        "v1 identity beacon created and bound, but the first update is not confirmed: \
+         check lastNonce and push an update before createPerp"
+            .to_string()
+    };
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some(CreateV1IdentityBeaconResponse {
+            beacon_address: format!("{beacon_address:#x}"),
+            verifier_address: format!("{:#x}", created.verifier),
+            bind_transaction_hash: format!("{:#x}", created.bind_tx),
+            warm_up_transaction_hash,
+            warmed_up,
+            registered,
+            safe_proposal_hash,
+        }),
+        message,
     }))
 }
 
