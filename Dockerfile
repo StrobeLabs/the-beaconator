@@ -10,6 +10,9 @@
 # rust:1.95 toolchain we already vet.
 FROM rust:1.95-bookworm AS chef
 WORKDIR /app
+# mold: a much faster linker for the final release binary, which links the whole
+# alloy + aws-sdk object graph. Installed once in this cached layer.
+RUN apt-get update && apt-get install -y --no-install-recommends mold && rm -rf /var/lib/apt/lists/*
 # Pin the cargo-chef version for reproducible builds: --locked only freezes its
 # transitive deps, so an unpinned install could pull a future release that
 # changes the recipe format or bumps the required Rust toolchain and break the
@@ -20,6 +23,10 @@ RUN cargo install cargo-chef --locked --version 0.1.77
 # mismatch changes the rustc fingerprint and makes the cooked-dependency cache
 # miss.
 COPY .cargo .cargo
+# Route the linker to mold for the dependency cook AND the final build (the same
+# RUSTFLAGS must apply to both, or the cook cache misses). This ENV overrides
+# .cargo/config.toml's build.rustflags, so keep -D warnings here too.
+ENV RUSTFLAGS="-D warnings -C link-arg=-fuse-ld=mold"
 
 FROM chef AS planner
 COPY . .
