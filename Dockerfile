@@ -33,7 +33,9 @@ RUN cargo chef cook --release --recipe-path recipe.json
 # Copy the full source and build only the application crate on top of the
 # already-compiled dependencies.
 COPY . .
-RUN cargo build --release
+# --locked: build exactly the dependency versions in the committed Cargo.lock,
+# the ones the cook step above compiled, and fail if the lockfile is stale.
+RUN cargo build --release --locked
 
 # ---- Runtime --------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
