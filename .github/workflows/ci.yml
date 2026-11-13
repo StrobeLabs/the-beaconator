@@ -27,10 +27,10 @@ env:
   # the tests, and the cached target directory shrinks with it.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
-# Every job that compiles runs on the 4-core runners (the Default Larger
-# Runners group): rustc and the linker are what these jobs wait for, and cargo
-# builds on every core it finds. format and the `test` gate compile nothing and
-# stay on the standard runner.
+# Every job runs on ubuntu-latest, and must: this repository is public, so the
+# standard runner already has 4 cores, and the organization's larger-runner
+# groups do not accept jobs from public repositories. A job sent to one of
+# those groups is never picked up and stays queued.
 jobs:
   # Format check - fast, runs first
   format:
@@ -48,8 +48,7 @@ jobs:
 
   # Lint - can run in parallel with format
   lint:
-    runs-on:
-      group: Default Larger Runners
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -64,10 +63,16 @@ jobs:
       # check-only, which the test jobs cannot link against, so lint keeps a
       # cache of its own: sharing one key let whichever job finished first
       # decide what the others restored.
+      # v2.9.2 is the first rust-cache that understands the target directory
+      # layout cargo has used since Rust 1.100. With the release pinned before
+      # it, a restored cache was a hit by name and cargo still compiled every
+      # dependency again. The
+      # "-2" in the keys retires the caches saved that way: a key is never
+      # overwritten once it exists.
       - name: Cache Rust dependencies and build
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          shared-key: "ci-clippy"
+          shared-key: "ci-clippy-2"
           save-if: true
       # --locked: fail here, quickly and by name, when Cargo.toml changed and
       # Cargo.lock was not updated with it.
@@ -76,8 +81,7 @@ jobs:
 
   # Unit tests - parallel with lint
   unit-tests:
-    runs-on:
-      group: Default Larger Runners
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -88,17 +92,16 @@ jobs:
       # share one cache. This job is the one that saves it; the other three
       # only restore, so two jobs never race to write the same key.
       - name: Cache Rust dependencies and build
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          shared-key: "ci-test"
+          shared-key: "ci-test-2"
           save-if: true
       - name: Run unit tests
         run: cargo test unit_tests -- --nocapture
 
   # Integration tests - parallel, needs Foundry
   integration-tests:
-    runs-on:
-      group: Default Larger Runners
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -106,9 +109,9 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
       - name: Cache Rust dependencies and build
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          shared-key: "ci-test"
+          shared-key: "ci-test-2"
           save-if: false
       - name: Cache Foundry
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -136,8 +139,7 @@ jobs:
 
   # Wallet/Redis tests - parallel, needs Redis service
   wallet-tests:
-    runs-on:
-      group: Default Larger Runners
+    runs-on: ubuntu-latest
     services:
       redis:
         image: redis:alpine
@@ -155,9 +157,9 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
       - name: Cache Rust dependencies and build
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          shared-key: "ci-test"
+          shared-key: "ci-test-2"
           save-if: false
       - name: Cache Foundry
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -190,8 +192,7 @@ jobs:
 
   # Full integration tests - needs both Anvil and Redis
   full-integration-tests:
-    runs-on:
-      group: Default Larger Runners
+    runs-on: ubuntu-latest
     services:
       redis:
         image: redis:alpine
@@ -209,9 +210,9 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
       - name: Cache Rust dependencies and build
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          shared-key: "ci-test"
+          shared-key: "ci-test-2"
           save-if: false
       - name: Cache Foundry
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -248,8 +249,7 @@ jobs:
   # beside them: the PR waits for the slowest job, not for the tests and then
   # the image. The `test` gate below still fails when this job does.
   docker:
-    runs-on:
-      group: Default Larger Runners
+    runs-on: ubuntu-latest
     services:
       redis:
         image: redis:alpine
