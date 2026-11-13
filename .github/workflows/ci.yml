@@ -274,12 +274,28 @@ jobs:
       # GitHub cache backend (type=gha) held the same layers, but it fetched the
       # 547 MB dependency layer as one stream at about 5 MB/s: 110 s of a 215 s
       # build. actions/cache downloads in parallel chunks.
+      # cargo-chef's recipe also records which targets cargo discovers (a new
+      # src/bin/x.rs or tests/x.rs), and a changed recipe rebuilds the
+      # dependency layer. Put the list of target files, names only, in the key:
+      # otherwise such a change would hit the old key, recompile the
+      # dependencies on every run and never save the result.
+      - name: List the cargo targets
+        id: targets
+        run: |
+          # ls fails on the patterns that match nothing; that is expected.
+          list=$({ ls -d build.rs src/main.rs src/lib.rs \
+            src/bin/*.rs src/bin/*/main.rs tests/*.rs tests/*/main.rs \
+            examples/*.rs examples/*/main.rs benches/*.rs benches/*/main.rs \
+            2>/dev/null || true; } | LC_ALL=C sort)
+          echo "$list"
+          echo "hash=$(printf '%s' "$list" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
       - name: Restore the dependency layers
         id: deps-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: /tmp/buildx-deps
-          key: buildx-deps-${{ runner.os }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'Cargo.toml', '.cargo/config.toml') }}
+          key: buildx-deps-${{ runner.os }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'Cargo.toml', '.cargo/config.toml') }}-${{ steps.targets.outputs.hash }}
 
       # Only when the key above is new, which is when the dependencies changed:
       # compile them and write the directory the step above will save.
