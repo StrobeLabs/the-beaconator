@@ -27,10 +27,10 @@ env:
   # the tests, and the cached target directory shrinks with it.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
-# Every job that compiles runs on the 4-core runners (the Default Larger
-# Runners group): rustc and the linker are what these jobs wait for, and cargo
-# builds on every core it finds. format and the `test` gate compile nothing and
-# stay on the standard runner.
+# Every job runs on ubuntu-latest, and must: this repository is public, so the
+# standard runner already has 4 cores, and the organization's larger-runner
+# groups do not accept jobs from public repositories. A job sent to one of
+# those groups is never picked up and stays queued.
 jobs:
   # Format check - fast, runs first
   format:
@@ -48,8 +48,7 @@ jobs:
 
   # Lint - can run in parallel with format
   lint:
-    runs-on:
-      group: Default Larger Runners
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -76,8 +75,7 @@ jobs:
 
   # Unit tests - parallel with lint
   unit-tests:
-    runs-on:
-      group: Default Larger Runners
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -97,8 +95,7 @@ jobs:
 
   # Integration tests - parallel, needs Foundry
   integration-tests:
-    runs-on:
-      group: Default Larger Runners
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -136,8 +133,7 @@ jobs:
 
   # Wallet/Redis tests - parallel, needs Redis service
   wallet-tests:
-    runs-on:
-      group: Default Larger Runners
+    runs-on: ubuntu-latest
     services:
       redis:
         image: redis:alpine
@@ -190,8 +186,7 @@ jobs:
 
   # Full integration tests - needs both Anvil and Redis
   full-integration-tests:
-    runs-on:
-      group: Default Larger Runners
+    runs-on: ubuntu-latest
     services:
       redis:
         image: redis:alpine
@@ -248,8 +243,7 @@ jobs:
   # beside them: the PR waits for the slowest job, not for the tests and then
   # the image. The `test` gate below still fails when this job does.
   docker:
-    runs-on:
-      group: Default Larger Runners
+    runs-on: ubuntu-latest
     services:
       redis:
         image: redis:alpine
