@@ -25,11 +25,15 @@ FROM chef AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-FROM chef AS builder
+# The compiled dependencies, as a stage of their own so CI can build and cache
+# exactly this much (`--target deps`) without the application source on top.
+FROM chef AS deps
 COPY --from=planner /app/recipe.json recipe.json
 # Compile dependencies only. This layer is cached until Cargo.toml / Cargo.lock
 # change, so ordinary source edits skip it entirely.
 RUN cargo chef cook --release --recipe-path recipe.json
+
+FROM deps AS builder
 # Copy the full source and build only the application crate on top of the
 # already-compiled dependencies.
 COPY . .
