@@ -88,6 +88,63 @@ fn health() -> (rocket::http::ContentType, &'static str) {
 }
 
 /// Env var names of the v1 deployment, in `V1Contracts` field order.
+/// The address every new v1 verifier will name as `SIGNER` must equal
+/// `V1_SIGNER_EXPECTED_ADDRESS` when that is set. A verifier's `SIGNER` is
+/// immutable, so a wrong key here would bind every beacon created afterwards
+/// to it; refusing to start is the only safe outcome.
+pub fn check_expected_v1_signer(
+    expected: Option<Address>,
+    actual: Address,
+    source: &str,
+) -> Result<(), String> {
+    match expected {
+        Some(expected) if expected != actual => Err(format!(
+            "V1_SIGNER_EXPECTED_ADDRESS is {expected} but the v1 signer ({source}) is {actual}"
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Loads the v1 measurement signer from `V1_SIGNER_KMS_KEY_ID` (a KMS key id,
+/// alias or ARN of an `ECC_SECG_P256K1` signing key), and enforces
+/// `V1_SIGNER_EXPECTED_ADDRESS` against whichever key v1 verifiers will name.
+/// Returns `None` when no KMS key is set: v1 verifiers then name the
+/// `PRIVATE_KEY` signer.
+async fn load_v1_signer(chain_id: u64, private_key_signer: Address) -> Option<PoolSigner> {
+    let expected = env::var("V1_SIGNER_EXPECTED_ADDRESS")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .map(|v| Address::from_str(&v).expect("Failed to parse V1_SIGNER_EXPECTED_ADDRESS"));
+
+    let key_id = env::var("V1_SIGNER_KMS_KEY_ID")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let Some(key_id) = key_id else {
+        check_expected_v1_signer(expected, private_key_signer, "PRIVATE_KEY")
+            .unwrap_or_else(|e| panic!("{e}"));
+        tracing::info!(
+            "V1_SIGNER_KMS_KEY_ID not set: v1 verifiers name the PRIVATE_KEY signer {private_key_signer:?}"
+        );
+        return None;
+    };
+
+    let aws_cfg = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let kms_client = aws_sdk_kms::Client::new(&aws_cfg);
+    let signer = AwsSigner::new(kms_client, key_id.clone(), Some(chain_id))
+        .await
+        .unwrap_or_else(|e| panic!("Failed to load the v1 signer from KMS key {key_id}: {e}"));
+    let address = signer.address();
+    check_expected_v1_signer(expected, address, "V1_SIGNER_KMS_KEY_ID")
+        .unwrap_or_else(|e| panic!("{e}"));
+    tracing::info!("v1 measurement signer configured (KMS, EIP-712 signing only):");
+    tracing::info!("  - Address: {address:?}");
+    tracing::info!("  - Key: {key_id}");
+    Some(PoolSigner::Kms(signer))
+}
+
 const V1_ADDRESS_VARS: [&str; 8] = [
     "V1_PERP_FACTORY_ADDRESS",
     "V1_ECDSA_VERIFIER_FACTORY_ADDRESS",
@@ -197,6 +254,7 @@ fn audit_environment() {
         "V1_MARGIN_RATIOS_MODULE_ADDRESS",
         "V1_PRICE_IMPACT_MODULE_ADDRESS",
         "V1_PRICING_MODULE_ADDRESS",
+        "V1_SIGNER_EXPECTED_ADDRESS",
         "MULTICALL3_ADDRESS",
         "LBCGBM_FACTORY_ADDRESS",
         "WEIGHTED_SUM_COMPOSITE_FACTORY_ADDRESS",
@@ -611,6 +669,8 @@ pub async fn create_rocket() -> Rocket<Build> {
     tracing::info!("  - Chain ID: {:?}", chain_id);
     tracing::info!("  - ENV: {}", env_type);
 
+    let v1_signer = load_v1_signer(chain_id, signer_address).await;
+
     // Build the gas-payer pool signers, in precedence order:
     //   1. WALLET_KMS_KEY_IDS - explicit comma-separated KMS key ids / aliases / ARNs.
     //   2. WALLET_KMS_ALIAS_PREFIX - discover pool keys by KMS alias prefix
@@ -1020,6 +1080,7 @@ pub async fn create_rocket() -> Rocket<Build> {
             manager: wallet_manager,
             signer_address,
             signer,
+            v1_signer,
             usdc_transfer_limit,
             eth_transfer_limit,
             usdc_bonus_limit,

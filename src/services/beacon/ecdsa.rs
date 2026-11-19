@@ -1,6 +1,5 @@
 use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::providers::Provider;
-use alloy::signers::Signer;
 use alloy::sol_types::SolType;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -262,17 +261,30 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Designated signer for this beacon: {}", designated_signer);
 
-    // 3. Verify PRIVATE_KEY signer matches designated signer
-    let signer_address = state.wallets.signer.address();
-    if signer_address != designated_signer {
-        return Err(format!(
-            "PRIVATE_KEY wallet {signer_address} does not match designated signer {designated_signer} for beacon {beacon_address}. \
-             Update PRIVATE_KEY or reconfigure the beacon's verifier."
-        ));
-    }
+    // 3. Pick the configured signer the verifier names (PRIVATE_KEY or the v1
+    // KMS signer). The choice is by address, so a beacon is only ever signed
+    // by the key its own verifier trusts.
+    let measurement_signer = state
+        .wallets
+        .measurement_signer_for(designated_signer)
+        .ok_or_else(|| {
+            format!(
+                "No configured signer matches designated signer {designated_signer} for beacon {beacon_address} \
+                 (PRIVATE_KEY is {}, V1_SIGNER_KMS_KEY_ID is {}). \
+                 Configure that key or reconfigure the beacon's verifier.",
+                state.wallets.signer.address(),
+                state
+                    .wallets
+                    .v1_signer
+                    .as_ref()
+                    .map_or_else(|| "not set".to_string(), |s| s.address().to_string()),
+            )
+        })?;
+    let signer_address = measurement_signer.address();
 
     tracing::info!(
-        "Using PRIVATE_KEY signer {} for beacon {} ECDSA signature",
+        "Using {} signer {} for beacon {} ECDSA signature",
+        measurement_signer.label(),
         signer_address,
         beacon_address
     );
@@ -437,13 +449,13 @@ pub async fn update_beacon_with_ecdsa(
 
     tracing::info!("Got EIP-712 digest: {:?}", digest);
 
-    // 8. Sign the digest with PRIVATE_KEY signer (state.wallets.signer)
-    let signature = state
-        .wallets
-        .signer
-        .sign_hash(&digest)
-        .await
-        .map_err(|e| format!("Failed to sign digest with PRIVATE_KEY signer: {e}"))?;
+    // 8. Sign the digest with the signer picked in step 3
+    let signature = measurement_signer.sign_hash(&digest).await.map_err(|e| {
+        format!(
+            "Failed to sign digest with {} signer: {e}",
+            measurement_signer.label()
+        )
+    })?;
 
     tracing::info!("Signed digest successfully");
 
