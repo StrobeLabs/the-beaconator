@@ -566,6 +566,7 @@ pub async fn create_test_app_state() -> AppState {
             manager: Arc::new(WalletManager::test_stub()),
             signer_address: deployment.deployer,
             signer: test_signer,
+            v1_signer: None,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
@@ -640,6 +641,7 @@ pub async fn create_isolated_test_app_state() -> (AppState, AnvilManager) {
             manager: create_test_wallet_manager().await,
             signer_address: deployment.deployer,
             signer: test_signer,
+            v1_signer: None,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
@@ -739,6 +741,7 @@ pub async fn create_isolated_test_app_state_with_redis() -> (AppState, AnvilMana
             manager: wallet_manager,
             signer_address: deployment.deployer,
             signer: test_signer,
+            v1_signer: None,
             usdc_transfer_limit: 1_000_000_000,
             eth_transfer_limit: 10_000_000_000_000_000,
             usdc_bonus_limit: 50_000_000,
@@ -810,6 +813,7 @@ pub async fn create_test_app_state_with_account(account_index: usize) -> AppStat
             manager: Arc::new(WalletManager::test_stub()),
             signer_address: anvil.accounts[account_index],
             signer,
+            v1_signer: None,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
@@ -931,6 +935,7 @@ pub async fn create_simple_test_app_state() -> AppState {
             signer_address: Address::from_str("0x1111111111111111111111111111111111111111")
                 .unwrap(),
             signer,
+            v1_signer: None,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
@@ -1002,6 +1007,7 @@ pub async fn create_test_app_state_with_provider(
             signer_address: Address::from_str("0x1111111111111111111111111111111111111111")
                 .unwrap(),
             signer,
+            v1_signer: None,
             usdc_transfer_limit: 1_000_000_000, // 1000 USDC
             eth_transfer_limit: 10_000_000_000_000_000, // 0.01 ETH
             usdc_bonus_limit: 50_000_000,       // 50 USDC
@@ -1303,6 +1309,7 @@ pub async fn create_fork_fixture() -> ForkFixture {
             manager: Arc::new(manager),
             signer_address: pool_wallet,
             signer,
+            v1_signer: None,
             usdc_transfer_limit: 1_000_000_000,
             eth_transfer_limit: 10_000_000_000_000_000,
             usdc_bonus_limit: 50_000_000,

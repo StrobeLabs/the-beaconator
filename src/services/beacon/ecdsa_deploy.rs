@@ -15,7 +15,8 @@ use crate::services::wallet::WalletHandle;
 /// Creates an ECDSAVerifier via the ECDSAVerifierFactory contract.
 ///
 /// Uses the provided wallet handle's provider to send the factory call.
-/// The created verifier will only accept signatures from `state.wallets.signer.address()`.
+/// The created verifier will only accept signatures from the `PRIVATE_KEY` signer
+/// (`state.wallets.signer.address()`).
 ///
 /// Strategy: simulate with .call() first to get the deterministic return address,
 /// then execute with .send() to actually create the contract on-chain.
@@ -23,18 +24,25 @@ pub async fn create_ecdsa_verifier(
     state: &AppState,
     wallet_handle: &WalletHandle,
 ) -> Result<Address, String> {
-    create_ecdsa_verifier_at(state, wallet_handle, state.contracts.ecdsa_verifier_factory).await
+    create_ecdsa_verifier_at(
+        state,
+        wallet_handle,
+        state.contracts.ecdsa_verifier_factory,
+        state.wallets.signer.address(),
+    )
+    .await
 }
 
-/// [`create_ecdsa_verifier`] on a given factory. The v1 factory has the same
-/// `createVerifier(address)` ABI, but its verifier records the caller (this wallet) as the
-/// binder: only this wallet can later `bind` it to the beacon.
+/// [`create_ecdsa_verifier`] on a given factory, naming `signer_address` as the verifier's
+/// `SIGNER`. The v1 factory has the same `createVerifier(address)` ABI, but its verifier
+/// records the caller (this wallet) as the binder: only this wallet can later `bind` it to
+/// the beacon.
 pub async fn create_ecdsa_verifier_at(
     state: &AppState,
     wallet_handle: &WalletHandle,
     factory_address: Address,
+    signer_address: Address,
 ) -> Result<Address, String> {
-    let signer_address = state.wallets.signer.address();
     tracing::info!(
         "Creating ECDSAVerifier via factory with signer={}",
         signer_address

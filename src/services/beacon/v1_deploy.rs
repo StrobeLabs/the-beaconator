@@ -51,7 +51,14 @@ pub async fn create_v1_identity_beacon(
         handle.address()
     );
 
-    let verifier = create_ecdsa_verifier_at(state, &handle, v1.ecdsa_verifier_factory).await?;
+    // The v1 signer (the KMS key when configured). SIGNER is fixed at creation.
+    let verifier = create_ecdsa_verifier_at(
+        state,
+        &handle,
+        v1.ecdsa_verifier_factory,
+        state.wallets.v1_signer_address(),
+    )
+    .await?;
 
     let factory = IIdentityBeaconFactory::new(v1.identity_beacon_factory, &provider);
     let beacon = factory

@@ -180,3 +180,120 @@ fn unit_tests_v1_error_selectors_decode() {
         assert!(decoded.starts_with(name), "{selector}: {decoded}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// v1 measurement signer (V1_SIGNER_KMS_KEY_ID). A local key stands in for the
+// KMS key: `PoolSigner` gives both the same address and `sign_hash` surface.
+// ---------------------------------------------------------------------------
+
+mod v1_signer {
+    use alloy::primitives::{Address, B256};
+    use alloy::signers::local::PrivateKeySigner;
+    use the_beaconator::check_expected_v1_signer;
+    use the_beaconator::models::app_state::{MeasurementSigner, WalletConfig};
+    use the_beaconator::services::wallet::PoolSigner;
+
+    use crate::test_utils::create_simple_test_app_state;
+
+    async fn wallets_with_v1_signer() -> (WalletConfig, Address, Address) {
+        let mut wallets = create_simple_test_app_state().await.wallets;
+        let kms_stand_in = PrivateKeySigner::random();
+        let v1_address = kms_stand_in.address();
+        assert_ne!(v1_address, wallets.signer.address());
+        wallets.v1_signer = Some(PoolSigner::Local(kms_stand_in));
+        let legacy_address = wallets.signer.address();
+        (wallets, legacy_address, v1_address)
+    }
+
+    #[tokio::test]
+    async fn unit_tests_new_v1_verifiers_name_the_kms_signer_when_configured() {
+        let (wallets, legacy_address, v1_address) = wallets_with_v1_signer().await;
+        assert_eq!(wallets.v1_signer_address(), v1_address);
+        // The legacy create path keeps naming PRIVATE_KEY.
+        assert_eq!(wallets.signer.address(), legacy_address);
+    }
+
+    #[tokio::test]
+    async fn unit_tests_new_v1_verifiers_name_private_key_without_a_kms_signer() {
+        let wallets = create_simple_test_app_state().await.wallets;
+        assert!(wallets.v1_signer.is_none());
+        assert_eq!(wallets.v1_signer_address(), wallets.signer.address());
+    }
+
+    #[tokio::test]
+    async fn unit_tests_each_beacon_is_signed_by_the_key_its_verifier_names() {
+        let (wallets, legacy_address, v1_address) = wallets_with_v1_signer().await;
+
+        let legacy = wallets.measurement_signer_for(legacy_address).unwrap();
+        assert!(matches!(legacy, MeasurementSigner::PrivateKey(_)));
+        assert_eq!(legacy.address(), legacy_address);
+        assert_eq!(legacy.label(), "PRIVATE_KEY");
+
+        let v1 = wallets.measurement_signer_for(v1_address).unwrap();
+        assert!(matches!(v1, MeasurementSigner::V1Kms(_)));
+        assert_eq!(v1.address(), v1_address);
+        assert_eq!(v1.label(), "V1_SIGNER_KMS_KEY_ID");
+
+        // A verifier that names a key this service does not hold gets no signer,
+        // rather than a signature the verifier would reject on chain.
+        assert!(
+            wallets
+                .measurement_signer_for(Address::repeat_byte(0x42))
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn unit_tests_a_v1_beacon_bound_to_private_key_stays_on_private_key() {
+        // A v1 beacon created before the KMS signer was configured names
+        // PRIVATE_KEY. Adding the KMS signer must not move it.
+        let (wallets, legacy_address, _) = wallets_with_v1_signer().await;
+        let signer = wallets.measurement_signer_for(legacy_address).unwrap();
+        assert!(matches!(signer, MeasurementSigner::PrivateKey(_)));
+    }
+
+    #[tokio::test]
+    async fn unit_tests_without_a_kms_signer_only_private_key_matches() {
+        let wallets = create_simple_test_app_state().await.wallets;
+        assert!(
+            wallets
+                .measurement_signer_for(wallets.signer.address())
+                .is_some()
+        );
+        assert!(
+            wallets
+                .measurement_signer_for(Address::repeat_byte(0x42))
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn unit_tests_the_selected_signer_produces_a_signature_from_its_own_address() {
+        let (wallets, legacy_address, v1_address) = wallets_with_v1_signer().await;
+        let digest = B256::repeat_byte(0x5a);
+        for designated in [legacy_address, v1_address] {
+            let signer = wallets.measurement_signer_for(designated).unwrap();
+            let signature = signer.sign_hash(&digest).await.unwrap();
+            // What ECDSAVerifier checks: the recovered address is SIGNER.
+            assert_eq!(
+                signature.recover_address_from_prehash(&digest).unwrap(),
+                designated
+            );
+        }
+    }
+
+    #[test]
+    fn unit_tests_expected_v1_signer_guard() {
+        let a = Address::repeat_byte(0xbe);
+        let b = Address::repeat_byte(0x93);
+        // No expectation: any signer is accepted.
+        assert!(check_expected_v1_signer(None, a, "PRIVATE_KEY").is_ok());
+        // Matching expectation.
+        assert!(check_expected_v1_signer(Some(a), a, "V1_SIGNER_KMS_KEY_ID").is_ok());
+        // A different key must stop startup, and the message names both.
+        let err = check_expected_v1_signer(Some(a), b, "PRIVATE_KEY").unwrap_err();
+        assert!(err.contains(&a.to_string()));
+        assert!(err.contains(&b.to_string()));
+        assert!(err.contains("PRIVATE_KEY"));
+    }
+}

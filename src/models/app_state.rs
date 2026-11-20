@@ -11,7 +11,7 @@ use crate::services::beacon::BeaconTypeRegistry;
 use crate::services::beacon::ComponentFactoryRegistry;
 use crate::services::beacon::RecipeRegistry;
 use crate::services::touch::TouchDispatcher;
-use crate::services::wallet::WalletManager;
+use crate::services::wallet::{PoolSigner, WalletManager};
 
 /// API endpoint information for documentation
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -214,6 +214,43 @@ pub struct ProviderConfig {
     pub chain_id: u64,
 }
 
+/// The key that signs one beacon's update digests, chosen by the `SIGNER`
+/// address its verifier names (see [`WalletConfig::measurement_signer_for`]).
+pub enum MeasurementSigner<'a> {
+    /// The local `PRIVATE_KEY` signer.
+    PrivateKey(&'a PrivateKeySigner),
+    /// The `V1_SIGNER_KMS_KEY_ID` signer.
+    V1Kms(&'a PoolSigner),
+}
+
+impl MeasurementSigner<'_> {
+    pub fn address(&self) -> Address {
+        match self {
+            MeasurementSigner::PrivateKey(s) => s.address(),
+            MeasurementSigner::V1Kms(s) => s.address(),
+        }
+    }
+
+    /// The config name of this signer, for logs and errors.
+    pub fn label(&self) -> &'static str {
+        match self {
+            MeasurementSigner::PrivateKey(_) => "PRIVATE_KEY",
+            MeasurementSigner::V1Kms(_) => "V1_SIGNER_KMS_KEY_ID",
+        }
+    }
+
+    pub async fn sign_hash(
+        &self,
+        hash: &alloy::primitives::B256,
+    ) -> Result<alloy::primitives::Signature, alloy::signers::Error> {
+        use alloy::signers::Signer;
+        match self {
+            MeasurementSigner::PrivateKey(s) => s.sign_hash(hash).await,
+            MeasurementSigner::V1Kms(s) => s.sign_hash(hash).await,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct WalletConfig {
     pub manager: Arc<WalletManager>,
@@ -225,6 +262,11 @@ pub struct WalletConfig {
     /// This wallet's address must match the designated signer configured
     /// in each ECDSA beacon's verifier adapter.
     pub signer: PrivateKeySigner,
+    /// The measurement signer for v1 beacons, from `V1_SIGNER_KMS_KEY_ID`: an
+    /// AWS KMS key whose private half never leaves KMS. When set, every v1
+    /// verifier this service creates names it as `SIGNER`. When `None`, v1
+    /// verifiers name the `PRIVATE_KEY` signer, as legacy verifiers do.
+    pub v1_signer: Option<PoolSigner>,
     pub usdc_transfer_limit: u128,
     pub eth_transfer_limit: u128,
     /// Per-request USDC cap for the mainnet bonus route (`/fund_bonus_wallet`).
@@ -240,6 +282,35 @@ pub struct WalletConfig {
     /// BeaconatorWalletGasLow alarm threshold (0.01 ETH) so the faucet
     /// throttles before the on-call gets paged.
     pub faucet_reserve_eth_wei: u128,
+}
+
+impl WalletConfig {
+    /// The address a newly created v1 verifier names as its `SIGNER`: the KMS
+    /// v1 signer when one is configured, else the `PRIVATE_KEY` signer. A
+    /// verifier's `SIGNER` cannot be changed after creation.
+    pub fn v1_signer_address(&self) -> Address {
+        match &self.v1_signer {
+            Some(s) => s.address(),
+            None => self.signer.address(),
+        }
+    }
+
+    /// The configured signer whose address is `designated`, the `SIGNER` a
+    /// beacon's verifier names. `None` when this service holds no such key.
+    ///
+    /// Selection is by address, not by beacon kind, so a beacon is always
+    /// signed by the key its own verifier trusts: legacy beacons and v1
+    /// beacons created before the KMS signer was configured keep the
+    /// `PRIVATE_KEY` signer, and v1 beacons created after it use the KMS key.
+    pub fn measurement_signer_for(&self, designated: Address) -> Option<MeasurementSigner<'_>> {
+        if self.signer.address() == designated {
+            return Some(MeasurementSigner::PrivateKey(&self.signer));
+        }
+        match &self.v1_signer {
+            Some(s) if s.address() == designated => Some(MeasurementSigner::V1Kms(s)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone)]
