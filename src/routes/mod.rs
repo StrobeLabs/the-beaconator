@@ -5,6 +5,7 @@ pub mod perp;
 pub mod recipe;
 pub mod retirement;
 pub mod wallet;
+pub mod withdrawals;
 
 #[cfg(test)]
 // test_utils moved to tests/test_utils.rs
